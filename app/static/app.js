@@ -204,7 +204,7 @@
     state.livePending = dedupeIncoming(state.confirmedTranscript, incoming);
     state.transcript = joinText(state.confirmedTranscript, state.livePending);
     renderTranscript();
-    scheduleDraftSave();
+    if (state.recording) scheduleDraftSave();
   }
 
   function commitLivePending() {
@@ -212,7 +212,6 @@
     state.livePending = '';
     state.transcript = state.confirmedTranscript.trim();
     renderTranscript();
-    scheduleDraftSave(true);
   }
 
   async function api(url, options = {}) {
