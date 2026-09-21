@@ -294,6 +294,8 @@ async def update_recording(recording_id: uuid.UUID, payload: RecordingUpdate, db
             db.add(TranscriptRevision(recording_id=recording.id, previous_text=previous, new_text=new_text))
             db.add(UsageEvent(recording_id=recording.id, event_type="edit", event_data={}))
             recording.transcript_edited = new_text
+            recording.draft_text = None
+            recording.last_activity_at = utcnow()
             if not recording.title or recording.title == "New recording":
                 recording.title = make_title(new_text)
     await db.commit()
@@ -476,6 +478,68 @@ async def recording_audio(recording_id: uuid.UUID, db: AsyncSession = Depends(ge
     return FileResponse(recording.audio_path, media_type=recording.audio_mime_type or "audio/wav", filename=f"{recording.id}.wav")
 
 
+@app.get("/api/recordings/{recording_id}/audio-segments")
+async def recording_audio_segments(recording_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> dict:
+    recording = await find_recording(recording_id, db)
+    segments = (
+        await db.execute(
+            select(RecordingAudioSegment)
+            .where(
+                RecordingAudioSegment.recording_id == recording.id,
+                RecordingAudioSegment.audio_path.is_not(None),
+            )
+            .order_by(RecordingAudioSegment.created_at.asc())
+        )
+    ).scalars().all()
+
+    if not segments and recording.audio_path and Path(recording.audio_path).exists():
+        return {
+            "segments": [
+                {
+                    "id": "legacy",
+                    "url": f"/api/recordings/{recording.id}/audio",
+                    "duration_seconds": recording.duration_seconds,
+                }
+            ]
+        }
+
+    return {
+        "segments": [
+            {
+                "id": str(segment.id),
+                "url": f"/api/recordings/{recording.id}/audio-segments/{segment.id}",
+                "duration_seconds": segment.duration_seconds,
+            }
+            for segment in segments
+            if segment.audio_path and Path(segment.audio_path).exists()
+        ]
+    }
+
+
+@app.get("/api/recordings/{recording_id}/audio-segments/{segment_id}")
+async def recording_audio_segment(
+    recording_id: uuid.UUID,
+    segment_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    await find_recording(recording_id, db)
+    segment = (
+        await db.execute(
+            select(RecordingAudioSegment).where(
+                RecordingAudioSegment.id == segment_id,
+                RecordingAudioSegment.recording_id == recording_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not segment or not segment.audio_path or not Path(segment.audio_path).exists():
+        raise HTTPException(status_code=404, detail="Audio segment not available")
+    return FileResponse(
+        segment.audio_path,
+        media_type=segment.audio_mime_type or "audio/wav",
+        filename=f"{segment.id}.wav",
+    )
+
+
 @app.post("/api/speech")
 async def speech(payload: SpeechRequest, db: AsyncSession = Depends(get_db)) -> Response:
     voice = payload.voice or settings.default_voice
@@ -492,7 +556,7 @@ async def speech(payload: SpeechRequest, db: AsyncSession = Depends(get_db)) -> 
 
 @app.post("/api/events", status_code=204)
 async def create_event(payload: EventCreate, db: AsyncSession = Depends(get_db)) -> Response:
-    allowed = {"copy", "download", "read_aloud"}
+    allowed = {"copy", "share", "download", "read_aloud"}
     if payload.event_type not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported event type")
     if payload.recording_id:
