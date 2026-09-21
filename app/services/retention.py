@@ -5,7 +5,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..models import AppSetting, Recording, TranscriptionChunk
+from ..models import AppSetting, Recording, RecordingAudioSegment, TranscriptionChunk
 
 
 RETENTION_KEY = "audio_retention"
@@ -54,6 +54,11 @@ async def remove_recording_audio(recording: Recording, db: AsyncSession) -> bool
         update(TranscriptionChunk)
         .where(TranscriptionChunk.recording_id == recording.id)
         .values(audio_path=None)
+    )
+    await db.execute(
+        update(RecordingAudioSegment)
+        .where(RecordingAudioSegment.recording_id == recording.id)
+        .values(audio_path=None, audio_size=None)
     )
     return existed
 
