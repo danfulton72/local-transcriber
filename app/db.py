@@ -26,7 +26,7 @@ async def get_db() -> AsyncIterator[AsyncSession]:
 def _upgrade_database() -> None:
     config_path = Path(__file__).resolve().parent.parent / "alembic.ini"
     config = Config(str(config_path))
-    config.set_main_option("sqlalchemy.url", settings.database_url)
+    config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
     command.upgrade(config, "head")
 
 
