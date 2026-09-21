@@ -4,8 +4,17 @@ A local-first, kid-friendly speech-to-text app for turning spoken ideas into edi
 
 ## What it does
 
-- Large, simple **Talk** screen with near-live transcription
-- Saves the full voice recording plus the Whisper transcript and timestamp
+- Large, simple **Talk** screen with calmer near-live transcription:
+  - confirmed words stay solid
+  - the newest, still-being-checked words are shown more lightly
+  - gentle auto-follow pauses when the reader scrolls back
+- **Keep talking** appends new dictation to the same saved piece
+- Crash/interruption recovery with immediate browser drafts plus server-side autosave
+- Sentence-by-sentence editing with autosaved edit drafts
+- **Reading focus** mode that turns the screen into a large, distraction-light transcript
+- **Use my words** uses the device share sheet when available and falls back to clipboard
+- Installable home-screen PWA for supported desktop, tablet and mobile browsers
+- Saves voice captures as separate audio segments plus the Whisper transcript and timestamp
 - Stores near-live audio chunks for troubleshooting/recovery
 - Keeps the original Whisper transcript separately from later edits
 - **My words** history with search, favourites, playback and soft-delete
@@ -57,7 +66,7 @@ CREATE USER transcriber WITH PASSWORD 'choose-a-long-password';
 CREATE DATABASE transcriber OWNER transcriber;
 ```
 
-The application creates its initial tables automatically on first start.
+The database schema is managed with **Alembic migrations**. Migrations run automatically when the application starts, including when upgrading an existing installation.
 
 ## Install
 
@@ -133,13 +142,22 @@ Nothing is sent to a cloud transcription or analytics service by this applicatio
 
 ## Updating an existing install
 
+Before a significant upgrade, keep your normal PostgreSQL/recordings backup. Then:
+
 ```bash
 cd ~/local-transcriber
 git pull
 docker compose up -d --build
+docker compose logs --tail=100 local-transcriber
 ```
 
-Then hard-refresh the browser. Existing PostgreSQL data and the `recordings/` directory are preserved.
+The container runs `alembic upgrade head` automatically during startup. Existing PostgreSQL data and the `recordings/` directory are preserved; this release adds draft/recovery fields and an audio-segment table without replacing existing recordings.
+
+Then hard-refresh the browser. If you previously installed the PWA, its service worker uses network-first updates for the app shell so refreshed versions are picked up rather than being permanently pinned to an old JavaScript/CSS cache.
+
+### Install on a phone, tablet or desktop
+
+Open **Grown-up settings → Install on this device**. On browsers with a native install prompt it will open directly. On iPhone/iPad, use **Share → Add to Home Screen**.
 
 ### Parent storage tools
 
@@ -160,6 +178,8 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[test]'
 
+DATABASE_URL=sqlite+aiosqlite:///./dev.db alembic upgrade head
+
 DATABASE_URL=sqlite+aiosqlite:///./dev.db \
 RECORDINGS_DIR=./recordings \
 uvicorn app.main:app --reload --port 8090
@@ -170,5 +190,7 @@ Run checks:
 ```bash
 pytest -q
 node --check app/static/app.js
-python -m compileall -q app
+node --check app/static/sw.js
+python -m json.tool app/static/manifest.webmanifest > /dev/null
+python -m compileall -q app migrations
 ```
