@@ -1,0 +1,13 @@
+services:
+  local-transcriber:
+    build: .
+    container_name: local-transcriber
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./recordings:/data/recordings
+    ports:
+      - "8090:8080"
+    restart: unless-stopped
