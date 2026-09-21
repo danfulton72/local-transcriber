@@ -1,0 +1,24 @@
+{
+  "name": "Talk to Type",
+  "short_name": "Talk to Type",
+  "description": "Local-first speech-to-text writing helper",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f0df",
+  "theme_color": "#306b5d",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
