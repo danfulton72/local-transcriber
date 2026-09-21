@@ -24,5 +24,7 @@ jobs:
       - run: rm -f test.db && alembic upgrade head
       - run: pytest -q
       - run: node --check app/static/app.js
-      - run: python -m compileall -q app
+      - run: node --check app/static/sw.js
+      - run: python -m json.tool app/static/manifest.webmanifest > /dev/null
+      - run: python -m compileall -q app migrations
       - run: docker build -t local-transcriber-ci .
