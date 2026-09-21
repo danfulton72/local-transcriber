@@ -21,6 +21,7 @@ jobs:
         with:
           node-version: "22"
       - run: pip install -e '.[test]'
+      - run: rm -f test.db && alembic upgrade head
       - run: pytest -q
       - run: node --check app/static/app.js
       - run: python -m compileall -q app
