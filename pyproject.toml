@@ -1,4 +1,4 @@
-[project]
+[build-system]\nrequires = ["setuptools>=75"]\nbuild-backend = "setuptools.build_meta"\n\n[project]
 name = "local-transcriber"
 version = "0.1.0"
 description = "Local-first kid-friendly transcription app with history and progress tracking"
