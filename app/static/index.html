@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f6f0df">
+  <title>Talk to Type</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div><p class="eyebrow">Local Transcriber</p><h1>Talk to Type</h1></div>
+    <div id="healthBadge" class="health checking" aria-live="polite">Checking…</div>
+  </header>
+  <nav class="tabs" aria-label="Main pages">
+    <button class="tab active" data-page="talk">🎙 Talk</button>
+    <button class="tab" data-page="history">📚 My words</button>
+    <button class="tab" data-page="progress">📈 Progress</button>
+  </nav>
+  <main>
+    <section id="page-talk" class="page active">
+      <div class="hero">
+        <p class="big-prompt">What do you want to say?</p>
+        <button id="recordButton" class="record-button" type="button" aria-label="Start talking"><span class="mic">🎙</span><span id="recordButtonText">Start talking</span></button>
+        <div id="meter" class="meter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <p id="statusText" class="status">Ready when you are</p>
+        <p id="statusDetail" class="status-detail">Press the microphone and talk normally.</p>
+        <p id="timer" class="timer">00:00</p>
+        <button id="pauseButton" class="secondary hidden" type="button">Pause</button>
+      </div>
+      <div id="errorBox" class="error hidden" role="alert"></div>
+      <section class="words-card" aria-labelledby="wordsHeading">
+        <div class="card-heading"><div><p class="eyebrow">Your words</p><h2 id="wordsHeading">What I heard</h2></div><span id="wordCount" class="pill">0 words</span></div>
+        <div id="transcriptView" class="transcript empty" aria-live="polite"><p>Your words will appear here.</p></div>
+        <div id="editorWrap" class="editor hidden">
+          <textarea id="transcriptEditor" rows="10" spellcheck="true"></textarea>
+          <div class="button-row"><button id="saveEditButton" class="primary small" type="button">Save words</button><button id="cancelEditButton" class="secondary small" type="button">Cancel</button></div>
+        </div>
+        <div class="actions">
+          <button id="hearButton" type="button" disabled>🔊 Hear it</button>
+          <button id="playRecordingButton" type="button" disabled>▶ My voice</button>
+          <button id="editButton" type="button" disabled>✏ Edit words</button>
+          <button id="favouriteButton" type="button" disabled>☆ Favourite</button>
+          <button id="copyButton" type="button" disabled>📋 Copy</button>
+          <button id="newButton" type="button">＋ New</button>
+        </div>
+      </section>
+      <details class="grown-up">
+        <summary>⚙ Grown-up settings</summary>
+        <div class="settings-grid">
+          <label>Language<select id="language"><option value="">Auto detect</option><option value="en">English</option><option value="no">Norwegian</option></select></label>
+          <label>Near-live chunk<select id="chunkSeconds"><option value="3">3 seconds</option><option value="5" selected>5 seconds</option><option value="8">8 seconds</option><option value="12">12 seconds</option></select></label>
+          <label>Read-aloud voice<select id="voice"><option value="en_GB-northern_english_male-medium">Northern English</option></select></label>
+          <label>Read-aloud speed<select id="speechSpeed"><option value="0.8">Slower</option><option value="0.9" selected>Calm</option><option value="1">Normal</option><option value="1.15">Faster</option></select></label>
+          <label class="wide">Whisper context prompt<input id="prompt" type="text" placeholder="Optional names or topic words"></label>
+          <label class="wide file-label">Transcribe an audio file<input id="fileInput" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.webm"></label>
+        </div>
+      </details>
+    </section>
+    <section id="page-history" class="page">
+      <div class="section-heading"><div><p class="eyebrow">Saved locally</p><h2>My words</h2></div><button id="refreshHistoryButton" type="button">Refresh</button></div>
+      <div class="history-tools"><input id="historySearch" type="search" placeholder="Search my words…" aria-label="Search recordings"><label class="check"><input id="historyFavourites" type="checkbox"> Favourites only</label></div>
+      <div id="historyList" class="history-list"><p class="muted">Loading…</p></div>
+    </section>
+    <section id="page-progress" class="page">
+      <div class="section-heading"><div><p class="eyebrow">Grown-up view</p><h2>Progress</h2></div><select id="progressDays" aria-label="Progress time range"><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last year</option></select></div>
+      <div id="pinPanel" class="pin-panel"><label>Parent PIN (only if configured)<input id="parentPin" type="password" inputmode="numeric" autocomplete="off"></label><button id="loadProgressButton" class="primary" type="button">Show progress</button></div>
+      <p class="privacy-note">This page uses only saved recordings, explicit transcript edits, and actions like read-aloud/copy. It does not track attention, mouse movement, mood, or reading ability.</p>
+      <div id="progressContent" class="hidden">
+        <div id="metricGrid" class="metrics"></div>
+        <div class="progress-grid"><section class="panel"><h3>Frequently corrected words</h3><div id="correctionsList"></div></section><section class="panel"><h3>Speaking over time</h3><div id="dailyChart" class="daily-chart"></div></section></div>
+        <section class="panel"><h3>Longest piece</h3><div id="longestPiece"></div></section>
+      </div>
+    </section>
+  </main>
+  <footer>Everything stays on your local services and database.</footer>
+  <script src="/app.js" defer></script>
+</body>
+</html>
