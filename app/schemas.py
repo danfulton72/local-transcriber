@@ -18,6 +18,7 @@ class RecordingFinish(BaseModel):
 
 class RecordingDraftUpdate(BaseModel):
     text: str = ""
+    active_capture: bool = False
 
 
 class RecordingUpdate(BaseModel):
