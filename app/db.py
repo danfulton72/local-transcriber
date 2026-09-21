@@ -1,5 +1,9 @@
+import asyncio
 from collections.abc import AsyncIterator
+from pathlib import Path
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -19,8 +23,12 @@ async def get_db() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-async def init_db() -> None:
-    from . import models  # noqa: F401
+def _upgrade_database() -> None:
+    config_path = Path(__file__).resolve().parent.parent / "alembic.ini"
+    config = Config(str(config_path))
+    config.set_main_option("sqlalchemy.url", settings.database_url)
+    command.upgrade(config, "head")
 
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+
+async def init_db() -> None:
+    await asyncio.to_thread(_upgrade_database)
