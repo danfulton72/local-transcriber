@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: sqlite+aiosqlite:///./test.db
+      RECORDINGS_DIR: /tmp/local-transcriber-recordings
+      GATEWAY_BASE_URL: http://127.0.0.1:8555/v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -e '.[test]'
+      - run: pytest -q
+      - run: node --check app/static/app.js
+      - run: python -m compileall -q app
+      - run: docker build -t local-transcriber-ci .
