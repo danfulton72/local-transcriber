@@ -613,3 +613,268 @@ footer{
   html{scroll-behavior:auto}
   *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}
 }
+
+
+/* Writing experience v0.3 */
+.recovery-banner{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:1rem;
+  margin:4px 0 10px;
+  padding:12px 14px;
+  border:1px solid #c8dcca;
+  border-radius:16px;
+  background:#eef7ef;
+  box-shadow:var(--shadow);
+}
+.recovery-banner>div:first-child{display:grid;gap:.08rem}
+.recovery-banner span{color:var(--muted);font-size:.88rem}
+.recovery-actions{flex:0 0 auto}
+.recovery-actions button{min-height:42px}
+
+.word-tools{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:.55rem;
+  flex-wrap:wrap;
+}
+.follow-button{
+  min-height:36px;
+  padding:.38rem .65rem;
+  font-size:.82rem;
+  background:var(--accent-2);
+  border-color:transparent;
+}
+
+.live-preview{
+  display:inline;
+  color:#78847e;
+  opacity:.72;
+  border-bottom:2px dotted #b8c6bd;
+}
+.live-preview::before{content:" "}
+
+.primary-actions{
+  padding-top:2px;
+}
+.primary-actions button{
+  font-weight:700;
+}
+.continue-row{
+  display:flex;
+  justify-content:center;
+  margin-top:10px;
+}
+.continue-row button{
+  min-width:min(100%,240px);
+  font-weight:700;
+}
+.more-actions{
+  margin-top:10px;
+  border-top:1px solid var(--line);
+  padding-top:7px;
+}
+.more-actions summary{
+  width:max-content;
+  max-width:100%;
+  cursor:pointer;
+  color:var(--muted);
+  font-weight:700;
+  font-size:.88rem;
+  padding:.45rem .2rem;
+}
+.more-actions .actions{padding-top:5px}
+
+.editor-help{
+  margin-bottom:12px;
+  color:var(--muted);
+  font-size:.92rem;
+}
+.sentence-editor{
+  display:grid;
+  gap:10px;
+  margin-bottom:12px;
+}
+.sentence-edit-row{
+  display:grid;
+  grid-template-columns:32px minmax(0,1fr);
+  gap:10px;
+  align-items:start;
+}
+.sentence-number{
+  display:grid;
+  place-items:center;
+  width:30px;
+  height:30px;
+  margin-top:8px;
+  border-radius:50%;
+  background:var(--accent-2);
+  color:var(--accent);
+  font-size:.76rem;
+  font-weight:700;
+}
+.sentence-edit-row textarea{
+  min-height:64px;
+  overflow:hidden;
+  resize:none;
+  border:2px solid #d9d2c1;
+  font-size:clamp(1.05rem,2vw,1.22rem);
+  line-height:1.65;
+}
+.sentence-edit-row textarea:focus{border-color:var(--accent)}
+.edit-footer{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:1rem;
+  border-top:1px solid var(--line);
+  padding-top:12px;
+}
+.edit-footer>.muted{font-size:.84rem}
+
+.install-row{
+  display:flex;
+  align-items:center;
+  gap:.8rem;
+  flex-wrap:wrap;
+}
+.install-row button{width:auto}
+.install-row span{font-size:.86rem}
+
+.toast{
+  position:fixed;
+  left:50%;
+  bottom:24px;
+  transform:translateX(-50%);
+  z-index:120;
+  max-width:min(92vw,520px);
+  padding:.75rem 1rem;
+  border-radius:999px;
+  background:#24303a;
+  color:white;
+  box-shadow:0 12px 30px rgba(0,0,0,.2);
+  text-align:center;
+  font-weight:700;
+  font-size:.88rem;
+}
+.focus-exit{
+  display:none;
+}
+
+/* Reading focus: the words become the whole app. */
+body.reading-focus{
+  overflow:hidden;
+  padding-bottom:0!important;
+}
+body.reading-focus .topbar,
+body.reading-focus .tabs,
+body.reading-focus .hero,
+body.reading-focus #errorBox,
+body.reading-focus .grown-up,
+body.reading-focus footer{
+  display:none!important;
+}
+body.reading-focus main{
+  width:100%;
+  max-width:none;
+  padding:0;
+  margin:0;
+}
+body.reading-focus #page-talk{
+  display:block;
+}
+body.reading-focus .recovery-banner{
+  display:none!important;
+}
+body.reading-focus .words-card{
+  position:fixed;
+  inset:0;
+  z-index:100;
+  overflow:auto;
+  border:0;
+  border-radius:0;
+  box-shadow:none;
+  padding:clamp(60px,8vh,92px) max(20px,calc((100vw - 900px)/2)) 64px;
+  background:var(--card);
+}
+body.reading-focus .card-heading,
+body.reading-focus .editor,
+body.reading-focus .primary-actions,
+body.reading-focus .continue-row,
+body.reading-focus .more-actions{
+  display:none!important;
+}
+body.reading-focus .focus-exit{
+  display:block!important;
+  position:fixed;
+  top:max(14px,env(safe-area-inset-top));
+  left:max(14px,env(safe-area-inset-left));
+  z-index:110;
+  min-height:42px;
+  background:var(--accent-2);
+  border-color:transparent;
+}
+body.reading-focus .transcript{
+  display:block!important;
+  max-width:900px;
+  min-height:0;
+  margin:0 auto;
+  font-size:clamp(1.65rem,3.4vw,2.25rem);
+  line-height:1.9;
+}
+body.reading-focus .sentence{
+  cursor:pointer;
+}
+
+@media (max-width:700px){
+  .recovery-banner{
+    align-items:stretch;
+    flex-direction:column;
+  }
+  .recovery-actions{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    width:100%;
+  }
+  .word-tools{
+    width:100%;
+    justify-content:space-between;
+  }
+  .edit-footer{
+    align-items:stretch;
+    flex-direction:column;
+  }
+  .edit-footer .button-row{width:100%}
+  .install-row{
+    align-items:stretch;
+    flex-direction:column;
+  }
+  .install-row button{width:100%}
+  .toast{
+    bottom:calc(78px + env(safe-area-inset-bottom));
+    border-radius:14px;
+  }
+  body.reading-focus .words-card{
+    padding:64px 20px 48px;
+  }
+  body.reading-focus .transcript{
+    font-size:clamp(1.5rem,6.4vw,1.9rem);
+    line-height:1.9;
+  }
+}
+
+@media (max-width:430px){
+  .recovery-actions{grid-template-columns:1fr}
+  .sentence-edit-row{
+    grid-template-columns:26px minmax(0,1fr);
+    gap:7px;
+  }
+  .sentence-number{
+    width:25px;
+    height:25px;
+    margin-top:10px;
+    font-size:.7rem;
+  }
+}
