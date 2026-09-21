@@ -14,15 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
 from .db import SessionLocal, get_db, init_db
-from .models import Recording, TranscriptRevision, TranscriptionChunk, UsageEvent, utcnow
-from .schemas import EventCreate, RecordingCreate, RecordingFinish, RecordingOut, RecordingUpdate, SpeechRequest
+from .models import Recording, RecordingAudioSegment, TranscriptRevision, TranscriptionChunk, UsageEvent, utcnow
+from .schemas import EventCreate, RecordingCreate, RecordingDraftUpdate, RecordingFinish, RecordingOut, RecordingUpdate, SpeechRequest
 from .services.gateway import gateway
 from .services.progress import correction_pairs, top_corrections, word_count
 from .services.storage import save_bytes
 from .services.retention import cleanup_expired_audio
 from .admin import router as admin_router
 
-app = FastAPI(title="Local Transcriber", version="0.2.0")
+app = FastAPI(title="Local Transcriber", version="0.3.0")
 app.include_router(admin_router)
 
 
@@ -45,8 +45,36 @@ def make_title(transcript: str) -> str:
     return title[:240]
 
 
+def merge_overlapping_text(existing: str, incoming: str) -> str:
+    existing = " ".join((existing or "").split()).strip()
+    incoming = " ".join((incoming or "").split()).strip()
+    if not incoming:
+        return existing
+    if not existing:
+        return incoming
+
+    left = existing.split()
+    right = incoming.split()
+    overlap = 0
+    for size in range(min(28, len(left), len(right)), 0, -1):
+        a = [token.casefold().strip(".,!?;:\"'()[]{}") for token in left[-size:]]
+        b = [token.casefold().strip(".,!?;:\"'()[]{}") for token in right[:size]]
+        if a == b:
+            overlap = size
+            break
+
+    remainder = " ".join(right[overlap:]).strip()
+    return existing if not remainder else f"{existing} {remainder}".strip()
+
+
 def recording_out(recording: Recording) -> RecordingOut:
-    transcript = recording.transcript
+    saved_transcript = recording.transcript
+    transcript = (
+        recording.draft_text
+        if recording.status in {"recording", "processing"} and recording.draft_text
+        else saved_transcript
+    )
+    transcript = transcript or ""
     return RecordingOut(
         id=recording.id,
         created_at=recording.created_at,
@@ -61,6 +89,7 @@ def recording_out(recording: Recording) -> RecordingOut:
         is_favourite=recording.is_favourite,
         has_audio=bool(recording.audio_path),
         word_count=word_count(transcript),
+        draft_text=recording.draft_text,
     )
 
 
@@ -115,7 +144,7 @@ async def voices() -> dict:
 
 @app.post("/api/recordings", response_model=RecordingOut)
 async def create_recording(payload: RecordingCreate, db: AsyncSession = Depends(get_db)) -> RecordingOut:
-    recording = Recording(language=payload.language or None, title=payload.title, status="recording")
+    recording = Recording(language=payload.language or None, title=payload.title, status="recording", last_activity_at=utcnow())
     db.add(recording)
     await db.commit()
     await db.refresh(recording)
@@ -136,6 +165,8 @@ async def list_recordings(
         check_parent_pin(x_parent_pin)
     query = select(Recording)
     query = query.where(Recording.deleted_at.is_not(None) if deleted else Recording.deleted_at.is_(None))
+    if not deleted:
+        query = query.where(Recording.status == "ready")
     if favourite is not None:
         query = query.where(Recording.is_favourite == favourite)
     if q:
@@ -150,6 +181,68 @@ async def list_recordings(
     query = query.order_by(Recording.created_at.desc()).offset(offset).limit(limit)
     records = (await db.execute(query)).scalars().all()
     return [recording_out(record) for record in records]
+
+
+@app.get("/api/recoverable", response_model=RecordingOut | None)
+async def recoverable_recording(db: AsyncSession = Depends(get_db)) -> RecordingOut | None:
+    recording = (
+        await db.execute(
+            select(Recording)
+            .where(
+                Recording.deleted_at.is_(None),
+                Recording.status.in_(["recording", "processing"]),
+            )
+            .order_by(Recording.last_activity_at.desc(), Recording.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not recording:
+        return None
+
+    if not recording.draft_text:
+        chunks = (
+            await db.execute(
+                select(TranscriptionChunk)
+                .where(TranscriptionChunk.recording_id == recording.id)
+                .order_by(TranscriptionChunk.chunk_number.asc(), TranscriptionChunk.created_at.asc())
+            )
+        ).scalars().all()
+        recovered = ""
+        for chunk in chunks:
+            recovered = merge_overlapping_text(recovered, chunk.text)
+        if recovered:
+            recording.draft_text = recovered
+            recording.last_activity_at = utcnow()
+            await db.commit()
+            await db.refresh(recording)
+
+    return recording_out(recording)
+
+
+@app.patch("/api/recordings/{recording_id}/draft", response_model=RecordingOut)
+async def save_recording_draft(
+    recording_id: uuid.UUID,
+    payload: RecordingDraftUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> RecordingOut:
+    recording = await find_recording(recording_id, db)
+    recording.draft_text = payload.text.strip() or None
+    recording.last_activity_at = utcnow()
+    await db.commit()
+    await db.refresh(recording)
+    return recording_out(recording)
+
+
+@app.post("/api/recordings/{recording_id}/abandon", response_model=RecordingOut)
+async def abandon_recording(recording_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> RecordingOut:
+    recording = await find_recording(recording_id, db)
+    if recording.status in {"recording", "processing"}:
+        recording.status = "abandoned"
+        recording.draft_text = None
+        recording.last_activity_at = utcnow()
+        await db.commit()
+        await db.refresh(recording)
+    return recording_out(recording)
 
 
 @app.get("/api/recordings/{recording_id}", response_model=RecordingOut)
