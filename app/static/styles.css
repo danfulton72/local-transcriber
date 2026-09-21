@@ -105,41 +105,53 @@ main{padding-bottom:44px;min-width:0}
 .page.active{display:block}
 
 .hero{
-  text-align:center;
-  padding:clamp(20px,4vw,36px) 12px 22px;
+  display:grid;
+  grid-template-columns:118px minmax(0,1fr) auto;
+  grid-template-areas:
+    "prompt prompt prompt"
+    "record status timer"
+    "record detail pause"
+    "record meter meter";
+  align-items:center;
+  gap:3px 18px;
+  text-align:left;
+  padding:10px 8px 12px;
 }
 .big-prompt{
-  font-size:clamp(1.4rem,4vw,2.2rem);
-  line-height:1.3;
+  grid-area:prompt;
+  font-size:clamp(1.22rem,2.6vw,1.7rem);
+  line-height:1.28;
   font-weight:700;
-  margin-bottom:20px;
+  margin-bottom:5px;
 }
 .record-button{
-  width:clamp(176px,22vw,220px);
+  grid-area:record;
+  width:112px;
   aspect-ratio:1;
   height:auto;
   border-radius:50%;
   background:var(--accent);
   color:white;
-  border:10px solid rgba(255,255,255,.76);
-  box-shadow:0 12px 30px rgba(48,107,93,.28);
-  font-size:clamp(1rem,1.5vw,1.12rem);
+  border:6px solid rgba(255,255,255,.76);
+  box-shadow:0 8px 22px rgba(48,107,93,.24);
+  font-size:.86rem;
   font-weight:700;
   display:inline-flex;
   flex-direction:column;
   justify-content:center;
   align-items:center;
-  gap:.4rem;
+  gap:.22rem;
 }
 .record-button.recording{background:#b54d4d}
-.mic{font-size:clamp(2.8rem,6vw,3.4rem);line-height:1}
+.mic{font-size:2.15rem;line-height:1}
 .meter{
-  height:52px;
+  grid-area:meter;
+  height:26px;
   display:flex;
-  justify-content:center;
+  justify-content:flex-start;
   align-items:center;
   gap:4px;
-  margin:14px 0 4px;
+  margin:2px 0 0;
 }
 .meter i{
   width:5px;
@@ -149,10 +161,11 @@ main{padding-bottom:44px;min-width:0}
   opacity:.2;
   transition:height .08s linear,opacity .08s linear;
 }
-.status{font-weight:700;margin-bottom:0;font-size:clamp(1.05rem,2vw,1.18rem)}
+.status{grid-area:status;font-weight:700;margin:0;font-size:clamp(1.03rem,1.8vw,1.15rem)}
 .status-detail,.muted,.privacy-note{color:var(--muted)}
-.status-detail{max-width:680px;margin-inline:auto}
-.timer{font-variant-numeric:tabular-nums;margin-bottom:.4rem}
+.status-detail{grid-area:detail;max-width:720px;margin:0;font-size:.92rem}
+.timer{grid-area:timer;font-variant-numeric:tabular-nums;margin:0;font-weight:700}
+#pauseButton{grid-area:pause;justify-self:end}
 
 .words-card,.panel,.grown-up,.pin-panel{
   min-width:0;
@@ -161,7 +174,10 @@ main{padding-bottom:44px;min-width:0}
   box-shadow:var(--shadow);
   border-radius:var(--radius);
 }
-.words-card{padding:clamp(18px,3vw,34px)}
+.words-card{
+  padding:clamp(20px,3vw,36px);
+  min-height:clamp(320px,48vh,620px);
+}
 .card-heading,.section-heading{
   display:flex;
   justify-content:space-between;
@@ -179,10 +195,10 @@ main{padding-bottom:44px;min-width:0}
   white-space:nowrap;
 }
 .transcript{
-  min-height:150px;
-  margin:18px 0;
-  font-size:clamp(1.18rem,2.3vw,1.6rem);
-  line-height:1.82;
+  min-height:210px;
+  margin:14px 0 20px;
+  font-size:clamp(1.35rem,2.7vw,1.9rem);
+  line-height:1.78;
   letter-spacing:.015em;
   overflow-wrap:break-word;
 }
@@ -410,7 +426,7 @@ footer{
 @media (max-width:1024px){
   :root{--content:920px}
   .topbar,.tabs,main,footer{width:min(var(--content),calc(100% - 28px))}
-  .record-button{width:clamp(180px,25vw,210px)}
+   .record-button{width:104px}
   .actions button{flex-basis:calc(33.333% - .5rem)}
   .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .progress-grid{grid-template-columns:1fr}
@@ -461,19 +477,37 @@ footer{
   }
 
   main{padding-bottom:24px}
-  .hero{padding:18px 8px 16px}
-  .big-prompt{font-size:clamp(1.35rem,7vw,1.85rem);margin-bottom:16px}
-  .record-button{
-    width:min(46vw,180px);
-    min-width:150px;
-    border-width:8px;
+   .hero{
+    grid-template-columns:94px minmax(0,1fr);
+    grid-template-areas:
+      "prompt prompt"
+      "record status"
+      "record detail"
+      "record timer"
+      "meter meter"
+      "pause pause";
+    gap:2px 12px;
+    padding:8px 4px 10px;
   }
-  .mic{font-size:2.7rem}
-  .meter{height:42px;margin-top:10px}
-  .status-detail{font-size:.92rem}
-  .words-card{padding:18px 16px}
+  .big-prompt{font-size:clamp(1.2rem,5.5vw,1.5rem);margin-bottom:4px}
+  .record-button{
+    width:90px;
+    min-width:90px;
+    border-width:5px;
+    font-size:.78rem;
+  }
+  .mic{font-size:1.9rem}
+  .meter{height:20px;margin-top:3px;justify-content:center}
+  .status{font-size:1rem}
+  .status-detail{font-size:.84rem;line-height:1.45}
+  .timer{font-size:.9rem;color:var(--muted)}
+  #pauseButton{justify-self:start;margin-top:4px}
+  .words-card{
+    padding:18px 16px;
+    min-height:calc(100dvh - 265px - 76px);
+  }
   .card-heading,.section-heading{align-items:flex-start}
-  .transcript{font-size:clamp(1.16rem,5.2vw,1.42rem);line-height:1.85;min-height:120px}
+   .transcript{font-size:clamp(1.32rem,5.8vw,1.62rem);line-height:1.82;min-height:180px;margin-top:12px}
   .actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
   .actions button{width:100%;min-width:0}
   .button-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -528,8 +562,8 @@ footer{
   .topbar{padding-inline:2px}
   .health{max-width:44%;font-size:.69rem;padding:.38rem .55rem}
   .tab{font-size:.79rem;padding-inline:.2rem}
-  .record-button{width:154px;min-width:154px}
-  .record-button span:last-child{font-size:.92rem}
+   .record-button{width:82px;min-width:82px}
+  .record-button span:last-child{font-size:.72rem}
   .words-card,.panel{padding:14px}
   .card-heading,.section-heading{
     flex-direction:column;
@@ -563,7 +597,7 @@ footer{
   .metrics{grid-template-columns:1fr}
   .tabs{gap:4px;padding-inline:6px}
   .tab{font-size:.74rem}
-  .record-button{width:145px;min-width:145px}
+   .record-button{width:78px;min-width:78px}
 }
 
 @media (hover:hover) and (pointer:fine){
