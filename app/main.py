@@ -257,6 +257,8 @@ async def save_recording_draft(
 ) -> RecordingOut:
     recording = await find_recording(recording_id, db)
     recording.draft_text = payload.text.strip() or None
+    if payload.active_capture:
+        recording.status = "recording"
     recording.last_activity_at = utcnow()
     await db.commit()
     await db.refresh(recording)
@@ -368,6 +370,7 @@ async def transcribe_chunk(
         )
     )
     recording.processing_seconds += processing
+    recording.status = "recording"
     recording.last_activity_at = utcnow()
     await db.commit()
     return {"text": transcript, "processing_seconds": processing}
