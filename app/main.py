@@ -13,20 +13,25 @@ from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
-from .db import get_db, init_db
+from .db import SessionLocal, get_db, init_db
 from .models import Recording, TranscriptRevision, TranscriptionChunk, UsageEvent, utcnow
 from .schemas import EventCreate, RecordingCreate, RecordingFinish, RecordingOut, RecordingUpdate, SpeechRequest
 from .services.gateway import gateway
 from .services.progress import correction_pairs, top_corrections, word_count
 from .services.storage import save_bytes
+from .services.retention import apply_recording_retention, cleanup_expired_audio
+from .admin import router as admin_router
 
-app = FastAPI(title="Local Transcriber", version="0.1.0")
+app = FastAPI(title="Local Transcriber", version="0.2.0")
+app.include_router(admin_router)
 
 
 @app.on_event("startup")
 async def startup() -> None:
     settings.recordings_dir.mkdir(parents=True, exist_ok=True)
     await init_db()
+    async with SessionLocal() as db:
+        await cleanup_expired_audio(db)
 
 
 def make_title(transcript: str) -> str:
@@ -124,8 +129,11 @@ async def list_recordings(
     deleted: bool = False,
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[RecordingOut]:
+    if deleted:
+        check_parent_pin(x_parent_pin)
     query = select(Recording)
     query = query.where(Recording.deleted_at.is_not(None) if deleted else Recording.deleted_at.is_(None))
     if favourite is not None:
@@ -179,7 +187,12 @@ async def delete_recording(recording_id: uuid.UUID, db: AsyncSession = Depends(g
 
 
 @app.post("/api/recordings/{recording_id}/restore", response_model=RecordingOut)
-async def restore_recording(recording_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> RecordingOut:
+async def restore_recording(
+    recording_id: uuid.UUID,
+    x_parent_pin: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> RecordingOut:
+    check_parent_pin(x_parent_pin)
     recording = await find_recording(recording_id, db, include_deleted=True)
     recording.deleted_at = None
     await db.commit()
@@ -291,6 +304,7 @@ async def transcribe_recording(
     recording.status = "ready"
     recording.title = recording.title or make_title(transcript)
     await db.commit()
+    await apply_recording_retention(recording, db)
     await db.refresh(recording)
     return recording_out(recording)
 
@@ -305,6 +319,7 @@ async def finish_recording(recording_id: uuid.UUID, payload: RecordingFinish, db
     recording.status = "ready"
     recording.title = recording.title or make_title(recording.transcript_original)
     await db.commit()
+    await apply_recording_retention(recording, db)
     await db.refresh(recording)
     return recording_out(recording)
 
