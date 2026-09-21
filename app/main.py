@@ -19,7 +19,7 @@ from .schemas import EventCreate, RecordingCreate, RecordingFinish, RecordingOut
 from .services.gateway import gateway
 from .services.progress import correction_pairs, top_corrections, word_count
 from .services.storage import save_bytes
-from .services.retention import apply_recording_retention, cleanup_expired_audio
+from .services.retention import cleanup_expired_audio
 from .admin import router as admin_router
 
 app = FastAPI(title="Local Transcriber", version="0.2.0")
@@ -304,7 +304,7 @@ async def transcribe_recording(
     recording.status = "ready"
     recording.title = recording.title or make_title(transcript)
     await db.commit()
-    await apply_recording_retention(recording, db)
+    await cleanup_expired_audio(db)
     await db.refresh(recording)
     return recording_out(recording)
 
@@ -319,7 +319,7 @@ async def finish_recording(recording_id: uuid.UUID, payload: RecordingFinish, db
     recording.status = "ready"
     recording.title = recording.title or make_title(recording.transcript_original)
     await db.commit()
-    await apply_recording_retention(recording, db)
+    await cleanup_expired_audio(db)
     await db.refresh(recording)
     return recording_out(recording)
 
