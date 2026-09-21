@@ -36,6 +36,7 @@
     draftSaveTimer: null,
     currentAudio: null,
     currentAudioUrl: null,
+    playbackToken: 0,
     searchTimer: null,
     autoFollow: true,
     programmaticScrollAt: 0,
@@ -135,8 +136,9 @@
 
   function renderTranscript() {
     const text = state.transcript.trim();
-    const confirmed = state.recording ? state.confirmedTranscript.trim() : text;
-    const pending = state.recording ? state.livePending.trim() : '';
+    const liveMode = state.recording || state.transcribing;
+    const confirmed = liveMode ? state.confirmedTranscript.trim() : text;
+    const pending = liveMode ? state.livePending.trim() : '';
     els.transcriptView.replaceChildren();
     const count = wordCount(text);
     els.wordCount.textContent = count + ' word' + (count === 1 ? '' : 's');
@@ -169,14 +171,14 @@
     }
 
     const hasText = Boolean(text);
-    const finished = Boolean(state.currentRecording && state.currentRecording.status === 'ready' && !state.recording && !state.transcribing);
+    const canContinue = Boolean(state.currentRecording && hasText && !state.recording && !state.transcribing);
     els.hearButton.disabled = !hasText;
     els.focusButton.disabled = !hasText;
     els.editButton.disabled = !hasText || state.recording || !state.currentRecording;
     els.useWordsButton.disabled = !hasText;
     els.playRecordingButton.disabled = !state.currentRecording?.has_audio;
     els.favouriteButton.disabled = !state.currentRecording;
-    els.keepTalkingButton.classList.toggle('hidden', !finished || !hasText);
+    els.keepTalkingButton.classList.toggle('hidden', !canContinue);
     els.favouriteButton.textContent = state.currentRecording?.is_favourite ? '★ Favourite' : '☆ Favourite';
     updateFollowButton();
     maybeAutoFollow();
@@ -305,6 +307,7 @@
   function resetLive() {
     state.liveBuffers = []; state.liveSampleCount = 0; state.liveFreshSamples = 0; state.liveQueue = [];
     state.liveProcessing = false; state.liveChunkIndex = 0; state.liveCompleted = 0; state.liveProcessingSeconds = 0; state.liveDrainResolvers = [];
+    state.livePending = '';
   }
 
   function syncRecordingUI() {
@@ -326,9 +329,33 @@
     });
   }
 
-  async function startRecording() {
+  async function persistDraftNow(text = state.transcript) {
+    if (!state.currentRecording) return;
+    const draft = String(text || '').trim();
+    localStorage.setItem('activeRecordingId', state.currentRecording.id);
+    localStorage.setItem('activeRecordingDraft', draft);
+    const updated = await api('/api/recordings/' + state.currentRecording.id + '/draft', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: draft }),
+    });
+    state.currentRecording = { ...state.currentRecording, draft_text: updated.draft_text };
+  }
+
+  function scheduleDraftSave(immediate = false) {
+    if (!state.currentRecording) return;
+    clearTimeout(state.draftSaveTimer);
+    if (immediate) {
+      persistDraftNow().catch(() => {});
+      return;
+    }
+    state.draftSaveTimer = setTimeout(() => persistDraftNow().catch(() => {}), 650);
+  }
+
+  async function startRecording(reuseExisting = false) {
     setError('');
     stopSpeech();
+    exitReadingFocus();
     if (!window.isSecureContext && !['localhost', '127.0.0.1'].includes(location.hostname)) return setError('The microphone needs HTTPS.');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
@@ -338,16 +365,29 @@
       const source = ctx.createMediaStreamSource(stream);
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       const mute = ctx.createGain(); mute.gain.value = 0;
-      let record;
-      try { record = await createRecording(); } catch (error) {
+
+      let record = reuseExisting ? state.currentRecording : null;
+      try {
+        if (!record) record = await createRecording();
+      } catch (error) {
         stream.getTracks().forEach((t) => t.stop());
         await ctx.close();
         throw error;
       }
+
+      const baseText = reuseExisting ? state.transcript.trim() : '';
       state.currentRecording = record;
+      state.captureBaseTranscript = baseText;
+      state.continuation = Boolean(reuseExisting && record.status === 'ready');
       state.stream = stream; state.audioContext = ctx; state.source = source; state.processor = processor; state.mute = mute;
       state.sampleRate = ctx.sampleRate; state.fullBuffers = []; resetLive(); state.recording = true; state.paused = false;
-      setTranscript('');
+      state.autoFollow = true;
+      state.confirmedTranscript = baseText;
+      state.transcript = baseText;
+      localStorage.setItem('activeRecordingId', record.id);
+      localStorage.setItem('activeRecordingDraft', baseText);
+      renderTranscript();
+
       processor.onaudioprocess = (event) => {
         if (!state.recording || state.paused) return setMeter(0);
         const input = event.inputBuffer.getChannelData(0);
@@ -359,7 +399,9 @@
         setMeter(Math.sqrt(sum / input.length));
       };
       source.connect(processor); processor.connect(mute); mute.connect(ctx.destination);
-      startTimer(); syncRecordingUI(); setStatus('I’m listening', 'Your words will appear a few seconds behind you.');
+      startTimer(); syncRecordingUI();
+      setStatus(reuseExisting ? 'Keep going' : 'I’m listening', reuseExisting ? 'Your new words will be added to this piece.' : 'Your words will appear a few seconds behind you.');
+      scheduleDraftSave(true);
     } catch (error) { cleanupRecording(); setError(error?.message || 'I could not open the microphone.'); }
   }
 
@@ -401,10 +443,10 @@
       if (els.prompt.value.trim()) form.append('prompt', els.prompt.value.trim());
       try {
         const result = await api('/api/recordings/' + state.currentRecording.id + '/chunks', { method: 'POST', body: form });
-        appendLiveTranscript(result.text);
+        acceptLiveTranscript(result.text);
         state.liveCompleted += 1;
         state.liveProcessingSeconds += Number(result.processing_seconds || 0);
-        setStatus(state.recording ? 'I’m listening' : 'Nearly done', state.liveQueue.length ? (state.liveQueue.length + ' little bits waiting') : 'Writing your latest words…');
+        setStatus(state.recording ? 'I’m listening' : 'Nearly done', state.liveQueue.length ? (state.liveQueue.length + ' little bits waiting') : 'Checking your latest words…');
       } catch (error) { setError('One short part could not be written down: ' + error.message); }
     }
     state.liveProcessing = false;
@@ -432,19 +474,43 @@
     state.recording = false;
     flushLiveChunk(true);
     cleanupRecording();
-    state.transcribing = true; syncRecordingUI(); setStatus('Nearly done', 'Saving your voice and the last few words…');
+    state.transcribing = true; syncRecordingUI(); setStatus('Nearly done', 'Saving your voice and checking the last few words…');
     await waitForLiveDrain();
+    commitLivePending();
+    clearTimeout(state.draftSaveTimer);
     try {
+      await persistDraftNow();
       const wav = encodeWav(mergeBuffers(state.fullBuffers), state.sampleRate);
-      const audioForm = new FormData(); audioForm.append('file', wav, 'recording.wav');
+      const audioForm = new FormData();
+      audioForm.append('file', wav, 'recording-' + Date.now() + '.wav');
       await api('/api/recordings/' + state.currentRecording.id + '/audio', { method: 'POST', body: audioForm });
+
+      let finalText = state.transcript.trim();
+      if (state.continuation && state.captureBaseTranscript && finalText.startsWith(state.captureBaseTranscript)) {
+        finalText = finalText.slice(state.captureBaseTranscript.length).trim();
+      }
+
       const finished = await api('/api/recordings/' + state.currentRecording.id + '/finish', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript: state.transcript, duration_seconds: elapsed, processing_seconds: state.liveProcessingSeconds }),
+        body: JSON.stringify({
+          transcript: finalText,
+          duration_seconds: elapsed,
+          processing_seconds: state.liveProcessingSeconds,
+          append: state.continuation,
+        }),
       });
-      state.currentRecording = finished; setTranscript(finished.transcript); setStatus('All done!', 'You can hear it, edit it, or find it later in My words.');
-    } catch (error) { setError('I wrote the words, but saving the finished recording failed: ' + error.message); }
-    finally { state.transcribing = false; state.fullBuffers = []; syncRecordingUI(); }
+      state.currentRecording = finished;
+      localStorage.removeItem('activeRecordingId');
+      localStorage.removeItem('activeRecordingDraft');
+      state.captureBaseTranscript = ''; state.continuation = false;
+      setTranscript(finished.transcript);
+      setStatus('All done!', 'Your piece is saved. You can keep talking, read it, edit it, or use your words.');
+    } catch (error) {
+      setError('Your words are safe as a draft, but finishing the recording failed: ' + error.message);
+      setStatus('Your draft is safe', 'You can recover it when this page opens again.');
+    } finally {
+      state.transcribing = false; state.fullBuffers = []; syncRecordingUI();
+    }
   }
 
   function togglePause() {
@@ -459,41 +525,121 @@
     setError(''); state.transcribing = true; syncRecordingUI(); setStatus('Writing it down', 'Listening to ' + file.name + '…');
     try {
       const record = await createRecording(); state.currentRecording = record;
+      localStorage.setItem('activeRecordingId', record.id);
       const form = new FormData(); form.append('file', file, file.name); form.append('task', 'transcriptions');
       if (els.language.value) form.append('language', els.language.value);
       if (els.prompt.value.trim()) form.append('prompt', els.prompt.value.trim());
       const finished = await api('/api/recordings/' + record.id + '/transcribe', { method: 'POST', body: form });
-      state.currentRecording = finished; setTranscript(finished.transcript); setStatus('All done!', 'The file is saved in My words.');
+      state.currentRecording = finished;
+      localStorage.removeItem('activeRecordingId'); localStorage.removeItem('activeRecordingDraft');
+      setTranscript(finished.transcript); setStatus('All done!', 'The file is saved in My words.');
     } catch (error) { setError(error.message); setStatus('Something went wrong', 'You can try again.'); }
     finally { state.transcribing = false; els.fileInput.value = ''; syncRecordingUI(); }
   }
 
   function newRecordingView() {
     if (state.recording) return;
-    stopSpeech(); state.currentRecording = null; setTranscript(''); setError(''); setStatus('Ready when you are', 'Press the microphone and talk normally.');
+    stopSpeech(); exitReadingFocus();
+    state.currentRecording = null; state.captureBaseTranscript = ''; state.continuation = false;
+    setTranscript(''); setError(''); setStatus('Ready when you are', 'Press the microphone and talk normally.');
+  }
+
+  function editorText() {
+    return [...els.sentenceEditor.querySelectorAll('textarea')].map((item) => item.value.trim()).filter(Boolean).join(' ').trim();
+  }
+
+  function autoGrowEditor(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.max(64, textarea.scrollHeight) + 'px';
+  }
+
+  function renderSentenceEditor(text) {
+    els.sentenceEditor.replaceChildren();
+    const sentences = splitSentences(text);
+    for (const [index, sentence] of (sentences.length ? sentences : [text]).entries()) {
+      const row = document.createElement('label'); row.className = 'sentence-edit-row';
+      const number = document.createElement('span'); number.className = 'sentence-number'; number.textContent = String(index + 1);
+      const textarea = document.createElement('textarea');
+      textarea.value = sentence; textarea.rows = 2; textarea.spellcheck = true; textarea.setAttribute('aria-label', 'Sentence ' + (index + 1));
+      textarea.addEventListener('input', () => {
+        autoGrowEditor(textarea);
+        state.transcript = editorText();
+        els.wordCount.textContent = wordCount(state.transcript) + ' words';
+        scheduleEditAutosave();
+      });
+      row.append(number, textarea); els.sentenceEditor.appendChild(row); autoGrowEditor(textarea);
+    }
   }
 
   function openEditor() {
-    if (!state.currentRecording || !state.transcript) return;
-    state.editSnapshot = state.transcript; els.transcriptEditor.value = state.transcript;
-    els.transcriptView.classList.add('hidden'); els.editorWrap.classList.remove('hidden'); els.transcriptEditor.focus();
+    if (!state.currentRecording || !state.transcript || state.recording) return;
+    state.editSnapshot = state.transcript;
+    const localDraft = localStorage.getItem('editDraft:' + state.currentRecording.id);
+    const draft = state.currentRecording.draft_text || localDraft || state.transcript;
+    state.transcript = draft;
+    renderSentenceEditor(draft);
+    els.transcriptView.classList.add('hidden'); els.editorWrap.classList.remove('hidden');
+    els.editSaveStatus.textContent = draft !== state.editSnapshot ? 'Recovered unsaved edits' : 'Changes save automatically';
+    els.sentenceEditor.querySelector('textarea')?.focus();
   }
 
   function closeEditor() {
     els.editorWrap.classList.add('hidden'); els.transcriptView.classList.remove('hidden');
+    renderTranscript();
+  }
+
+  async function saveEditDraft() {
+    if (!state.currentRecording) return;
+    const edited = editorText();
+    state.transcript = edited;
+    localStorage.setItem('editDraft:' + state.currentRecording.id, edited);
+    els.editSaveStatus.textContent = 'Saving…';
+    try {
+      const updated = await api('/api/recordings/' + state.currentRecording.id + '/draft', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: edited }),
+      });
+      state.currentRecording = { ...state.currentRecording, draft_text: updated.draft_text };
+      els.editSaveStatus.textContent = 'Saved';
+    } catch {
+      els.editSaveStatus.textContent = 'Saved on this device';
+    }
+  }
+
+  function scheduleEditAutosave() {
+    clearTimeout(state.editSaveTimer);
+    els.editSaveStatus.textContent = 'Saving soon…';
+    state.editSaveTimer = setTimeout(saveEditDraft, 700);
   }
 
   async function saveEdit() {
-    const edited = els.transcriptEditor.value.trim();
+    clearTimeout(state.editSaveTimer);
+    const edited = editorText();
     try {
       const updated = await api('/api/recordings/' + state.currentRecording.id, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transcript_edited: edited }),
       });
+      localStorage.removeItem('editDraft:' + state.currentRecording.id);
       state.currentRecording = updated; setTranscript(updated.transcript); closeEditor();
+      showToast('Words saved');
     } catch (error) { setError(error.message); }
   }
 
+  async function undoEdit() {
+    clearTimeout(state.editSaveTimer);
+    const original = state.editSnapshot;
+    localStorage.removeItem('editDraft:' + state.currentRecording.id);
+    try {
+      await api('/api/recordings/' + state.currentRecording.id + '/draft', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '' }),
+      });
+    } catch {}
+    state.transcript = original;
+    closeEditor();
+    setTranscript(original);
+  }
+
   function stopSpeech() {
+    state.playbackToken += 1;
     if (state.currentAudio) { try { state.currentAudio.pause(); } catch {} }
     if (state.currentAudioUrl) URL.revokeObjectURL(state.currentAudioUrl);
     state.currentAudio = null; state.currentAudioUrl = null;
@@ -514,14 +660,33 @@
     } catch (error) { setError('Read-aloud failed: ' + error.message); }
   }
 
+  async function playAudioUrl(url, token) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Voice recording is not available');
+    const blob = await response.blob(); const objectUrl = URL.createObjectURL(blob);
+    const audio = new Audio(objectUrl);
+    state.currentAudio = audio; state.currentAudioUrl = objectUrl;
+    await new Promise((resolve, reject) => {
+      audio.addEventListener('ended', resolve, { once: true });
+      audio.addEventListener('error', reject, { once: true });
+      audio.play().catch(reject);
+    });
+    if (state.playbackToken !== token) return false;
+    URL.revokeObjectURL(objectUrl); state.currentAudioUrl = null; state.currentAudio = null;
+    return true;
+  }
+
   async function playRecording() {
     if (!state.currentRecording?.has_audio) return;
     stopSpeech();
+    const token = ++state.playbackToken;
     try {
-      const response = await fetch('/api/recordings/' + state.currentRecording.id + '/audio');
-      if (!response.ok) throw new Error('Voice recording is not available');
-      const blob = await response.blob(); const url = URL.createObjectURL(blob); const audio = new Audio(url);
-      state.currentAudio = audio; state.currentAudioUrl = url; audio.addEventListener('ended', stopSpeech, { once: true }); await audio.play();
+      const data = await api('/api/recordings/' + state.currentRecording.id + '/audio-segments', { cache: 'no-store' });
+      for (const segment of data.segments || []) {
+        if (state.playbackToken !== token) break;
+        const keepGoing = await playAudioUrl(segment.url, token);
+        if (!keepGoing) break;
+      }
     } catch (error) { setError(error.message); }
   }
 
@@ -535,11 +700,78 @@
     } catch (error) { setError(error.message); }
   }
 
-  async function copyTranscript() {
+  async function useMyWords() {
     if (!state.transcript) return;
-    await navigator.clipboard.writeText(state.transcript);
-    if (state.currentRecording) api('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_type: 'copy', recording_id: state.currentRecording.id }) }).catch(() => {});
-    els.copyButton.textContent = '✓ Copied'; setTimeout(() => { els.copyButton.textContent = '📋 Copy'; }, 1200);
+    const title = state.currentRecording?.title || 'My words';
+    if (navigator.share) {
+      try {
+        await navigator.share({ title, text: state.transcript });
+        if (state.currentRecording) api('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_type: 'share', recording_id: state.currentRecording.id }) }).catch(() => {});
+        showToast('Shared');
+        return;
+      } catch (error) {
+        if (error?.name === 'AbortError') return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(state.transcript);
+      if (state.currentRecording) api('/api/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event_type: 'copy', recording_id: state.currentRecording.id }) }).catch(() => {});
+      showToast('Copied — paste your words anywhere');
+    } catch (error) {
+      setError('I could not copy your words: ' + error.message);
+    }
+  }
+
+  function enterReadingFocus() {
+    if (!state.transcript) return;
+    closeEditor();
+    document.body.classList.add('reading-focus');
+    els.focusExitButton.classList.remove('hidden');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function exitReadingFocus() {
+    document.body.classList.remove('reading-focus');
+    els.focusExitButton.classList.add('hidden');
+  }
+
+  async function checkRecoverable() {
+    try {
+      const record = await api('/api/recoverable', { cache: 'no-store' });
+      if (!record || !record.transcript) return;
+      state.recoverableRecording = record;
+      els.recoveryDetail.textContent = record.word_count + ' words were saved as a draft.';
+      els.recoveryBanner.classList.remove('hidden');
+    } catch {}
+  }
+
+  function recoverWords() {
+    const record = state.recoverableRecording;
+    if (!record) return;
+    state.currentRecording = record;
+    setTranscript(record.draft_text || record.transcript);
+    els.recoveryBanner.classList.add('hidden');
+    setStatus('Your words are back', 'Press Keep talking to carry on, or edit what you already have.');
+    switchPage('talk');
+    showToast('Draft recovered');
+  }
+
+  function dismissRecovery() {
+    els.recoveryBanner.classList.add('hidden');
+  }
+
+  async function installApp() {
+    if (state.installPrompt) {
+      state.installPrompt.prompt();
+      await state.installPrompt.userChoice;
+      state.installPrompt = null;
+      els.installHint.textContent = 'Talk to Type is ready from your home screen.';
+      return;
+    }
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    els.installHint.textContent = ios
+      ? 'On iPhone/iPad: Share → Add to Home Screen.'
+      : 'Use your browser menu and choose Install app or Add to Home screen.';
   }
 
   function switchPage(name) {
