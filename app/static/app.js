@@ -22,14 +22,25 @@
     liveCompleted: 0,
     liveProcessingSeconds: 0,
     liveDrainResolvers: [],
+    livePending: '',
+    confirmedTranscript: '',
+    captureBaseTranscript: '',
+    continuation: false,
     startedAt: 0,
     timer: null,
     transcript: '',
     currentRecording: null,
+    recoverableRecording: null,
     editSnapshot: '',
+    editSaveTimer: null,
+    draftSaveTimer: null,
     currentAudio: null,
     currentAudioUrl: null,
     searchTimer: null,
+    autoFollow: true,
+    programmaticScrollAt: 0,
+    lastScrollY: window.scrollY,
+    installPrompt: null,
   };
 
   const els = {
@@ -37,9 +48,14 @@
     recordButton: $('recordButton'), recordButtonText: $('recordButtonText'), meter: $('meter'),
     statusText: $('statusText'), statusDetail: $('statusDetail'), timer: $('timer'), pauseButton: $('pauseButton'),
     errorBox: $('errorBox'), transcriptView: $('transcriptView'), wordCount: $('wordCount'),
-    editorWrap: $('editorWrap'), transcriptEditor: $('transcriptEditor'), saveEditButton: $('saveEditButton'), cancelEditButton: $('cancelEditButton'),
-    hearButton: $('hearButton'), playRecordingButton: $('playRecordingButton'), editButton: $('editButton'), favouriteButton: $('favouriteButton'), copyButton: $('copyButton'), newButton: $('newButton'),
+    editorWrap: $('editorWrap'), sentenceEditor: $('sentenceEditor'), editSaveStatus: $('editSaveStatus'), saveEditButton: $('saveEditButton'), cancelEditButton: $('cancelEditButton'),
+    hearButton: $('hearButton'), focusButton: $('focusButton'), focusExitButton: $('focusExitButton'), useWordsButton: $('useWordsButton'),
+    playRecordingButton: $('playRecordingButton'), editButton: $('editButton'), favouriteButton: $('favouriteButton'), newButton: $('newButton'), keepTalkingButton: $('keepTalkingButton'),
+    followWordsButton: $('followWordsButton'),
+    recoveryBanner: $('recoveryBanner'), recoveryDetail: $('recoveryDetail'), recoverButton: $('recoverButton'), dismissRecoveryButton: $('dismissRecoveryButton'),
+    toast: $('toast'),
     language: $('language'), chunkSeconds: $('chunkSeconds'), voice: $('voice'), speechSpeed: $('speechSpeed'), prompt: $('prompt'), fileInput: $('fileInput'),
+    installAppButton: $('installAppButton'), installHint: $('installHint'),
     historyList: $('historyList'), historySearch: $('historySearch'), historyFavourites: $('historyFavourites'), refreshHistoryButton: $('refreshHistoryButton'),
     progressDays: $('progressDays'), parentPin: $('parentPin'), loadProgressButton: $('loadProgressButton'), progressContent: $('progressContent'),
     metricGrid: $('metricGrid'), correctionsList: $('correctionsList'), dailyChart: $('dailyChart'), longestPiece: $('longestPiece'),
@@ -74,53 +90,17 @@
     return (String(text || '').trim().match(/[\p{L}\p{N}'’-]+/gu) || []).length;
   }
 
-  function renderTranscript() {
-    const text = state.transcript.trim();
-    els.transcriptView.replaceChildren();
-    const count = wordCount(text);
-    els.wordCount.textContent = count + ' word' + (count === 1 ? '' : 's');
-    if (!text) {
-      els.transcriptView.classList.add('empty');
-      const p = document.createElement('p');
-      p.textContent = 'Your words will appear here.';
-      els.transcriptView.appendChild(p);
-    } else {
-      els.transcriptView.classList.remove('empty');
-      for (const sentence of splitSentences(text)) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'sentence';
-        button.textContent = sentence + ' ';
-        button.title = 'Tap to hear this sentence';
-        button.addEventListener('click', () => speakText(sentence));
-        els.transcriptView.appendChild(button);
-      }
-    }
-    const hasText = Boolean(text);
-    els.hearButton.disabled = !hasText;
-    els.editButton.disabled = !hasText || state.recording || !state.currentRecording;
-    els.copyButton.disabled = !hasText;
-    els.playRecordingButton.disabled = !state.currentRecording?.has_audio;
-    els.favouriteButton.disabled = !state.currentRecording;
-    els.favouriteButton.textContent = state.currentRecording?.is_favourite ? '★ Favourite' : '☆ Favourite';
+  function joinText(left, right) {
+    return [String(left || '').trim(), String(right || '').trim()].filter(Boolean).join(' ').trim();
   }
 
-  function setTranscript(text) {
-    state.transcript = String(text || '').trim();
-    renderTranscript();
-  }
-
-  function normalizeToken(token) {
-    return token.toLocaleLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
-  }
-
-  function appendLiveTranscript(newText) {
-    const incoming = String(newText || '').trim();
-    if (!incoming) return;
-    const existing = state.transcript.trim();
-    if (!existing) return setTranscript(incoming);
-    const a = existing.split(/\s+/);
-    const b = incoming.split(/\s+/);
+  function dedupeIncoming(existing, incoming) {
+    const current = String(existing || '').trim();
+    const next = String(incoming || '').trim();
+    if (!next) return '';
+    if (!current) return next;
+    const a = current.split(/\s+/);
+    const b = next.split(/\s+/);
     let overlap = 0;
     for (let size = Math.min(28, a.length, b.length); size >= 1; size -= 1) {
       let matches = true;
@@ -131,8 +111,106 @@
       }
       if (matches) { overlap = size; break; }
     }
-    const rest = b.slice(overlap).join(' ').trim();
-    if (rest) setTranscript(existing + ' ' + rest);
+    return b.slice(overlap).join(' ').trim();
+  }
+
+  function showToast(message) {
+    els.toast.textContent = message;
+    els.toast.classList.remove('hidden');
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => els.toast.classList.add('hidden'), 2200);
+  }
+
+  function updateFollowButton() {
+    els.followWordsButton.classList.toggle('hidden', !state.recording || state.autoFollow);
+  }
+
+  function maybeAutoFollow() {
+    if (!state.recording || !state.autoFollow) return;
+    const target = els.transcriptView.lastElementChild || els.transcriptView;
+    if (!target) return;
+    state.programmaticScrollAt = Date.now();
+    requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+  }
+
+  function renderTranscript() {
+    const text = state.transcript.trim();
+    const confirmed = state.recording ? state.confirmedTranscript.trim() : text;
+    const pending = state.recording ? state.livePending.trim() : '';
+    els.transcriptView.replaceChildren();
+    const count = wordCount(text);
+    els.wordCount.textContent = count + ' word' + (count === 1 ? '' : 's');
+
+    if (!text) {
+      els.transcriptView.classList.add('empty');
+      const p = document.createElement('p');
+      p.textContent = 'Your words will appear here.';
+      els.transcriptView.appendChild(p);
+    } else {
+      els.transcriptView.classList.remove('empty');
+      if (confirmed) {
+        for (const sentence of splitSentences(confirmed)) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'sentence';
+          button.textContent = sentence + ' ';
+          button.title = 'Tap to hear this sentence';
+          button.addEventListener('click', () => speakText(sentence));
+          els.transcriptView.appendChild(button);
+        }
+      }
+      if (pending) {
+        const preview = document.createElement('span');
+        preview.className = 'live-preview';
+        preview.textContent = pending;
+        preview.setAttribute('aria-label', 'Latest words still being checked');
+        els.transcriptView.appendChild(preview);
+      }
+    }
+
+    const hasText = Boolean(text);
+    const finished = Boolean(state.currentRecording && state.currentRecording.status === 'ready' && !state.recording && !state.transcribing);
+    els.hearButton.disabled = !hasText;
+    els.focusButton.disabled = !hasText;
+    els.editButton.disabled = !hasText || state.recording || !state.currentRecording;
+    els.useWordsButton.disabled = !hasText;
+    els.playRecordingButton.disabled = !state.currentRecording?.has_audio;
+    els.favouriteButton.disabled = !state.currentRecording;
+    els.keepTalkingButton.classList.toggle('hidden', !finished || !hasText);
+    els.favouriteButton.textContent = state.currentRecording?.is_favourite ? '★ Favourite' : '☆ Favourite';
+    updateFollowButton();
+    maybeAutoFollow();
+  }
+
+  function setTranscript(text) {
+    state.transcript = String(text || '').trim();
+    if (!state.recording) {
+      state.confirmedTranscript = state.transcript;
+      state.livePending = '';
+    }
+    renderTranscript();
+  }
+
+  function normalizeToken(token) {
+    return token.toLocaleLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
+  }
+
+  function acceptLiveTranscript(newText) {
+    const incoming = String(newText || '').trim();
+    if (!incoming) return;
+    if (state.livePending) state.confirmedTranscript = joinText(state.confirmedTranscript, state.livePending);
+    state.livePending = dedupeIncoming(state.confirmedTranscript, incoming);
+    state.transcript = joinText(state.confirmedTranscript, state.livePending);
+    renderTranscript();
+    scheduleDraftSave();
+  }
+
+  function commitLivePending() {
+    if (state.livePending) state.confirmedTranscript = joinText(state.confirmedTranscript, state.livePending);
+    state.livePending = '';
+    state.transcript = state.confirmedTranscript.trim();
+    renderTranscript();
+    scheduleDraftSave(true);
   }
 
   async function api(url, options = {}) {
