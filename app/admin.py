@@ -17,7 +17,7 @@ from starlette.background import BackgroundTask
 
 from .config import settings
 from .db import get_db
-from .models import AppSetting, Recording, TranscriptRevision, TranscriptionChunk, UsageEvent
+from .models import AppSetting, Recording, RecordingAudioSegment, TranscriptRevision, TranscriptionChunk, UsageEvent
 from .services.gateway import gateway
 from .services.progress import word_count
 from .services.retention import cleanup_expired_audio, get_retention_policy, set_retention_policy
@@ -236,6 +236,7 @@ async def permanently_delete(
     await db.execute(delete(UsageEvent).where(UsageEvent.recording_id == recording.id))
     await db.execute(delete(TranscriptRevision).where(TranscriptRevision.recording_id == recording.id))
     await db.execute(delete(TranscriptionChunk).where(TranscriptionChunk.recording_id == recording.id))
+    await db.execute(delete(RecordingAudioSegment).where(RecordingAudioSegment.recording_id == recording.id))
     await db.execute(delete(Recording).where(Recording.id == recording.id))
     await db.commit()
 
@@ -249,6 +250,7 @@ async def download_backup(
 
     recordings = (await db.execute(select(Recording).order_by(Recording.created_at))).scalars().all()
     chunks = (await db.execute(select(TranscriptionChunk).order_by(TranscriptionChunk.created_at))).scalars().all()
+    audio_segments = (await db.execute(select(RecordingAudioSegment).order_by(RecordingAudioSegment.created_at))).scalars().all()
     revisions = (await db.execute(select(TranscriptRevision).order_by(TranscriptRevision.created_at))).scalars().all()
     events = (await db.execute(select(UsageEvent).order_by(UsageEvent.created_at))).scalars().all()
     app_settings = (await db.execute(select(AppSetting).order_by(AppSetting.key))).scalars().all()
@@ -264,6 +266,13 @@ async def download_backup(
                 "text", "processing_seconds", "created_at",
             ])
             for row in chunks
+        ],
+        "audio_segments": [
+            _serialize_row(row, [
+                "id", "recording_id", "created_at", "duration_seconds",
+                "audio_mime_type", "audio_size",
+            ])
+            for row in audio_segments
         ],
         "revisions": [
             _serialize_row(row, ["id", "recording_id", "previous_text", "new_text", "created_at"])
