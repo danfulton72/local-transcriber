@@ -1,0 +1,15 @@
+[project]
+name = "local-transcriber"
+version = "0.1.0"
+description = "Local-first kid-friendly transcription app with history and progress tracking"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.32,<1",
+  "sqlalchemy>=2.0,<3",
+  "asyncpg>=0.30,<1",
+  "aiosqlite>=0.20,<1",
+  "httpx>=0.28,<1",
+  "pydantic-settings>=2.7,<3",
+  "python-multipart>=0.0.20,<1",
+]
