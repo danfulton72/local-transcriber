@@ -776,279 +776,36 @@
 
   function switchPage(name) {
     document.querySelectorAll('.page').forEach((page) => page.classList.toggle('active', page.id === 'page-' + name));
-    document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.page === name));
-    if (name === 'history') loadHistory();
-  }
-
-  function friendlyDate(value) {
-    const date = new Date(value); const now = new Date();
-    const sameDay = date.toDateString() === now.toDateString();
-    const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
-    const day = sameDay ? 'Today' : (date.toDateString() === yesterday.toDateString() ? 'Yesterday' : date.toLocaleDateString([], { day: 'numeric', month: 'short' }));
-    return day + ' at ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-
-  async function loadHistory() {
-    els.historyList.innerHTML = '<p class="muted">Loading…</p>';
-    const params = new URLSearchParams();
-    if (els.historySearch.value.trim()) params.set('q', els.historySearch.value.trim());
-    if (els.historyFavourites.checked) params.set('favourite', 'true');
-    try {
-      const records = await api('/api/recordings?' + params.toString(), { cache: 'no-store' });
-      renderHistory(records);
-    } catch (error) { els.historyList.innerHTML = '<p class="error">' + escapeHtml(error.message) + '</p>'; }
-  }
-
-  function escapeHtml(value) {
-    return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-  }
-
-  function renderHistory(records) {
-    if (!records.length) { els.historyList.innerHTML = '<p class="muted">No saved recordings yet.</p>'; return; }
-    els.historyList.replaceChildren();
-    for (const record of records) {
-      const card = document.createElement('article'); card.className = 'history-card';
-      const title = document.createElement('h3'); title.textContent = (record.is_favourite ? '★ ' : '') + (record.title || 'New recording'); card.appendChild(title);
-      const meta = document.createElement('div'); meta.className = 'history-meta';
-      const dateSpan = document.createElement('span'); dateSpan.textContent = friendlyDate(record.created_at); meta.appendChild(dateSpan);
-      const wordSpan = document.createElement('span'); wordSpan.textContent = record.word_count + ' words'; meta.appendChild(wordSpan);
-      const timeSpan = document.createElement('span'); timeSpan.textContent = formatTime(record.duration_seconds) + ' talking'; meta.appendChild(timeSpan);
-      card.appendChild(meta);
-      const snippet = document.createElement('p'); snippet.className = 'snippet'; snippet.textContent = record.transcript.slice(0, 260) + (record.transcript.length > 260 ? '…' : ''); card.appendChild(snippet);
-      const actions = document.createElement('div'); actions.className = 'history-actions';
-      const open = document.createElement('button'); open.textContent = 'Open'; open.addEventListener('click', () => openHistoryRecording(record)); actions.appendChild(open);
-      const star = document.createElement('button'); star.textContent = record.is_favourite ? '★ Unfavourite' : '☆ Favourite'; star.addEventListener('click', async () => { await api('/api/recordings/' + record.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_favourite: !record.is_favourite }) }); loadHistory(); }); actions.appendChild(star);
-      const del = document.createElement('button'); del.textContent = 'Move to bin'; del.addEventListener('click', async () => { if (!confirm('Move this recording to the bin?')) return; await api('/api/recordings/' + record.id, { method: 'DELETE' }); loadHistory(); }); actions.appendChild(del);
-      card.appendChild(actions); els.historyList.appendChild(card);
-    }
-  }
-
-  function openHistoryRecording(record) {
-    state.currentRecording = record; setTranscript(record.transcript); setStatus('Saved recording', friendlyDate(record.created_at)); switchPage('talk');
-  }
-
-  function parentHeaders() {
-    const pin = els.parentPin.value.trim();
-    sessionStorage.setItem('parentPin', pin);
-    return pin ? { 'X-Parent-Pin': pin } : {};
-  }
-
-  async function loadProgress() {
-    const headers = parentHeaders();
-    try {
-      const data = await api('/api/progress?days=' + els.progressDays.value, { headers, cache: 'no-store' });
-      renderProgress(data);
-      els.progressContent.classList.remove('hidden');
-      await loadParentTools();
-    } catch (error) {
-      els.progressContent.classList.add('hidden');
-      alert(error.message);
-    }
-  }
-
-  function renderProgress(data) {
-    const metrics = [
-      [data.sessions, 'recording sessions'], [data.minutes_spoken, 'minutes spoken'], [data.words_dictated, 'words dictated'],
-      [data.average_session_minutes, 'average minutes'], [data.edited_sessions, 'sessions edited'], [data.read_aloud_uses, 'read-aloud uses'],
-    ];
-    els.metricGrid.replaceChildren();
-    for (const [value, label] of metrics) {
-      const box = document.createElement('div'); box.className = 'metric';
-      const strong = document.createElement('strong'); strong.textContent = value;
-      const span = document.createElement('span'); span.textContent = label;
-      box.append(strong, span); els.metricGrid.appendChild(box);
-    }
-    els.correctionsList.replaceChildren();
-    if (!data.top_corrections.length) els.correctionsList.innerHTML = '<p class="muted">No repeated corrections yet.</p>';
-    for (const item of data.top_corrections) {
-      const row = document.createElement('div'); row.className = 'correction-row';
-      const from = document.createElement('span'); from.textContent = item.from;
-      const arrow = document.createElement('span'); arrow.textContent = '→';
-      const to = document.createElement('span'); to.textContent = item.to;
-      const count = document.createElement('strong'); count.textContent = item.count + '×';
-      row.append(from, arrow, to, count); els.correctionsList.appendChild(row);
-    }
-    els.dailyChart.replaceChildren();
-    const maxWords = Math.max(1, ...data.daily.map((d) => d.words));
-    for (const day of data.daily) {
-      const row = document.createElement('div'); row.className = 'day-row';
-      const label = document.createElement('span'); label.textContent = new Date(day.date + 'T12:00:00').toLocaleDateString([], { day: 'numeric', month: 'short' });
-      const track = document.createElement('div'); track.className = 'bar-track';
-      const bar = document.createElement('div'); bar.className = 'bar'; bar.style.width = Math.max(3, day.words / maxWords * 100) + '%'; track.appendChild(bar);
-      const words = document.createElement('span'); words.textContent = day.words + ' words';
-      row.append(label, track, words); els.dailyChart.appendChild(row);
-    }
-    if (!data.daily.length) els.dailyChart.innerHTML = '<p class="muted">No sessions in this period yet.</p>';
-    els.longestPiece.replaceChildren();
-    if (data.longest_piece) {
-      const title = document.createElement('strong'); title.textContent = data.longest_piece.title || 'Recording';
-      const p = document.createElement('p'); p.textContent = data.longest_piece.words + ' words'; els.longestPiece.append(title, p);
-    } else els.longestPiece.innerHTML = '<p class="muted">No recordings yet.</p>';
-  }
-
-  function formatBytes(bytes) {
-    const value = Number(bytes || 0);
-    if (value < 1024) return value + ' B';
-    if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KB';
-    if (value < 1024 * 1024 * 1024) return (value / (1024 * 1024)).toFixed(1) + ' MB';
-    return (value / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
-  }
-
-  async function loadParentTools() {
-    await Promise.all([loadAdminStatus(), loadRecycleBin()]);
-  }
-
-  async function loadAdminStatus() {
-    const status = await api('/api/admin/status', { headers: parentHeaders(), cache: 'no-store' });
-    els.retentionDays.value = String(status.retention?.audio_retention_days || 0);
-    els.deleteAudioImmediately.checked = Boolean(status.retention?.delete_audio_after_transcription);
-    els.retentionDays.disabled = els.deleteAudioImmediately.checked;
-
-    const rows = [
-      ['Database', status.database ? 'Connected' : 'Problem', status.database],
-      ['Speech gateway', status.speech_gateway ? ('Ready' + (status.speech_gateway_version ? ' · v' + status.speech_gateway_version : '')) : 'Problem', status.speech_gateway],
-      ['Saved recordings', String(status.recordings), true],
-      ['Recycle bin', String(status.recycle_bin), true],
-      ['Voice files', status.audio_files + ' · ' + formatBytes(status.audio_bytes), true],
-      ['Last app backup', status.last_backup_at ? friendlyDate(status.last_backup_at) : 'Not downloaded yet', Boolean(status.last_backup_at)],
-    ];
-    els.systemStatus.replaceChildren();
-    for (const [label, value, good] of rows) {
-      const row = document.createElement('div'); row.className = 'status-row';
-      const name = document.createElement('span'); name.textContent = label;
-      const val = document.createElement('span'); val.className = good ? 'status-good' : 'status-bad'; val.textContent = value;
-      row.append(name, val); els.systemStatus.appendChild(row);
-    }
-  }
-
-  async function saveRetention() {
-    const immediate = els.deleteAudioImmediately.checked;
-    const days = immediate ? 0 : Number(els.retentionDays.value);
-    els.retentionMessage.textContent = 'Saving…';
-    try {
-      const policy = await api('/api/admin/retention', {
-        method: 'PATCH',
-        headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audio_retention_days: days, delete_audio_after_transcription: immediate }),
-      });
-      els.retentionDays.value = String(policy.audio_retention_days || 0);
-      els.retentionDays.disabled = Boolean(policy.delete_audio_after_transcription);
-      els.retentionMessage.textContent = policy.delete_audio_after_transcription
-        ? 'Future voice audio will be removed once transcription is saved.'
-        : (policy.audio_retention_days ? 'Voice audio older than ' + policy.audio_retention_days + ' days will be removed.' : 'Voice audio will be kept until you delete it.');
-      await loadAdminStatus();
-    } catch (error) {
-      els.retentionMessage.textContent = error.message;
-    }
-  }
-
-  async function applyRetentionNow() {
-    if (!confirm('Apply the current voice-audio retention rule now? Transcripts and history will stay.')) return;
-    els.applyRetentionButton.disabled = true;
-    try {
-      const result = await api('/api/admin/retention/apply', { method: 'POST', headers: parentHeaders() });
-      els.retentionMessage.textContent = result.removed_recordings
-        ? 'Removed stored voice audio from ' + result.removed_recordings + ' recording(s).'
-        : 'Nothing needed cleaning up.';
-      await loadAdminStatus();
-      if (state.currentRecording) {
-        try {
-          const refreshed = await api('/api/recordings/' + state.currentRecording.id, { cache: 'no-store' });
-          state.currentRecording = refreshed; renderTranscript();
-        } catch {}
-      }
-    } catch (error) {
-      els.retentionMessage.textContent = error.message;
-    } finally {
-      els.applyRetentionButton.disabled = false;
-    }
-  }
-
-  async function loadRecycleBin() {
-    els.recycleList.innerHTML = '<p class="muted">Loading…</p>';
-    try {
-      const records = await api('/api/admin/recycle-bin', { headers: parentHeaders(), cache: 'no-store' });
-      renderRecycleBin(records);
-    } catch (error) {
-      els.recycleList.innerHTML = '<p class="error">' + escapeHtml(error.message) + '</p>';
-    }
-  }
-
-  function renderRecycleBin(records) {
-    els.recycleList.replaceChildren();
-    if (!records.length) {
-      els.recycleList.innerHTML = '<p class="muted">Recycle bin is empty.</p>';
+    document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
+    if (state.recording || state.transcribing) {
+      showToast('Finish this recording before changing page');
       return;
     }
-    for (const record of records) {
-      const card = document.createElement('article'); card.className = 'recycle-card';
-      const title = document.createElement('h4'); title.textContent = record.title || 'Recording';
-      const meta = document.createElement('div'); meta.className = 'history-meta';
-      const deleted = document.createElement('span'); deleted.textContent = record.deleted_at ? 'Deleted ' + friendlyDate(record.deleted_at) : 'Deleted';
-      const words = document.createElement('span'); words.textContent = record.word_count + ' words';
-      meta.append(deleted, words);
-      const snippet = document.createElement('p'); snippet.className = 'snippet';
-      snippet.textContent = record.transcript.slice(0, 220) + (record.transcript.length > 220 ? '…' : '');
-      const actions = document.createElement('div'); actions.className = 'recycle-actions';
-      const restore = document.createElement('button'); restore.textContent = '↩ Restore';
-      restore.addEventListener('click', async () => {
-        try {
-          await api('/api/admin/recycle-bin/' + record.id + '/restore', { method: 'POST', headers: parentHeaders() });
-          await Promise.all([loadRecycleBin(), loadAdminStatus()]);
-        } catch (error) { alert(error.message); }
-      });
-      const remove = document.createElement('button'); remove.className = 'danger'; remove.textContent = 'Permanently delete';
-      remove.addEventListener('click', async () => {
-        if (!confirm('Permanently delete this recording, transcript history and any saved voice audio? This cannot be undone.')) return;
-        try {
-          await api('/api/admin/recycle-bin/' + record.id, { method: 'DELETE', headers: parentHeaders() });
-          await Promise.all([loadRecycleBin(), loadAdminStatus()]);
-        } catch (error) { alert(error.message); }
-      });
-      actions.append(restore, remove); card.append(title, meta, snippet, actions); els.recycleList.appendChild(card);
-    }
-  }
+    exitReadingFocus();
+    switchPage(tab.dataset.page);
+  }));
 
-  async function downloadBackup() {
-    els.downloadBackupButton.disabled = true;
-    els.downloadBackupButton.classList.add('backup-working');
-    const originalText = els.downloadBackupButton.textContent;
-    els.downloadBackupButton.textContent = 'Preparing backup…';
-    try {
-      const response = await fetch('/api/admin/backup', { headers: parentHeaders() });
-      if (!response.ok) {
-        const type = response.headers.get('content-type') || '';
-        const payload = type.includes('application/json') ? await response.json() : await response.text();
-        throw new Error(typeof payload === 'string' ? payload : payload.detail || 'Backup failed');
-      }
-      const blob = await response.blob();
-      const disposition = response.headers.get('content-disposition') || '';
-      const match = disposition.match(/filename="?([^"]+)"?/i);
-      const filename = match?.[1] || 'local-transcriber-backup.zip';
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a'); link.href = url; link.download = filename;
-      document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
-      await loadAdminStatus();
-    } catch (error) {
-      alert(error.message);
-    } finally {
-      els.downloadBackupButton.disabled = false;
-      els.downloadBackupButton.classList.remove('backup-working');
-      els.downloadBackupButton.textContent = originalText;
-    }
-  }
-
-  document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => switchPage(tab.dataset.page)));
-  els.recordButton.addEventListener('click', () => state.recording ? stopRecording() : startRecording());
+  els.recordButton.addEventListener('click', () => state.recording ? stopRecording() : startRecording(false));
+  els.keepTalkingButton.addEventListener('click', () => startRecording(true));
   els.pauseButton.addEventListener('click', togglePause);
   els.hearButton.addEventListener('click', () => speakText(state.transcript));
   els.playRecordingButton.addEventListener('click', playRecording);
   els.editButton.addEventListener('click', openEditor);
   els.saveEditButton.addEventListener('click', saveEdit);
-  els.cancelEditButton.addEventListener('click', () => { els.transcriptEditor.value = state.editSnapshot; closeEditor(); });
+  els.cancelEditButton.addEventListener('click', undoEdit);
   els.favouriteButton.addEventListener('click', toggleFavourite);
-  els.copyButton.addEventListener('click', copyTranscript);
+  els.useWordsButton.addEventListener('click', useMyWords);
+  els.focusButton.addEventListener('click', enterReadingFocus);
+  els.focusExitButton.addEventListener('click', exitReadingFocus);
+  els.followWordsButton.addEventListener('click', () => {
+    state.autoFollow = true;
+    updateFollowButton();
+    maybeAutoFollow();
+  });
+  els.recoverButton.addEventListener('click', recoverWords);
+  els.dismissRecoveryButton.addEventListener('click', dismissRecovery);
   els.newButton.addEventListener('click', newRecordingView);
+  els.installAppButton.addEventListener('click', installApp);
   els.fileInput.addEventListener('change', () => importFile(els.fileInput.files?.[0]));
   els.refreshHistoryButton.addEventListener('click', loadHistory);
   els.historyFavourites.addEventListener('change', loadHistory);
@@ -1067,5 +824,38 @@
   els.voice.addEventListener('change', () => localStorage.setItem('voice', els.voice.value));
   els.parentPin.value = sessionStorage.getItem('parentPin') || '';
 
-  checkHealth(); loadVoices(); renderTranscript(); syncRecordingUI();
+  window.addEventListener('scroll', () => {
+    const current = window.scrollY;
+    if (state.recording && Date.now() - state.programmaticScrollAt > 700 && current < state.lastScrollY - 10) {
+      state.autoFollow = false;
+      updateFollowButton();
+    }
+    state.lastScrollY = current;
+  }, { passive: true });
+
+  window.addEventListener('beforeinstallprompt', (event) => {
+    event.preventDefault();
+    state.installPrompt = event;
+    els.installHint.textContent = 'Ready to install on this device.';
+  });
+
+  window.addEventListener('appinstalled', () => {
+    state.installPrompt = null;
+    els.installHint.textContent = 'Installed on this device.';
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && document.body.classList.contains('reading-focus')) exitReadingFocus();
+  });
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+
+  checkHealth();
+  loadVoices();
+  renderTranscript();
+  syncRecordingUI();
+  checkRecoverable();
+
 })();
