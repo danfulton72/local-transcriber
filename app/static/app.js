@@ -203,6 +203,10 @@
     if (state.livePending) state.confirmedTranscript = joinText(state.confirmedTranscript, state.livePending);
     state.livePending = dedupeIncoming(state.confirmedTranscript, incoming);
     state.transcript = joinText(state.confirmedTranscript, state.livePending);
+    if (state.currentRecording) {
+      localStorage.setItem('activeRecordingId', state.currentRecording.id);
+      localStorage.setItem('activeRecordingDraft', state.transcript);
+    }
     renderTranscript();
     if (state.recording) scheduleDraftSave();
   }
@@ -564,6 +568,7 @@
       textarea.addEventListener('input', () => {
         autoGrowEditor(textarea);
         state.transcript = editorText();
+        localStorage.setItem('editDraft:' + state.currentRecording.id, state.transcript);
         els.wordCount.textContent = wordCount(state.transcript) + ' words';
         scheduleEditAutosave();
       });
@@ -633,6 +638,7 @@
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '' }),
       });
     } catch {}
+    state.currentRecording = { ...state.currentRecording, draft_text: null };
     state.transcript = original;
     closeEditor();
     setTranscript(original);
@@ -737,8 +743,20 @@
 
   async function checkRecoverable() {
     try {
-      const record = await api('/api/recoverable', { cache: 'no-store' });
-      if (!record || !record.transcript) return;
+      let record = await api('/api/recoverable', { cache: 'no-store' });
+      const localId = localStorage.getItem('activeRecordingId');
+      const localDraft = (localStorage.getItem('activeRecordingDraft') || '').trim();
+
+      if (!record && localId) {
+        try { record = await api('/api/recordings/' + localId, { cache: 'no-store' }); } catch {}
+      }
+      if (!record) return;
+
+      if (localId === record.id && localDraft && wordCount(localDraft) >= wordCount(record.transcript || '')) {
+        record = { ...record, transcript: localDraft, draft_text: localDraft, word_count: wordCount(localDraft) };
+      }
+      if (!record.transcript || record.status === 'ready') return;
+
       state.recoverableRecording = record;
       els.recoveryDetail.textContent = record.word_count + ' words were saved as a draft.';
       els.recoveryBanner.classList.remove('hidden');
