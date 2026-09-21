@@ -30,14 +30,32 @@ class Recording(Base):
     processing_seconds: Mapped[float] = mapped_column(Float, default=0.0)
     is_favourite: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_activity_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
     chunks: Mapped[list["TranscriptionChunk"]] = relationship(back_populates="recording", cascade="all, delete-orphan")
     revisions: Mapped[list["TranscriptRevision"]] = relationship(back_populates="recording", cascade="all, delete-orphan")
     events: Mapped[list["UsageEvent"]] = relationship(back_populates="recording", cascade="all, delete-orphan")
+    audio_segments: Mapped[list["RecordingAudioSegment"]] = relationship(back_populates="recording", cascade="all, delete-orphan")
 
     @property
     def transcript(self) -> str:
         return self.transcript_edited if self.transcript_edited is not None else self.transcript_original
+
+
+
+class RecordingAudioSegment(Base):
+    __tablename__ = "recording_audio_segments"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recording_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("recordings.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    audio_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    audio_mime_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    audio_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    recording: Mapped[Recording] = relationship(back_populates="audio_segments")
 
 
 class TranscriptionChunk(Base):
