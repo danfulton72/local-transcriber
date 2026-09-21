@@ -4,7 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#f6f0df">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>Talk to Type</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -19,6 +24,13 @@
   </nav>
   <main>
     <section id="page-talk" class="page active">
+      <div id="recoveryBanner" class="recovery-banner hidden" role="status">
+        <div><strong>I found some unsaved words.</strong><span id="recoveryDetail">You can bring them back.</span></div>
+        <div class="button-row recovery-actions">
+          <button id="recoverButton" class="primary" type="button">Recover words</button>
+          <button id="dismissRecoveryButton" type="button">Not now</button>
+        </div>
+      </div>
       <div class="hero">
         <p class="big-prompt">What do you want to say?</p>
         <button id="recordButton" class="record-button" type="button" aria-label="Start talking"><span class="mic">🎙</span><span id="recordButtonText">Start talking</span></button>
@@ -30,20 +42,37 @@
       </div>
       <div id="errorBox" class="error hidden" role="alert"></div>
       <section class="words-card" aria-labelledby="wordsHeading">
-        <div class="card-heading"><div><p class="eyebrow">Your words</p><h2 id="wordsHeading">What I heard</h2></div><span id="wordCount" class="pill">0 words</span></div>
+        <button id="focusExitButton" class="focus-exit hidden" type="button">← Back</button>
+        <div class="card-heading">
+          <div><p class="eyebrow">Your words</p><h2 id="wordsHeading">What I heard</h2></div>
+          <div class="word-tools"><button id="followWordsButton" class="follow-button hidden" type="button">↓ Follow words</button><span id="wordCount" class="pill">0 words</span></div>
+        </div>
         <div id="transcriptView" class="transcript empty" aria-live="polite"><p>Your words will appear here.</p></div>
         <div id="editorWrap" class="editor hidden">
-          <textarea id="transcriptEditor" rows="10" spellcheck="true"></textarea>
-          <div class="button-row"><button id="saveEditButton" class="primary small" type="button">Save words</button><button id="cancelEditButton" class="secondary small" type="button">Cancel</button></div>
+          <p class="editor-help">Edit one sentence at a time. Changes are saved automatically while you work.</p>
+          <div id="sentenceEditor" class="sentence-editor"></div>
+          <div class="edit-footer">
+            <span id="editSaveStatus" class="muted" aria-live="polite">Ready</span>
+            <div class="button-row"><button id="saveEditButton" class="primary small" type="button">Done</button><button id="cancelEditButton" class="secondary small" type="button">Undo changes</button></div>
+          </div>
         </div>
-        <div class="actions">
+        <div class="actions primary-actions">
           <button id="hearButton" type="button" disabled>🔊 Hear it</button>
-          <button id="playRecordingButton" type="button" disabled>▶ My voice</button>
-          <button id="editButton" type="button" disabled>✏ Edit words</button>
-          <button id="favouriteButton" type="button" disabled>☆ Favourite</button>
-          <button id="copyButton" type="button" disabled>📋 Copy</button>
-          <button id="newButton" type="button">＋ New</button>
+          <button id="editButton" type="button" disabled>✏ Edit</button>
+          <button id="focusButton" type="button" disabled>👓 Read</button>
+          <button id="useWordsButton" class="primary" type="button" disabled>✨ Use my words</button>
         </div>
+        <div class="continue-row">
+          <button id="keepTalkingButton" class="primary hidden" type="button">🎙 Keep talking</button>
+        </div>
+        <details class="more-actions">
+          <summary>More options</summary>
+          <div class="actions">
+            <button id="playRecordingButton" type="button" disabled>▶ My voice</button>
+            <button id="favouriteButton" type="button" disabled>☆ Favourite</button>
+            <button id="newButton" type="button">＋ New piece</button>
+          </div>
+        </details>
       </section>
       <details class="grown-up">
         <summary>⚙ Grown-up settings</summary>
@@ -54,6 +83,7 @@
           <label>Read-aloud speed<select id="speechSpeed"><option value="0.8">Slower</option><option value="0.9" selected>Calm</option><option value="1">Normal</option><option value="1.15">Faster</option></select></label>
           <label class="wide">Whisper context prompt<input id="prompt" type="text" placeholder="Optional names or topic words"></label>
           <label class="wide file-label">Transcribe an audio file<input id="fileInput" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.webm"></label>
+          <div class="wide install-row"><button id="installAppButton" type="button">📲 Install on this device</button><span id="installHint" class="muted">Open Talk to Type like an app from your home screen.</span></div>
         </div>
       </details>
     </section>
@@ -116,6 +146,7 @@
       </div>
     </section>
   </main>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <footer>Everything stays on your local services and database.</footer>
   <script src="/app.js" defer></script>
 </body>
