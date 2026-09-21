@@ -21,6 +21,12 @@ A local-first, kid-friendly speech-to-text app for turning spoken ideas into edi
   - longest saved piece
   - words dictated over time
 - Optional parent PIN for the Progress API/page
+- Parent storage tools:
+  - recycle bin with restore and permanent delete
+  - voice-audio retention (forever / 30 / 90 / 365 days)
+  - optional delete-audio-after-transcription mode
+  - local service/storage status
+  - downloadable backup ZIP containing metadata and retained audio
 
 The app deliberately does **not** track attention, mouse movement, mood, sentiment, reading ability or other passive behavioural signals.
 
@@ -124,6 +130,28 @@ A complete backup needs **both** the PostgreSQL `transcriber` database and the `
 The Progress page is based only on data needed for the app itself plus explicit actions. Correction counts compare the saved original Whisper transcript with the transcript the user deliberately edited and saved.
 
 Nothing is sent to a cloud transcription or analytics service by this application.
+
+## Updating an existing install
+
+```bash
+cd ~/local-transcriber
+git pull
+docker compose up -d --build
+```
+
+Then hard-refresh the browser. Existing PostgreSQL data and the `recordings/` directory are preserved.
+
+### Parent storage tools
+
+Open **Progress**, enter the parent PIN, and press **Show progress**. The lower part of the page contains:
+
+- **Voice recording retention** — controls stored audio only; transcripts/history remain.
+- **Backup & status** — checks PostgreSQL, the speech gateway and local audio storage, and can download an application backup ZIP.
+- **Recycle bin** — restore soft-deleted work or permanently remove it.
+
+Retention cleanup runs on application startup and whenever a recording finishes. Permanent delete removes the database history for that recording and its stored audio.
+
+The downloadable ZIP is a convenient app-level backup. For infrastructure/disaster recovery, retaining your normal PostgreSQL backup as well is still recommended.
 
 ## Development
 
