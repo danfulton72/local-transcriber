@@ -23,18 +23,30 @@
 
     const sorted = [...frameLevels].sort((a, b) => a - b);
     const noiseFloor = sorted[Math.floor((sorted.length - 1) * 0.2)] || 0;
-    const speechThreshold = Math.max(0.0075, noiseFloor * 2.8);
+    const peakFrameRms = Math.max(0, ...frameLevels);
+
+    // Only adapt to a measured noise floor when it is clearly below the signal.
+    // If every frame contains speech, the lower percentile is not a noise floor
+    // and must not be multiplied into an impossible threshold.
+    const hasUsableNoiseFloor = noiseFloor > 0 && noiseFloor < peakFrameRms * 0.55;
+    const speechThreshold = Math.max(
+      0.0075,
+      hasUsableNoiseFloor ? noiseFloor * 2.8 : 0,
+    );
+    const peakThreshold = Math.max(
+      0.012,
+      hasUsableNoiseFloor ? noiseFloor * 3.5 : 0,
+    );
     const activeFrames = frameLevels.filter((level) => level >= speechThreshold).length;
     const activeMs = activeFrames * 20;
     const overallRms = rms(samples);
-    const peakFrameRms = Math.max(0, ...frameLevels);
 
     // Be deliberately conservative: keep a tail if it has at least ~60 ms of
     // speech-like energy and a clear peak. The full recording is always saved;
     // this gate only decides whether the short tail is worth sending to Whisper.
     const hasSpeech =
       activeMs >= 60 &&
-      peakFrameRms >= Math.max(0.012, noiseFloor * 3.5) &&
+      peakFrameRms >= peakThreshold &&
       overallRms >= 0.0035;
 
     return {
