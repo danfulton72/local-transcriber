@@ -23,7 +23,9 @@ jobs:
       - run: pip install -e '.[test]'
       - run: rm -f test.db && alembic upgrade head
       - run: pytest -q
+      - run: node --check app/static/audio-utils.js
       - run: node --check app/static/app.js
+      - run: node tests/test_audio_utils.js
       - run: node --check app/static/sw.js
       - run: python -m json.tool app/static/manifest.webmanifest > /dev/null
       - run: python -m compileall -q app migrations
