@@ -13,6 +13,11 @@ class RecordingFinish(BaseModel):
     transcript: str = ""
     duration_seconds: float | None = Field(default=None, ge=0)
     processing_seconds: float = Field(default=0, ge=0)
+    append: bool = False
+
+
+class RecordingDraftUpdate(BaseModel):
+    text: str = ""
 
 
 class RecordingUpdate(BaseModel):
@@ -35,6 +40,7 @@ class RecordingOut(BaseModel):
     is_favourite: bool
     has_audio: bool
     word_count: int
+    draft_text: str | None = None
 
 
 class SpeechRequest(BaseModel):
