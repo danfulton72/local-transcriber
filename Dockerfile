@@ -7,6 +7,8 @@ WORKDIR /app
 
 COPY pyproject.toml /app/
 COPY app /app/app
+COPY alembic.ini /app/alembic.ini
+COPY migrations /app/migrations
 RUN pip install --no-cache-dir .
 
 RUN mkdir -p /data/recordings
