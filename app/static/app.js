@@ -43,6 +43,10 @@
     historyList: $('historyList'), historySearch: $('historySearch'), historyFavourites: $('historyFavourites'), refreshHistoryButton: $('refreshHistoryButton'),
     progressDays: $('progressDays'), parentPin: $('parentPin'), loadProgressButton: $('loadProgressButton'), progressContent: $('progressContent'),
     metricGrid: $('metricGrid'), correctionsList: $('correctionsList'), dailyChart: $('dailyChart'), longestPiece: $('longestPiece'),
+    retentionDays: $('retentionDays'), deleteAudioImmediately: $('deleteAudioImmediately'),
+    saveRetentionButton: $('saveRetentionButton'), applyRetentionButton: $('applyRetentionButton'), retentionMessage: $('retentionMessage'),
+    systemStatus: $('systemStatus'), downloadBackupButton: $('downloadBackupButton'), refreshAdminButton: $('refreshAdminButton'),
+    recycleList: $('recycleList'), refreshRecycleButton: $('refreshRecycleButton'),
   };
 
   function setError(message = '') {
@@ -513,13 +517,23 @@
     state.currentRecording = record; setTranscript(record.transcript); setStatus('Saved recording', friendlyDate(record.created_at)); switchPage('talk');
   }
 
+  function parentHeaders() {
+    const pin = els.parentPin.value.trim();
+    sessionStorage.setItem('parentPin', pin);
+    return pin ? { 'X-Parent-Pin': pin } : {};
+  }
+
   async function loadProgress() {
-    const pin = els.parentPin.value.trim(); sessionStorage.setItem('parentPin', pin);
-    const headers = pin ? { 'X-Parent-Pin': pin } : {};
+    const headers = parentHeaders();
     try {
       const data = await api('/api/progress?days=' + els.progressDays.value, { headers, cache: 'no-store' });
-      renderProgress(data); els.progressContent.classList.remove('hidden');
-    } catch (error) { els.progressContent.classList.add('hidden'); alert(error.message); }
+      renderProgress(data);
+      els.progressContent.classList.remove('hidden');
+      await loadParentTools();
+    } catch (error) {
+      els.progressContent.classList.add('hidden');
+      alert(error.message);
+    }
   }
 
   function renderProgress(data) {
@@ -562,6 +576,158 @@
     } else els.longestPiece.innerHTML = '<p class="muted">No recordings yet.</p>';
   }
 
+  function formatBytes(bytes) {
+    const value = Number(bytes || 0);
+    if (value < 1024) return value + ' B';
+    if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KB';
+    if (value < 1024 * 1024 * 1024) return (value / (1024 * 1024)).toFixed(1) + ' MB';
+    return (value / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+  }
+
+  async function loadParentTools() {
+    await Promise.all([loadAdminStatus(), loadRecycleBin()]);
+  }
+
+  async function loadAdminStatus() {
+    const status = await api('/api/admin/status', { headers: parentHeaders(), cache: 'no-store' });
+    els.retentionDays.value = String(status.retention?.audio_retention_days || 0);
+    els.deleteAudioImmediately.checked = Boolean(status.retention?.delete_audio_after_transcription);
+    els.retentionDays.disabled = els.deleteAudioImmediately.checked;
+
+    const rows = [
+      ['Database', status.database ? 'Connected' : 'Problem', status.database],
+      ['Speech gateway', status.speech_gateway ? ('Ready' + (status.speech_gateway_version ? ' · v' + status.speech_gateway_version : '')) : 'Problem', status.speech_gateway],
+      ['Saved recordings', String(status.recordings), true],
+      ['Recycle bin', String(status.recycle_bin), true],
+      ['Voice files', status.audio_files + ' · ' + formatBytes(status.audio_bytes), true],
+      ['Last app backup', status.last_backup_at ? friendlyDate(status.last_backup_at) : 'Not downloaded yet', Boolean(status.last_backup_at)],
+    ];
+    els.systemStatus.replaceChildren();
+    for (const [label, value, good] of rows) {
+      const row = document.createElement('div'); row.className = 'status-row';
+      const name = document.createElement('span'); name.textContent = label;
+      const val = document.createElement('span'); val.className = good ? 'status-good' : 'status-bad'; val.textContent = value;
+      row.append(name, val); els.systemStatus.appendChild(row);
+    }
+  }
+
+  async function saveRetention() {
+    const immediate = els.deleteAudioImmediately.checked;
+    const days = immediate ? 0 : Number(els.retentionDays.value);
+    els.retentionMessage.textContent = 'Saving…';
+    try {
+      const policy = await api('/api/admin/retention', {
+        method: 'PATCH',
+        headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_retention_days: days, delete_audio_after_transcription: immediate }),
+      });
+      els.retentionDays.value = String(policy.audio_retention_days || 0);
+      els.retentionDays.disabled = Boolean(policy.delete_audio_after_transcription);
+      els.retentionMessage.textContent = policy.delete_audio_after_transcription
+        ? 'Future voice audio will be removed once transcription is saved.'
+        : (policy.audio_retention_days ? 'Voice audio older than ' + policy.audio_retention_days + ' days will be removed.' : 'Voice audio will be kept until you delete it.');
+      await loadAdminStatus();
+    } catch (error) {
+      els.retentionMessage.textContent = error.message;
+    }
+  }
+
+  async function applyRetentionNow() {
+    if (!confirm('Apply the current voice-audio retention rule now? Transcripts and history will stay.')) return;
+    els.applyRetentionButton.disabled = true;
+    try {
+      const result = await api('/api/admin/retention/apply', { method: 'POST', headers: parentHeaders() });
+      els.retentionMessage.textContent = result.removed_recordings
+        ? 'Removed stored voice audio from ' + result.removed_recordings + ' recording(s).'
+        : 'Nothing needed cleaning up.';
+      await loadAdminStatus();
+      if (state.currentRecording) {
+        try {
+          const refreshed = await api('/api/recordings/' + state.currentRecording.id, { cache: 'no-store' });
+          state.currentRecording = refreshed; renderTranscript();
+        } catch {}
+      }
+    } catch (error) {
+      els.retentionMessage.textContent = error.message;
+    } finally {
+      els.applyRetentionButton.disabled = false;
+    }
+  }
+
+  async function loadRecycleBin() {
+    els.recycleList.innerHTML = '<p class="muted">Loading…</p>';
+    try {
+      const records = await api('/api/admin/recycle-bin', { headers: parentHeaders(), cache: 'no-store' });
+      renderRecycleBin(records);
+    } catch (error) {
+      els.recycleList.innerHTML = '<p class="error">' + escapeHtml(error.message) + '</p>';
+    }
+  }
+
+  function renderRecycleBin(records) {
+    els.recycleList.replaceChildren();
+    if (!records.length) {
+      els.recycleList.innerHTML = '<p class="muted">Recycle bin is empty.</p>';
+      return;
+    }
+    for (const record of records) {
+      const card = document.createElement('article'); card.className = 'recycle-card';
+      const title = document.createElement('h4'); title.textContent = record.title || 'Recording';
+      const meta = document.createElement('div'); meta.className = 'history-meta';
+      const deleted = document.createElement('span'); deleted.textContent = record.deleted_at ? 'Deleted ' + friendlyDate(record.deleted_at) : 'Deleted';
+      const words = document.createElement('span'); words.textContent = record.word_count + ' words';
+      meta.append(deleted, words);
+      const snippet = document.createElement('p'); snippet.className = 'snippet';
+      snippet.textContent = record.transcript.slice(0, 220) + (record.transcript.length > 220 ? '…' : '');
+      const actions = document.createElement('div'); actions.className = 'recycle-actions';
+      const restore = document.createElement('button'); restore.textContent = '↩ Restore';
+      restore.addEventListener('click', async () => {
+        try {
+          await api('/api/admin/recycle-bin/' + record.id + '/restore', { method: 'POST', headers: parentHeaders() });
+          await Promise.all([loadRecycleBin(), loadAdminStatus()]);
+        } catch (error) { alert(error.message); }
+      });
+      const remove = document.createElement('button'); remove.className = 'danger'; remove.textContent = 'Permanently delete';
+      remove.addEventListener('click', async () => {
+        if (!confirm('Permanently delete this recording, transcript history and any saved voice audio? This cannot be undone.')) return;
+        try {
+          await api('/api/admin/recycle-bin/' + record.id, { method: 'DELETE', headers: parentHeaders() });
+          await Promise.all([loadRecycleBin(), loadAdminStatus()]);
+        } catch (error) { alert(error.message); }
+      });
+      actions.append(restore, remove); card.append(title, meta, snippet, actions); els.recycleList.appendChild(card);
+    }
+  }
+
+  async function downloadBackup() {
+    els.downloadBackupButton.disabled = true;
+    els.downloadBackupButton.classList.add('backup-working');
+    const originalText = els.downloadBackupButton.textContent;
+    els.downloadBackupButton.textContent = 'Preparing backup…';
+    try {
+      const response = await fetch('/api/admin/backup', { headers: parentHeaders() });
+      if (!response.ok) {
+        const type = response.headers.get('content-type') || '';
+        const payload = type.includes('application/json') ? await response.json() : await response.text();
+        throw new Error(typeof payload === 'string' ? payload : payload.detail || 'Backup failed');
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get('content-disposition') || '';
+      const match = disposition.match(/filename="?([^"]+)"?/i);
+      const filename = match?.[1] || 'local-transcriber-backup.zip';
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a'); link.href = url; link.download = filename;
+      document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+      await loadAdminStatus();
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      els.downloadBackupButton.disabled = false;
+      els.downloadBackupButton.classList.remove('backup-working');
+      els.downloadBackupButton.textContent = originalText;
+    }
+  }
+
   document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => switchPage(tab.dataset.page)));
   els.recordButton.addEventListener('click', () => state.recording ? stopRecording() : startRecording());
   els.pauseButton.addEventListener('click', togglePause);
@@ -579,6 +745,15 @@
   els.historySearch.addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(loadHistory, 250); });
   els.loadProgressButton.addEventListener('click', loadProgress);
   els.progressDays.addEventListener('change', () => { if (!els.progressContent.classList.contains('hidden')) loadProgress(); });
+  els.saveRetentionButton.addEventListener('click', saveRetention);
+  els.applyRetentionButton.addEventListener('click', applyRetentionNow);
+  els.refreshAdminButton.addEventListener('click', loadAdminStatus);
+  els.refreshRecycleButton.addEventListener('click', loadRecycleBin);
+  els.downloadBackupButton.addEventListener('click', downloadBackup);
+  els.deleteAudioImmediately.addEventListener('change', () => {
+    els.retentionDays.disabled = els.deleteAudioImmediately.checked;
+    if (els.deleteAudioImmediately.checked) els.retentionDays.value = '0';
+  });
   els.voice.addEventListener('change', () => localStorage.setItem('voice', els.voice.value));
   els.parentPin.value = sessionStorage.getItem('parentPin') || '';
 
