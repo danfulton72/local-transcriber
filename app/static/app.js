@@ -421,6 +421,28 @@
     const overlap = Math.min(Math.round(.9 * state.sampleRate), Math.round(target * .22));
     if (!finalChunk && merged.length < target) return false;
     if (finalChunk && state.liveFreshSamples < Math.round(.18 * state.sampleRate)) return false;
+
+    if (finalChunk && window.TalkToTypeAudio?.analyzeFinalTail) {
+      const freshSamples = Math.min(state.liveFreshSamples, merged.length);
+      const freshTail = merged.slice(Math.max(0, merged.length - freshSamples));
+      const analysis = window.TalkToTypeAudio.analyzeFinalTail(freshTail, state.sampleRate);
+      if (!analysis.hasSpeech) {
+        state.liveBuffers = [];
+        state.liveSampleCount = 0;
+        state.liveFreshSamples = 0;
+        console.info(
+          '[Talk to Type] Skipped quiet final tail before Whisper',
+          {
+            durationMs: Math.round(analysis.durationMs),
+            activeMs: Math.round(analysis.activeMs),
+            overallRms: Number(analysis.overallRms.toFixed(5)),
+            peakFrameRms: Number(analysis.peakFrameRms.toFixed(5)),
+          },
+        );
+        return false;
+      }
+    }
+
     const sendLength = finalChunk ? merged.length : target;
     if (sendLength < Math.round(.25 * state.sampleRate)) return false;
     const audio = merged.slice(0, sendLength);
