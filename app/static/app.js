@@ -337,7 +337,7 @@
     const updated = await api('/api/recordings/' + state.currentRecording.id + '/draft', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: draft }),
+      body: JSON.stringify({ text: draft, active_capture: state.recording || state.transcribing }),
     });
     state.currentRecording = { ...state.currentRecording, draft_text: updated.draft_text };
   }
@@ -375,17 +375,18 @@
         throw error;
       }
 
-      const baseText = reuseExisting ? state.transcript.trim() : '';
+      const displayedText = reuseExisting ? state.transcript.trim() : '';
+      const savedBase = reuseExisting ? String(record.transcript_edited ?? record.transcript_original ?? '').trim() : '';
       state.currentRecording = record;
-      state.captureBaseTranscript = baseText;
-      state.continuation = Boolean(reuseExisting && record.status === 'ready');
+      state.captureBaseTranscript = savedBase;
+      state.continuation = Boolean(reuseExisting && savedBase);
       state.stream = stream; state.audioContext = ctx; state.source = source; state.processor = processor; state.mute = mute;
       state.sampleRate = ctx.sampleRate; state.fullBuffers = []; resetLive(); state.recording = true; state.paused = false;
       state.autoFollow = true;
-      state.confirmedTranscript = baseText;
-      state.transcript = baseText;
+      state.confirmedTranscript = displayedText;
+      state.transcript = displayedText;
       localStorage.setItem('activeRecordingId', record.id);
-      localStorage.setItem('activeRecordingDraft', baseText);
+      localStorage.setItem('activeRecordingDraft', displayedText);
       renderTranscript();
 
       processor.onaudioprocess = (event) => {
