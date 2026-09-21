@@ -103,6 +103,36 @@ async def find_recording(recording_id: uuid.UUID, db: AsyncSession, include_dele
     return recording
 
 
+async def store_audio_segment(
+    recording: Recording,
+    data: bytes,
+    filename: str,
+    content_type: str,
+    db: AsyncSession,
+    duration_seconds: float | None = None,
+) -> RecordingAudioSegment:
+    suffix = Path(filename or "recording.wav").suffix or ".wav"
+    segment = RecordingAudioSegment(
+        recording_id=recording.id,
+        duration_seconds=duration_seconds,
+        audio_mime_type=content_type or "audio/wav",
+        audio_size=len(data),
+    )
+    db.add(segment)
+    await db.flush()
+    relative = f"segments/{segment.id}{suffix}"
+    path = save_bytes(recording.id, relative, data)
+    segment.audio_path = str(path)
+
+    # Keep these fields populated for backward compatibility and the existing
+    # has_audio flag. They point at the newest capture.
+    recording.audio_path = str(path)
+    recording.audio_mime_type = content_type or "audio/wav"
+    recording.audio_size = len(data)
+    recording.last_activity_at = utcnow()
+    return segment
+
+
 def check_parent_pin(x_parent_pin: str | None) -> None:
     expected = settings.parent_pin.strip()
     if not expected:
@@ -336,6 +366,7 @@ async def transcribe_chunk(
         )
     )
     recording.processing_seconds += processing
+    recording.last_activity_at = utcnow()
     await db.commit()
     return {"text": transcript, "processing_seconds": processing}
 
@@ -348,13 +379,15 @@ async def upload_audio(
 ) -> dict:
     recording = await find_recording(recording_id, db)
     data = await file.read()
-    suffix = Path(file.filename or "recording.wav").suffix or ".wav"
-    path = save_bytes(recording.id, f"recording{suffix}", data)
-    recording.audio_path = str(path)
-    recording.audio_mime_type = file.content_type or "audio/wav"
-    recording.audio_size = len(data)
+    segment = await store_audio_segment(
+        recording,
+        data,
+        file.filename or "recording.wav",
+        file.content_type or "audio/wav",
+        db,
+    )
     await db.commit()
-    return {"stored": True, "bytes": len(data)}
+    return {"stored": True, "bytes": len(data), "segment_id": str(segment.id)}
 
 
 @app.post("/api/recordings/{recording_id}/transcribe", response_model=RecordingOut)
@@ -369,12 +402,16 @@ async def transcribe_recording(
 ) -> RecordingOut:
     recording = await find_recording(recording_id, db)
     data = await file.read()
-    suffix = Path(file.filename or "recording.wav").suffix or ".wav"
-    path = save_bytes(recording.id, f"recording{suffix}", data)
-    recording.audio_path = str(path)
-    recording.audio_mime_type = file.content_type or "audio/wav"
-    recording.audio_size = len(data)
+    await store_audio_segment(
+        recording,
+        data,
+        file.filename or "recording.wav",
+        file.content_type or "audio/wav",
+        db,
+        duration_seconds=duration_seconds,
+    )
     recording.status = "processing"
+    recording.draft_text = None
     await db.commit()
     started = time.perf_counter()
     try:
@@ -395,6 +432,8 @@ async def transcribe_recording(
     recording.duration_seconds = duration_seconds
     recording.finished_at = utcnow()
     recording.status = "ready"
+    recording.draft_text = None
+    recording.last_activity_at = utcnow()
     recording.title = recording.title or make_title(transcript)
     await db.commit()
     await cleanup_expired_audio(db)
@@ -405,12 +444,24 @@ async def transcribe_recording(
 @app.post("/api/recordings/{recording_id}/finish", response_model=RecordingOut)
 async def finish_recording(recording_id: uuid.UUID, payload: RecordingFinish, db: AsyncSession = Depends(get_db)) -> RecordingOut:
     recording = await find_recording(recording_id, db)
-    recording.transcript_original = payload.transcript.strip()
-    recording.duration_seconds = payload.duration_seconds
+    new_text = payload.transcript.strip()
+
+    if payload.append:
+        recording.transcript_original = merge_overlapping_text(recording.transcript_original or "", new_text)
+        if recording.transcript_edited is not None:
+            recording.transcript_edited = merge_overlapping_text(recording.transcript_edited, new_text)
+        if payload.duration_seconds is not None:
+            recording.duration_seconds = (recording.duration_seconds or 0) + payload.duration_seconds
+    else:
+        recording.transcript_original = new_text
+        recording.duration_seconds = payload.duration_seconds
+
     recording.processing_seconds = max(recording.processing_seconds, payload.processing_seconds)
     recording.finished_at = utcnow()
     recording.status = "ready"
-    recording.title = recording.title or make_title(recording.transcript_original)
+    recording.draft_text = None
+    recording.last_activity_at = utcnow()
+    recording.title = recording.title or make_title(recording.transcript)
     await db.commit()
     await cleanup_expired_audio(db)
     await db.refresh(recording)
