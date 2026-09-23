@@ -1,4 +1,3 @@
-import io
 import secrets
 import tempfile
 import time
@@ -508,25 +507,48 @@ async def recording_audio_segments(recording_id: uuid.UUID, db: AsyncSession = D
 
     if not segments and recording.audio_path and Path(recording.audio_path).exists():
         return {
+            "complete": True,
+            "segment_count": 1,
+            "available_count": 1,
+            "missing_segment_ids": [],
+            "duration_seconds": recording.duration_seconds,
             "segments": [
                 {
                     "id": "legacy",
                     "url": f"/api/recordings/{recording.id}/audio",
                     "duration_seconds": recording.duration_seconds,
                 }
-            ]
+            ],
         }
 
+    missing = [
+        str(segment.id)
+        for segment in segments
+        if not segment.audio_path or not Path(segment.audio_path).exists()
+    ]
+    available = [
+        segment
+        for segment in segments
+        if segment.audio_path and Path(segment.audio_path).exists()
+    ]
+    segment_duration = sum(
+        segment.duration_seconds or 0
+        for segment in segments
+    )
     return {
+        "complete": not missing,
+        "segment_count": len(segments),
+        "available_count": len(available),
+        "missing_segment_ids": missing,
+        "duration_seconds": segment_duration or recording.duration_seconds,
         "segments": [
             {
                 "id": str(segment.id),
                 "url": f"/api/recordings/{recording.id}/audio-segments/{segment.id}",
                 "duration_seconds": segment.duration_seconds,
             }
-            for segment in segments
-            if segment.audio_path and Path(segment.audio_path).exists()
-        ]
+            for segment in available
+        ],
     }
 
 
