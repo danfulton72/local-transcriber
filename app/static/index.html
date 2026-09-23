@@ -26,20 +26,64 @@
   </section>
 
   <header class="topbar">
-    <div><p class="eyebrow">Local Transcriber</p><h1>Talk to Type</h1></div>
-    <div class="topbar-account">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">☺</span>
+      <div><h1>Talk to Type</h1><span class="brand-subtitle">Your words, written down.</span></div>
+    </div>
+    <div class="topbar-actions">
       <div id="healthBadge" class="health checking" aria-live="polite">Checking…</div>
+      <button id="menuButton" class="menu-button" type="button" aria-label="Open menu" aria-controls="appDrawer" aria-expanded="false">☰</button>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Main pages">
+    <button class="tab active" data-page="talk"><span aria-hidden="true">🎙</span><span>Talk</span></button>
+    <button class="tab" data-page="history"><span aria-hidden="true">📚</span><span>My words</span></button>
+    <button class="tab" data-page="progress"><span aria-hidden="true">📈</span><span>Progress</span></button>
+  </nav>
+
+  <div id="drawerBackdrop" class="drawer-backdrop hidden" aria-hidden="true"></div>
+  <aside id="appDrawer" class="app-drawer" aria-hidden="true" aria-label="Menu">
+    <div class="drawer-header">
+      <div class="brand drawer-brand">
+        <span class="brand-mark small-mark" aria-hidden="true">☺</span>
+        <div><strong>Talk to Type</strong><span>Settings &amp; support</span></div>
+      </div>
+      <button id="closeMenuButton" class="drawer-close" type="button" aria-label="Close menu">×</button>
+    </div>
+
+    <div class="drawer-scroll">
+      <section class="drawer-section">
+        <p class="drawer-kicker">App settings</p>
+        <div class="drawer-settings">
+          <label class="drawer-field"><span>🎙 Audio source</span><select id="captureSource"><option value="microphone">Microphone</option><option value="computer">Computer / shared tab audio</option><option value="mixed">Computer + microphone</option></select></label>
+          <div id="captureSourceHint" class="capture-source-hint"><strong>Microphone</strong><span class="muted">Uses this device's microphone.</span></div>
+          <p class="muted capture-privacy-note">For computer audio the browser asks you to share a tab/window/screen. Talk to Type keeps only its audio; screen video is not recorded or stored.</p>
+          <label class="drawer-field"><span>🌐 Language</span><select id="language"><option value="">Auto detect</option><option value="en">English</option><option value="no">Norwegian</option></select></label>
+          <label class="drawer-field"><span>⏱ Near-live chunk</span><select id="chunkSeconds"><option value="3">3 seconds</option><option value="5" selected>5 seconds</option><option value="8">8 seconds</option><option value="12">12 seconds</option></select></label>
+          <label class="drawer-field"><span>🔊 Read-aloud voice</span><select id="voice"><option value="en_GB-northern_english_male-medium">Northern English</option></select></label>
+          <label class="drawer-field"><span>↗ Read-aloud speed</span><select id="speechSpeed"><option value="0.8">Slower</option><option value="0.9" selected>Calm</option><option value="1">Normal</option><option value="1.15">Faster</option></select></label>
+          <label class="drawer-field"><span>✍ Whisper context</span><input id="prompt" type="text" placeholder="Optional names or topic words"></label>
+        </div>
+      </section>
+
+      <section class="drawer-section">
+        <p class="drawer-kicker">Tools</p>
+        <label class="drawer-action file-action">📄 Import audio file<input id="fileInput" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.webm"></label>
+        <button id="installAppButton" class="drawer-action" type="button">📲 <span><strong>Install app</strong><small id="installHint">Add Talk to Type to this device.</small></span></button>
+        <button class="drawer-action drawer-page-link" type="button" data-drawer-page="history">📚 <span><strong>My words</strong><small>Open saved work</small></span></button>
+        <button class="drawer-action drawer-page-link parent-entry" type="button" data-drawer-page="progress">👥 <span><strong>Parent tools</strong><small>Progress, users, speakers and storage</small></span></button>
+      </section>
+    </div>
+
+    <div class="drawer-account">
       <span id="currentUserLabel" class="user-chip"></span>
       <button id="logoutButton" class="small" type="button">Sign out</button>
     </div>
-  </header>
-  <nav class="tabs" aria-label="Main pages">
-    <button class="tab active" data-page="talk">🎙 Talk</button>
-    <button class="tab" data-page="history">📚 My words</button>
-    <button class="tab" data-page="progress">📈 Progress</button>
-  </nav>
+  </aside>
+
   <main>
-    <section id="page-talk" class="page active">
+    <section id="page-talk" class="page active talk-page">
       <div id="recoveryBanner" class="recovery-banner hidden" role="status">
         <div><strong>I found some unsaved words.</strong><span id="recoveryDetail">You can bring them back.</span></div>
         <div class="button-row recovery-actions">
@@ -47,23 +91,21 @@
           <button id="dismissRecoveryButton" type="button">Dismiss reminder</button>
         </div>
       </div>
-      <div class="hero">
-        <p class="big-prompt">What do you want to say?</p>
-        <button id="recordButton" class="record-button" type="button" aria-label="Start talking"><span id="recordButtonIcon" class="mic">🎙</span><span id="recordButtonText">Start talking</span></button>
-        <div id="meter" class="meter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-        <p id="statusText" class="status">Ready when you are</p>
-        <p id="statusDetail" class="status-detail">Press the microphone and talk normally.</p>
-        <p id="timer" class="timer">00:00</p>
-        <button id="pauseButton" class="secondary hidden" type="button">Pause</button>
-      </div>
+
       <div id="errorBox" class="error hidden" role="alert"></div>
+
       <section class="words-card" aria-labelledby="wordsHeading">
         <button id="focusExitButton" class="focus-exit hidden" type="button">← Back</button>
         <div class="card-heading">
-          <div><p class="eyebrow">Your words</p><h2 id="wordsHeading">What I heard</h2></div>
-          <div class="word-tools"><button id="followWordsButton" class="follow-button hidden" type="button">↓ Follow words</button><span id="wordCount" class="pill">0 words</span></div>
+          <div><p class="eyebrow">Your words</p><h2 id="wordsHeading" class="sr-only">What I heard</h2></div>
+          <div class="word-tools">
+            <button id="followWordsButton" class="follow-button hidden" type="button">↓ Follow words</button>
+            <span id="wordCount" class="pill">0 words</span>
+          </div>
         </div>
+
         <div id="transcriptView" class="transcript empty" aria-live="polite"><p>Your words will appear here.</p></div>
+
         <div id="editorWrap" class="editor hidden">
           <p class="editor-help">Edit one sentence at a time. Changes are saved automatically while you work.</p>
           <div id="sentenceEditor" class="sentence-editor"></div>
@@ -72,37 +114,35 @@
             <div class="button-row"><button id="saveEditButton" class="primary small" type="button">Done</button><button id="cancelEditButton" class="secondary small" type="button">Undo changes</button></div>
           </div>
         </div>
-        <div class="actions primary-actions">
-          <button id="hearButton" type="button" disabled>🔊 Hear it</button>
-          <button id="editButton" type="button" disabled>✏ Edit</button>
-          <button id="focusButton" type="button" disabled>👓 Read</button>
-          <button id="useWordsButton" class="primary" type="button" disabled>✨ Use my words</button>
+      </section>
+
+      <div class="quick-actions" aria-label="Word actions">
+        <button id="hearButton" class="quick-action hear-action" type="button" disabled><span aria-hidden="true">🔊</span><span>Hear it</span></button>
+        <button id="focusButton" class="quick-action read-action" type="button" disabled><span aria-hidden="true">📖</span><span>Read</span></button>
+        <button id="useWordsButton" class="quick-action use-action" type="button" disabled><span aria-hidden="true">↗</span><span>Use my words</span></button>
+      </div>
+
+      <div class="capture-zone">
+        <div class="capture-status">
+          <div id="meter" class="meter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <p id="statusText" class="status">Ready when you are</p>
+          <p id="statusDetail" class="status-detail">Press the microphone and talk normally.</p>
+          <p id="timer" class="timer">00:00</p>
         </div>
-        <div class="continue-row">
+        <button id="recordButton" class="record-button" type="button" aria-label="Start talking"><span id="recordButtonIcon" class="mic">🎙</span><span id="recordButtonText">Start talking</span></button>
+        <div class="capture-secondary-actions">
+          <button id="pauseButton" class="secondary hidden" type="button">Pause</button>
           <button id="keepTalkingButton" class="primary hidden" type="button">🎙 Keep talking</button>
         </div>
-        <details class="more-actions">
-          <summary>More options</summary>
-          <div class="actions">
-            <button id="playRecordingButton" type="button" disabled>▶ My voice</button>
-            <button id="favouriteButton" type="button" disabled>☆ Favourite</button>
-            <button id="newButton" type="button">＋ New piece</button>
-          </div>
-        </details>
-      </section>
-      <details class="grown-up">
-        <summary>⚙ Grown-up settings</summary>
-        <div class="settings-grid">
-          <label>Language<select id="language"><option value="">Auto detect</option><option value="en">English</option><option value="no">Norwegian</option></select></label>
-          <label>Near-live chunk<select id="chunkSeconds"><option value="3">3 seconds</option><option value="5" selected>5 seconds</option><option value="8">8 seconds</option><option value="12">12 seconds</option></select></label>
-          <label>Audio source<select id="captureSource"><option value="microphone">Microphone</option><option value="computer">Computer / shared tab audio</option><option value="mixed">Computer + microphone</option></select></label>
-          <div id="captureSourceHint" class="wide capture-source-hint"><strong>Microphone</strong><span class="muted">Uses this device's microphone.</span></div>
-          <p class="wide muted capture-privacy-note">For computer audio the browser asks you to share a tab/window/screen. Talk to Type keeps only its audio; screen video is not recorded or stored.</p>
-          <label>Read-aloud voice<select id="voice"><option value="en_GB-northern_english_male-medium">Northern English</option></select></label>
-          <label>Read-aloud speed<select id="speechSpeed"><option value="0.8">Slower</option><option value="0.9" selected>Calm</option><option value="1">Normal</option><option value="1.15">Faster</option></select></label>
-          <label class="wide">Whisper context prompt<input id="prompt" type="text" placeholder="Optional names or topic words"></label>
-          <label class="wide file-label">Transcribe an audio file<input id="fileInput" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.webm"></label>
-          <div class="wide install-row"><button id="installAppButton" type="button">📲 Install on this device</button><span id="installHint" class="muted">Open Talk to Type like an app from your home screen.</span></div>
+      </div>
+
+      <details class="more-actions">
+        <summary>More actions</summary>
+        <div class="actions">
+          <button id="editButton" type="button" disabled>✏ Edit</button>
+          <button id="playRecordingButton" type="button" disabled>▶ My voice</button>
+          <button id="favouriteButton" type="button" disabled>☆ Favourite</button>
+          <button id="newButton" type="button">＋ New piece</button>
         </div>
       </details>
     </section>
