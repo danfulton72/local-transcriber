@@ -1833,3 +1833,16 @@ body.reading-focus .drawer-backdrop{
 @media (prefers-reduced-motion:reduce){
   .app-drawer{transition:none}
 }
+
+@media (max-width:700px){
+  .card-heading{
+    flex-direction:row;
+    align-items:center;
+  }
+  .card-heading .word-tools{
+    width:auto;
+    margin-left:auto;
+    justify-content:flex-end;
+  }
+  .card-heading .pill{align-self:auto}
+}
