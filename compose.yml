@@ -22,10 +22,11 @@ services:
       HF_TOKEN: ${HF_TOKEN:-}
       HF_HOME: /models
       PYANNOTE_MODEL: ${PYANNOTE_MODEL:-pyannote/speaker-diarization-community-1}
-      SPEAKER_DEVICE: ${SPEAKER_DEVICE:-cpu}
+      SPEAKER_DEVICE: ${SPEAKER_DEVICE:-cuda}
       GATEWAY_BASE_URL: http://host.docker.internal:8555/v1
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./speaker-model-cache:/models
+    gpus: all
     restart: unless-stopped
