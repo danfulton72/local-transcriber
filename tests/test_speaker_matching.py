@@ -32,3 +32,21 @@ def test_best_profile_respects_threshold(monkeypatch):
     matched, score = best_profile([0.7, 0.7], [close, far])
     assert matched is None
     assert score is None
+
+
+def test_speaker_admin_requires_parent_pin(monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app import speaker_admin
+
+    monkeypatch.setattr(speaker_admin.settings, "parent_pin", "2468")
+
+    with TestClient(app) as client:
+        denied = client.get("/api/admin/speakers/profiles")
+        assert denied.status_code == 401
+
+        allowed = client.get(
+            "/api/admin/speakers/profiles",
+            headers={"X-Parent-Pin": "2468"},
+        )
+        assert allowed.status_code == 200
