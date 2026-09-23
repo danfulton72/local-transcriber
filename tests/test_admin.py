@@ -5,6 +5,8 @@ from app.main import app
 
 def test_parent_tools_recycle_retention_status_and_backup():
     with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "local", "password": "change-me-now"})
+        assert login.status_code == 200
         created = client.post("/api/recordings", json={"language": "en"}).json()
         rid = created["id"]
 
