@@ -1001,3 +1001,127 @@ body.reading-focus .sentence{
   .voice-sample-row{grid-template-columns:1fr}
   .voice-sample-row button{width:100%}
 }
+
+
+/* Multi-user login and parent account management */
+body.logged-out{
+  overflow:hidden;
+}
+body.logged-out .topbar,
+body.logged-out .tabs,
+body.logged-out main,
+body.logged-out footer{
+  display:none!important;
+}
+.login-screen{
+  display:none;
+  min-height:100dvh;
+  place-items:center;
+  padding:24px;
+  background:var(--bg);
+}
+body.logged-out .login-screen{
+  display:grid;
+}
+.login-card{
+  width:min(100%,440px);
+  display:grid;
+  gap:14px;
+  padding:clamp(22px,4vw,36px);
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+}
+.login-card label{
+  display:grid;
+  gap:.35rem;
+  font-weight:700;
+}
+.login-card .error{
+  margin:0;
+}
+.topbar-account{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:.55rem;
+  flex-wrap:wrap;
+}
+.user-chip{
+  border-radius:999px;
+  padding:.42rem .72rem;
+  background:var(--accent-2);
+  color:var(--accent);
+  font-size:.82rem;
+  font-weight:700;
+  white-space:nowrap;
+}
+.user-admin-panel{
+  margin-bottom:14px;
+}
+.user-create-grid{
+  display:grid;
+  grid-template-columns:1fr 1.2fr 1.2fr auto;
+  gap:10px;
+  align-items:end;
+  margin-bottom:12px;
+}
+.user-create-grid .admin-label{margin:0}
+.user-list{
+  display:grid;
+  gap:10px;
+}
+.user-row{
+  display:grid;
+  grid-template-columns:minmax(0,1.25fr) minmax(0,1fr) auto auto;
+  gap:10px;
+  align-items:center;
+  padding:12px 0;
+  border-top:1px solid var(--line);
+}
+.user-row:first-child{border-top:0}
+.user-row-main{
+  min-width:0;
+  display:grid;
+  gap:2px;
+}
+.user-row-main strong{overflow-wrap:anywhere}
+.user-row-meta{
+  color:var(--muted);
+  font-size:.8rem;
+}
+.user-row input{
+  min-width:0;
+}
+.user-row .button-row{
+  flex-wrap:nowrap;
+}
+@media(max-width:900px){
+  .user-create-grid{
+    grid-template-columns:1fr 1fr;
+  }
+  .user-create-grid button{grid-column:1/-1}
+  .user-row{
+    grid-template-columns:1fr 1fr;
+  }
+  .user-row-main{grid-column:1/-1}
+}
+@media(max-width:600px){
+  .topbar-account{
+    align-items:flex-end;
+    flex-direction:column;
+  }
+  .user-create-grid,
+  .user-row{
+    grid-template-columns:1fr;
+  }
+  .user-create-grid button,
+  .user-row-main{
+    grid-column:auto;
+  }
+  .user-row .button-row{
+    display:grid;
+    grid-template-columns:1fr;
+  }
+}
