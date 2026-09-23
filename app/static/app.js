@@ -42,6 +42,8 @@
     programmaticScrollAt: 0,
     lastScrollY: window.scrollY,
     installPrompt: null,
+    currentSpeakerAnalysisId: localStorage.getItem('speakerAnalysisId') || null,
+    speakerPolling: false,
   };
 
   const els = {
@@ -64,6 +66,10 @@
     saveRetentionButton: $('saveRetentionButton'), applyRetentionButton: $('applyRetentionButton'), retentionMessage: $('retentionMessage'),
     systemStatus: $('systemStatus'), downloadBackupButton: $('downloadBackupButton'), refreshAdminButton: $('refreshAdminButton'),
     recycleList: $('recycleList'), refreshRecycleButton: $('refreshRecycleButton'),
+    speakerServiceStatus: $('speakerServiceStatus'), speakerRecordingSelect: $('speakerRecordingSelect'),
+    speakerCountSelect: $('speakerCountSelect'), runSpeakerAnalysisButton: $('runSpeakerAnalysisButton'),
+    speakerAnalysisMessage: $('speakerAnalysisMessage'), speakerAnalysisResult: $('speakerAnalysisResult'),
+    speakerProfilesList: $('speakerProfilesList'), refreshSpeakerProfilesButton: $('refreshSpeakerProfilesButton'),
   };
 
   function setError(message = '') {
@@ -1000,7 +1006,244 @@
   }
 
   async function loadParentTools() {
-    await Promise.all([loadAdminStatus(), loadRecycleBin()]);
+    await Promise.allSettled([loadAdminStatus(), loadRecycleBin(), loadSpeakerTools()]);
+  }
+
+  async function loadSpeakerTools() {
+    await Promise.allSettled([loadSpeakerStatusAndRecordings(), loadSpeakerProfiles()]);
+    if (state.currentSpeakerAnalysisId && !state.speakerPolling) {
+      pollSpeakerAnalysis(state.currentSpeakerAnalysisId, true);
+    }
+  }
+
+  async function loadSpeakerStatusAndRecordings() {
+    const headers = parentHeaders();
+    try {
+      const [status, recordings] = await Promise.all([
+        api('/api/admin/speakers/status', { headers, cache: 'no-store' }),
+        api('/api/admin/speakers/recordings', { headers, cache: 'no-store' }),
+      ]);
+
+      const service = status.service || {};
+      if (!status.reachable) {
+        els.speakerServiceStatus.textContent = 'Unavailable';
+        els.speakerServiceStatus.className = 'pill speaker-warning';
+        els.speakerAnalysisMessage.textContent = 'Speaker analyzer is not reachable.';
+      } else if (!service.configured) {
+        els.speakerServiceStatus.textContent = 'Needs HF token';
+        els.speakerServiceStatus.className = 'pill speaker-warning';
+        els.speakerAnalysisMessage.textContent = 'Accept the pyannote Community-1 terms and add HF_TOKEN to .env.';
+      } else {
+        els.speakerServiceStatus.textContent = service.loaded ? 'Ready' : 'Ready · model loads on first use';
+        els.speakerServiceStatus.className = 'pill speaker-ready';
+        if (!state.speakerPolling) els.speakerAnalysisMessage.textContent = '';
+      }
+
+      const selected = els.speakerRecordingSelect.value;
+      els.speakerRecordingSelect.replaceChildren();
+      const placeholder = document.createElement('option');
+      placeholder.value = ''; placeholder.textContent = 'Choose a recording…';
+      els.speakerRecordingSelect.appendChild(placeholder);
+      for (const recording of recordings) {
+        const option = document.createElement('option');
+        option.value = recording.id;
+        const duration = recording.duration_seconds ? ' · ' + formatTime(recording.duration_seconds) : '';
+        option.textContent = (recording.title || 'Recording') + ' · ' + friendlyDate(recording.created_at) + duration;
+        els.speakerRecordingSelect.appendChild(option);
+      }
+      if ([...els.speakerRecordingSelect.options].some((option) => option.value === selected)) {
+        els.speakerRecordingSelect.value = selected;
+      }
+    } catch (error) {
+      els.speakerServiceStatus.textContent = 'Unavailable';
+      els.speakerServiceStatus.className = 'pill speaker-warning';
+      els.speakerAnalysisMessage.textContent = error.message;
+    }
+  }
+
+  async function loadSpeakerProfiles() {
+    try {
+      const profiles = await api('/api/admin/speakers/profiles', { headers: parentHeaders(), cache: 'no-store' });
+      renderSpeakerProfiles(profiles);
+    } catch (error) {
+      els.speakerProfilesList.replaceChildren();
+      const p = document.createElement('p'); p.className = 'error'; p.textContent = error.message;
+      els.speakerProfilesList.appendChild(p);
+    }
+  }
+
+  function renderSpeakerProfiles(profiles) {
+    els.speakerProfilesList.replaceChildren();
+    if (!profiles.length) {
+      const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'No remembered speakers yet.';
+      els.speakerProfilesList.appendChild(p);
+      return;
+    }
+    for (const profile of profiles) {
+      const row = document.createElement('div'); row.className = 'speaker-profile-row';
+      const input = document.createElement('input'); input.value = profile.name; input.setAttribute('aria-label', 'Remembered speaker name');
+      const meta = document.createElement('span'); meta.className = 'muted'; meta.textContent = profile.sample_count + ' voice sample' + (profile.sample_count === 1 ? '' : 's');
+      const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Save name';
+      save.addEventListener('click', async () => {
+        const name = input.value.trim();
+        if (!name) return;
+        await api('/api/admin/speakers/profiles/' + profile.id, {
+          method: 'PATCH',
+          headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        showToast('Speaker name saved');
+        await loadSpeakerProfiles();
+        if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
+      });
+      const forget = document.createElement('button'); forget.type = 'button'; forget.className = 'danger'; forget.textContent = 'Forget voiceprint';
+      forget.addEventListener('click', async () => {
+        if (!confirm('Forget the saved voiceprint for ' + profile.name + '? Past conversation labels will stay.')) return;
+        await api('/api/admin/speakers/profiles/' + profile.id, { method: 'DELETE', headers: parentHeaders() });
+        showToast('Voiceprint forgotten');
+        await loadSpeakerProfiles();
+        if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
+      });
+      row.append(input, meta, save, forget);
+      els.speakerProfilesList.appendChild(row);
+    }
+  }
+
+  async function runSpeakerAnalysis() {
+    const recordingId = els.speakerRecordingSelect.value;
+    if (!recordingId) {
+      els.speakerAnalysisMessage.textContent = 'Choose a saved recording first.';
+      return;
+    }
+    const count = els.speakerCountSelect.value ? Number(els.speakerCountSelect.value) : null;
+    els.runSpeakerAnalysisButton.disabled = true;
+    els.speakerAnalysisMessage.textContent = 'Starting speaker analysis…';
+    els.speakerAnalysisResult.replaceChildren();
+    try {
+      const job = await api('/api/admin/speakers/analyze/' + recordingId, {
+        method: 'POST',
+        headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ num_speakers: count }),
+      });
+      state.currentSpeakerAnalysisId = job.id;
+      localStorage.setItem('speakerAnalysisId', job.id);
+      await pollSpeakerAnalysis(job.id);
+    } catch (error) {
+      els.speakerAnalysisMessage.textContent = error.message;
+    } finally {
+      els.runSpeakerAnalysisButton.disabled = false;
+    }
+  }
+
+  async function pollSpeakerAnalysis(analysisId, quiet = false) {
+    if (state.speakerPolling) return;
+    state.speakerPolling = true;
+    try {
+      for (let attempt = 0; attempt < 900; attempt += 1) {
+        const analysis = await api('/api/admin/speakers/analyses/' + analysisId, { headers: parentHeaders(), cache: 'no-store' });
+        if (analysis.status === 'completed') {
+          state.currentSpeakerAnalysisId = analysis.id;
+          localStorage.setItem('speakerAnalysisId', analysis.id);
+          renderSpeakerAnalysis(analysis);
+          await loadSpeakerProfiles();
+          return;
+        }
+        if (analysis.status === 'error') {
+          els.speakerAnalysisMessage.textContent = analysis.error || 'Speaker analysis failed.';
+          return;
+        }
+        if (!quiet || attempt > 0) {
+          els.speakerAnalysisMessage.textContent = analysis.status === 'queued'
+            ? 'Speaker analysis is queued…'
+            : 'Finding speakers and transcribing their turns…';
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      els.speakerAnalysisMessage.textContent = 'Analysis is still running. Reload the parent area to check it again.';
+    } catch (error) {
+      els.speakerAnalysisMessage.textContent = error.message;
+    } finally {
+      state.speakerPolling = false;
+    }
+  }
+
+  async function refreshCurrentSpeakerAnalysis() {
+    if (!state.currentSpeakerAnalysisId) return;
+    try {
+      const analysis = await api('/api/admin/speakers/analyses/' + state.currentSpeakerAnalysisId, { headers: parentHeaders(), cache: 'no-store' });
+      if (analysis.status === 'completed') renderSpeakerAnalysis(analysis);
+    } catch {}
+  }
+
+  function renderSpeakerAnalysis(analysis) {
+    els.speakerAnalysisMessage.textContent =
+      analysis.speaker_count + ' speaker' + (analysis.speaker_count === 1 ? '' : 's') +
+      ' found · processed in ' + analysis.processing_seconds + 's';
+    els.speakerAnalysisResult.replaceChildren();
+
+    const speakerHeading = document.createElement('h4'); speakerHeading.textContent = 'Speaker labels';
+    const speakerGrid = document.createElement('div'); speakerGrid.className = 'speaker-detection-grid';
+
+    for (const detection of analysis.detections) {
+      const card = document.createElement('div'); card.className = 'speaker-detection-card';
+      const top = document.createElement('div'); top.className = 'speaker-detection-top';
+      const title = document.createElement('strong'); title.textContent = 'Person ' + detection.person_index;
+      const badge = document.createElement('span'); badge.className = detection.profile_id ? 'speaker-match matched' : 'speaker-match';
+      badge.textContent = detection.profile_id
+        ? ('Recognised · similarity ' + Number(detection.match_score || 0).toFixed(2))
+        : 'Not remembered';
+      top.append(title, badge);
+
+      const input = document.createElement('input'); input.value = detection.display_name; input.setAttribute('aria-label', 'Speaker label');
+      const actions = document.createElement('div'); actions.className = 'button-row';
+      const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Save tag';
+      save.addEventListener('click', async () => {
+        const name = input.value.trim();
+        if (!name) return;
+        await api('/api/admin/speakers/analyses/' + analysis.id + '/detections/' + encodeURIComponent(detection.speaker_key), {
+          method: 'PATCH',
+          headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ display_name: name }),
+        });
+        showToast('Speaker tag saved');
+        await refreshCurrentSpeakerAnalysis();
+      });
+      const remember = document.createElement('button'); remember.type = 'button'; remember.className = 'primary';
+      remember.textContent = detection.profile_id ? 'Update voiceprint' : 'Remember this speaker';
+      remember.addEventListener('click', async () => {
+        const name = input.value.trim();
+        if (!name) return;
+        await api('/api/admin/speakers/analyses/' + analysis.id + '/detections/' + encodeURIComponent(detection.speaker_key) + '/remember', {
+          method: 'POST',
+          headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        showToast('Speaker remembered locally');
+        await Promise.all([loadSpeakerProfiles(), refreshCurrentSpeakerAnalysis()]);
+      });
+      actions.append(save, remember);
+      card.append(top, input, actions);
+      speakerGrid.appendChild(card);
+    }
+
+    const transcriptHeading = document.createElement('h4'); transcriptHeading.textContent = 'Conversation';
+    const conversation = document.createElement('div'); conversation.className = 'speaker-conversation';
+    for (const turn of analysis.turns) {
+      if (!turn.text) continue;
+      const row = document.createElement('div'); row.className = 'speaker-turn';
+      const meta = document.createElement('div'); meta.className = 'speaker-turn-meta';
+      const who = document.createElement('strong'); who.textContent = turn.display_name;
+      const when = document.createElement('span'); when.className = 'muted'; when.textContent = formatTime(turn.start_seconds);
+      meta.append(who, when);
+      const text = document.createElement('p'); text.textContent = turn.text;
+      row.append(meta, text); conversation.appendChild(row);
+    }
+    if (!conversation.children.length) {
+      const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'No spoken turns were transcribed.';
+      conversation.appendChild(p);
+    }
+
+    els.speakerAnalysisResult.append(speakerHeading, speakerGrid, transcriptHeading, conversation);
   }
 
   async function loadAdminStatus() {
@@ -1179,6 +1422,8 @@
   els.historySearch.addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(loadHistory, 250); });
   els.loadProgressButton.addEventListener('click', loadProgress);
   els.progressDays.addEventListener('change', () => { if (!els.progressContent.classList.contains('hidden')) loadProgress(); });
+  els.runSpeakerAnalysisButton.addEventListener('click', runSpeakerAnalysis);
+  els.refreshSpeakerProfilesButton.addEventListener('click', loadSpeakerProfiles);
   els.saveRetentionButton.addEventListener('click', saveRetention);
   els.applyRetentionButton.addEventListener('click', applyRetentionNow);
   els.refreshAdminButton.addEventListener('click', loadAdminStatus);
