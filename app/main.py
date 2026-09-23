@@ -24,9 +24,11 @@ from .services.progress import correction_pairs, top_corrections, word_count
 from .services.storage import save_bytes
 from .services.retention import cleanup_expired_audio
 from .admin import router as admin_router
+from .speaker_admin import router as speaker_admin_router
 
-app = FastAPI(title="Local Transcriber", version="0.3.0")
+app = FastAPI(title="Local Transcriber", version="0.4.0")
 app.include_router(admin_router)
+app.include_router(speaker_admin_router)
 
 
 @app.on_event("startup")
