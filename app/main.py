@@ -225,6 +225,10 @@ async def recoverable_recording(db: AsyncSession = Depends(get_db)) -> Recording
             .where(
                 Recording.deleted_at.is_(None),
                 Recording.status.in_(["recording", "processing"]),
+                or_(
+                    Recording.recovery_dismissed_at.is_(None),
+                    Recording.last_activity_at > Recording.recovery_dismissed_at,
+                ),
             )
             .order_by(Recording.last_activity_at.desc(), Recording.created_at.desc())
             .limit(1)
@@ -251,6 +255,18 @@ async def recoverable_recording(db: AsyncSession = Depends(get_db)) -> Recording
             await db.refresh(recording)
 
     return recording_out(recording)
+
+
+@app.post("/api/recordings/{recording_id}/recovery-acknowledged", status_code=204)
+async def acknowledge_recording_recovery(
+    recording_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    recording = await find_recording(recording_id, db)
+    if recording.status in {"recording", "processing"}:
+        recording.recovery_dismissed_at = utcnow()
+        await db.commit()
+    return Response(status_code=204)
 
 
 @app.patch("/api/recordings/{recording_id}/draft", response_model=RecordingOut)
