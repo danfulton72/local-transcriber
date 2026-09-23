@@ -566,6 +566,7 @@
       ? 'Stop & finish'
       : ((els.captureSource?.value || 'microphone') === 'microphone' ? 'Start talking' : 'Start capture');
     els.recordButton.disabled = state.transcribing;
+    if (els.menuButton) els.menuButton.disabled = state.recording || state.transcribing;
     els.pauseButton.classList.toggle('hidden', !state.recording);
     els.pauseButton.textContent = state.paused ? 'Carry on' : 'Pause';
     els.language.disabled = state.recording || state.transcribing;
@@ -1872,6 +1873,11 @@
   els.drawerBackdrop?.addEventListener('click', () => closeDrawer({ restoreFocus: true }));
   document.querySelectorAll('.drawer-page-link').forEach((button) => {
     button.addEventListener('click', () => {
+      if (state.recording || state.transcribing) {
+        showToast('Finish this recording before changing page');
+        closeDrawer({ restoreFocus: true });
+        return;
+      }
       const page = button.dataset.drawerPage;
       if (page) switchPage(page);
     });
