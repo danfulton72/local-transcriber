@@ -219,7 +219,9 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
 
 
 async def owned_analysis(analysis_id: uuid.UUID, db: AsyncSession) -> SpeakerAnalysis:
-    analysis = await owned_analysis(analysis_id, db)
+    analysis = await db.get(SpeakerAnalysis, analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Speaker analysis not found")
     recording = await db.get(Recording, analysis.recording_id)
     if not recording or recording.user_id != current_user_id():
         raise HTTPException(status_code=404, detail="Speaker analysis not found")
