@@ -188,6 +188,10 @@
     els.drawerBackdrop.setAttribute('aria-hidden', 'false');
     els.menuButton?.setAttribute('aria-expanded', 'true');
     document.body.classList.add('drawer-open');
+    for (const selector of ['.topbar', '.tabs', 'main', 'footer']) {
+      const node = document.querySelector(selector);
+      if (node) node.inert = true;
+    }
     setTimeout(() => els.closeMenuButton?.focus(), 0);
   }
 
@@ -200,6 +204,10 @@
     els.drawerBackdrop.setAttribute('aria-hidden', 'true');
     els.menuButton?.setAttribute('aria-expanded', 'false');
     document.body.classList.remove('drawer-open');
+    for (const selector of ['.topbar', '.tabs', 'main', 'footer']) {
+      const node = document.querySelector(selector);
+      if (node) node.inert = false;
+    }
     if (restoreFocus && wasOpen) els.menuButton?.focus();
   }
 
