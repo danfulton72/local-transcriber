@@ -84,7 +84,7 @@ Under **Grown-up settings → Audio source**, choose:
 - **Computer / shared tab audio** — pressing **Start capture** opens the browser's share picker. Choose a tab/window/screen and enable **Share audio** when offered.
 - **Computer + microphone** — captures the shared audio and the device microphone, mixes them locally with the Web Audio API, and sends the resulting mono stream through the existing near-live Whisper pipeline.
 
-The app never silently intercepts device audio. Browser screen/audio capture requires a fresh user action and permission each time. Browser/OS support varies, and a requested screen share may contain no audio track; Talk to Type detects that case before creating a recording and asks you to retry with **Share audio** enabled or use the microphone.
+The app never silently intercepts device audio. Browser screen/audio capture requires a fresh user action and permission each time. Browsers require a video/display track for this API, but Talk to Type does not read, encode or store screen pixels; it uses that track only to detect when sharing ends. Browser/OS support varies, and a requested screen share may contain no audio track; Talk to Type detects that case before creating a recording and asks you to retry with **Share audio** enabled or use the microphone.
 
 Stopping sharing from the browser's sharing controls automatically finishes and saves the current Talk to Type recording. The captured WAV is stored and handled exactly like microphone recordings, so parent-run speaker diarization can also be used afterwards.
 
