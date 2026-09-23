@@ -28,5 +28,5 @@ jobs:
       - run: node tests/test_audio_utils.js
       - run: node --check app/static/sw.js
       - run: python -m json.tool app/static/manifest.webmanifest > /dev/null
-      - run: python -m compileall -q app migrations
+      - run: python -m compileall -q app migrations speaker_service
       - run: docker build -t local-transcriber-ci .
