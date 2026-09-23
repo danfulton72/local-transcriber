@@ -7,6 +7,10 @@ A local-first, kid-friendly speech-to-text app for turning spoken ideas into edi
 - Username/password sign-in with separate per-user recordings, drafts, history and progress
 - Parent-only user management for adding accounts, resetting passwords and deactivating/reactivating users
 - Shared remembered speaker voiceprints across all app users
+- Selectable recording input:
+  - device microphone
+  - browser tab / window / computer audio when the browser supplies shared audio
+  - mixed computer audio + microphone for calls and conversations
 - Large, simple **Talk** screen with calmer near-live transcription:
   - confirmed words stay solid
   - the newest, still-being-checked words are shown more lightly
@@ -71,6 +75,20 @@ Local Transcriber :8090
 Your existing Whisper, Piper and Wyoming OpenAI Gateway containers remain separate and unchanged.
 
 The optional speaker analyzer is a separate local service. It uses pyannote Community-1 for diarization and its speaker embeddings for local voice matching. Conversation analysis is never run automatically: a parent opens **Progress → Conversation speakers** and starts it for a saved recording.
+
+## Computer / shared audio capture
+
+Under **Grown-up settings → Audio source**, choose:
+
+- **Microphone** — the normal Talk to Type microphone path.
+- **Computer / shared tab audio** — pressing **Start capture** opens the browser's share picker. Choose a tab/window/screen and enable **Share audio** when offered.
+- **Computer + microphone** — captures the shared audio and the device microphone, mixes them locally with the Web Audio API, and sends the resulting mono stream through the existing near-live Whisper pipeline.
+
+The app never silently intercepts device audio. Browser screen/audio capture requires a fresh user action and permission each time. Browser/OS support varies, and a requested screen share may contain no audio track; Talk to Type detects that case before creating a recording and asks you to retry with **Share audio** enabled or use the microphone.
+
+Stopping sharing from the browser's sharing controls automatically finishes and saves the current Talk to Type recording. The captured WAV is stored and handled exactly like microphone recordings, so parent-run speaker diarization can also be used afterwards.
+
+This is primarily a desktop-browser feature. Chrome/Edge generally provide the most useful tab/system-audio choices; phones/tablets and other browsers may provide limited or no shared audio.
 
 ## Parent-only conversation speakers
 
