@@ -31,6 +31,8 @@ def read_wav_samples(data: bytes) -> tuple[int, list[int]]:
 
 def test_recovery_and_keep_talking_append():
     with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "local", "password": "change-me-now"})
+        assert login.status_code == 200
         created = client.post("/api/recordings", json={"language": "en"}).json()
         rid = created["id"]
 
@@ -78,6 +80,8 @@ def test_recovery_and_keep_talking_append():
 
 def test_edit_draft_does_not_change_ready_status_and_final_edit_clears_it():
     with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "local", "password": "change-me-now"})
+        assert login.status_code == 200
         created = client.post("/api/recordings", json={}).json()
         rid = created["id"]
         client.post(
@@ -104,6 +108,8 @@ def test_edit_draft_does_not_change_ready_status_and_final_edit_clears_it():
 
 def test_multiple_audio_segments_are_preserved_and_combined_in_order():
     with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "local", "password": "change-me-now"})
+        assert login.status_code == 200
         created = client.post("/api/recordings", json={}).json()
         rid = created["id"]
         client.post(
@@ -146,6 +152,8 @@ def test_multiple_audio_segments_are_preserved_and_combined_in_order():
 
 def test_share_event_is_allowed():
     with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "local", "password": "change-me-now"})
+        assert login.status_code == 200
         created = client.post("/api/recordings", json={}).json()
         rid = created["id"]
         client.post(
@@ -161,6 +169,8 @@ def test_share_event_is_allowed():
 
 def test_recovery_notice_is_suppressed_after_acknowledgement_until_new_activity():
     with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "local", "password": "change-me-now"})
+        assert login.status_code == 200
         created = client.post("/api/recordings", json={}).json()
         rid = created["id"]
 
