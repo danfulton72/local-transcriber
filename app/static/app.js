@@ -380,10 +380,19 @@
   }
 
   function updateCaptureSourceUI() {
+    const displaySupported = Boolean(navigator.mediaDevices?.getDisplayMedia);
+    if (!displaySupported && els.captureSource && els.captureSource.value !== 'microphone') {
+      els.captureSource.value = 'microphone';
+      localStorage.setItem('captureSource', 'microphone');
+    }
+    if (els.captureSource) {
+      for (const option of els.captureSource.options) {
+        if (option.value !== 'microphone') option.disabled = !displaySupported;
+      }
+    }
     const mode = els.captureSource?.value || 'microphone';
     const label = captureModeLabel(mode);
     if (els.captureSourceHint) {
-      const displaySupported = Boolean(navigator.mediaDevices?.getDisplayMedia);
       const description = mode === 'computer'
         ? (displaySupported
           ? 'Choose a browser tab, window or screen and enable Share audio when the browser offers it.'
