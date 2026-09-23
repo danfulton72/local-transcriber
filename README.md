@@ -30,6 +30,13 @@ A local-first, kid-friendly speech-to-text app for turning spoken ideas into edi
   - longest saved piece
   - words dictated over time
 - Optional parent PIN for the Progress API/page
+- Parent-only **Conversation speakers** tools:
+  - post-process a saved conversation into Person 1 / Person 2 / Person 3 turns
+  - optionally set the expected number of speakers
+  - rename detected people for that analysis
+  - **Remember this speaker** stores a local speaker embedding for future matching
+  - recognised speakers are suggested by name only in the parent area
+  - rename or forget remembered speakers at any time
 - Parent storage tools:
   - recycle bin with restore and permanent delete
   - voice-audio retention (forever / 30 / 90 / 365 days)
@@ -56,6 +63,38 @@ Local Transcriber :8090
 ```
 
 Your existing Whisper, Piper and Wyoming OpenAI Gateway containers remain separate and unchanged.
+
+The optional speaker analyzer is a separate local service. It uses pyannote Community-1 for diarization and its speaker embeddings for local voice matching. Conversation analysis is never run automatically: a parent opens **Progress → Conversation speakers** and starts it for a saved recording.
+
+## Parent-only conversation speakers
+
+Speaker diarization and voice recognition are deliberately kept behind the parent PIN.
+
+### One-time pyannote model access
+
+The open-source `pyannote/speaker-diarization-community-1` model is gated on Hugging Face. Before the first analysis:
+
+1. Sign in to Hugging Face and accept the access conditions for `pyannote/speaker-diarization-community-1`.
+2. Create a Hugging Face access token that can download the model.
+3. Put the token in `.env` as `HF_TOKEN=...`.
+4. Rebuild with `docker compose up -d --build`.
+
+Downloaded model files are cached under `./speaker-model-cache`, so subsequent analysis can use the local cache.
+
+The speaker analyzer uses the NVIDIA GPU by default (`SPEAKER_DEVICE=cuda`). It is parent-triggered after recording, so it does not alter the child-facing live transcription path.
+
+### Workflow
+
+Open **Progress**, enter the parent PIN, then use **Conversation speakers**:
+
+1. Choose a saved recording.
+2. Optionally specify the expected number of speakers.
+3. Press **Analyse conversation**.
+4. Review turns labelled Person 1, Person 2, etc.
+5. Rename a detected person if useful.
+6. Press **Remember this speaker** only when you want that local voiceprint used for future matching.
+
+Remembered voiceprints are numeric speaker embeddings stored in your PostgreSQL database. The app does not expose them to the child-facing Talk or My words pages. Recognition is a similarity match, not proof of identity, so parent review remains authoritative.
 
 ## PostgreSQL
 
@@ -89,6 +128,13 @@ PARENT_PIN=1234
 
 DEFAULT_LANGUAGE=
 DEFAULT_VOICE=en_GB-northern_english_male-medium
+
+# Parent-only speaker diarization / remembered speakers
+SPEAKER_SERVICE_URL=http://speaker-analyzer:9000
+SPEAKER_MATCH_THRESHOLD=0.78
+HF_TOKEN=YOUR_HUGGINGFACE_TOKEN
+PYANNOTE_MODEL=pyannote/speaker-diarization-community-1
+SPEAKER_DEVICE=cuda
 ```
 
 Then build and start:
