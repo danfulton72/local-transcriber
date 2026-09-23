@@ -1,8 +1,9 @@
-FROM python:3.12-slim
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    HF_HOME=/models
+    HF_HOME=/models \
+    PIP_NO_CACHE_DIR=1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg libsndfile1 \
@@ -11,8 +12,7 @@ RUN apt-get update \
 WORKDIR /service
 
 COPY requirements.txt /service/requirements.txt
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu "torch>=2.8,<3" "torchaudio>=2.8,<3" \
-    && pip install --no-cache-dir -r /service/requirements.txt
+RUN pip install -r /service/requirements.txt
 
 COPY app.py /service/app.py
 
