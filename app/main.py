@@ -9,12 +9,20 @@ from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
+from .auth import (
+    current_user_id,
+    ensure_default_user,
+    reset_current_user_id,
+    router as auth_router,
+    set_current_user_id,
+    user_from_request,
+)
 from .config import settings
 from .db import SessionLocal, get_db, init_db
 from .models import Recording, RecordingAudioSegment, TranscriptRevision, TranscriptionChunk, UsageEvent, utcnow
@@ -26,7 +34,8 @@ from .services.retention import cleanup_expired_audio
 from .admin import router as admin_router
 from .speaker_admin import router as speaker_admin_router
 
-app = FastAPI(title="Local Transcriber", version="0.4.0")
+app = FastAPI(title="Local Transcriber", version="0.5.0")
+app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(speaker_admin_router)
 
@@ -36,7 +45,24 @@ async def startup() -> None:
     settings.recordings_dir.mkdir(parents=True, exist_ok=True)
     await init_db()
     async with SessionLocal() as db:
+        await ensure_default_user(db)
         await cleanup_expired_audio(db)
+
+
+@app.middleware("http")
+async def authenticated_api(request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and not path.startswith("/api/auth/"):
+        async with SessionLocal() as db:
+            user = await user_from_request(request, db)
+        if not user:
+            return JSONResponse({"detail": "Login required"}, status_code=401)
+        token = set_current_user_id(user.id)
+        try:
+            return await call_next(request)
+        finally:
+            reset_current_user_id(token)
+    return await call_next(request)
 
 
 def make_title(transcript: str) -> str:
@@ -100,7 +126,10 @@ def recording_out(recording: Recording) -> RecordingOut:
 
 
 async def find_recording(recording_id: uuid.UUID, db: AsyncSession, include_deleted: bool = False) -> Recording:
-    query = select(Recording).where(Recording.id == recording_id)
+    query = select(Recording).where(
+        Recording.id == recording_id,
+        Recording.user_id == current_user_id(),
+    )
     if not include_deleted:
         query = query.where(Recording.deleted_at.is_(None))
     recording = (await db.execute(query)).scalar_one_or_none()
@@ -180,7 +209,13 @@ async def voices() -> dict:
 
 @app.post("/api/recordings", response_model=RecordingOut)
 async def create_recording(payload: RecordingCreate, db: AsyncSession = Depends(get_db)) -> RecordingOut:
-    recording = Recording(language=payload.language or None, title=payload.title, status="recording", last_activity_at=utcnow())
+    recording = Recording(
+        user_id=current_user_id(),
+        language=payload.language or None,
+        title=payload.title,
+        status="recording",
+        last_activity_at=utcnow(),
+    )
     db.add(recording)
     await db.commit()
     await db.refresh(recording)
@@ -199,7 +234,7 @@ async def list_recordings(
 ) -> list[RecordingOut]:
     if deleted:
         check_parent_pin(x_parent_pin)
-    query = select(Recording)
+    query = select(Recording).where(Recording.user_id == current_user_id())
     query = query.where(Recording.deleted_at.is_not(None) if deleted else Recording.deleted_at.is_(None))
     if not deleted:
         query = query.where(Recording.status == "ready")
@@ -225,6 +260,7 @@ async def recoverable_recording(db: AsyncSession = Depends(get_db)) -> Recording
         await db.execute(
             select(Recording)
             .where(
+                Recording.user_id == current_user_id(),
                 Recording.deleted_at.is_(None),
                 Recording.status.in_(["recording", "processing"]),
                 or_(
@@ -746,11 +782,25 @@ async def progress(
     records = (
         await db.execute(
             select(Recording)
-            .where(Recording.deleted_at.is_(None), Recording.created_at >= since, Recording.status == "ready")
+            .where(
+                Recording.user_id == current_user_id(),
+                Recording.deleted_at.is_(None),
+                Recording.created_at >= since,
+                Recording.status == "ready",
+            )
             .order_by(Recording.created_at.asc())
         )
     ).scalars().all()
-    events = (await db.execute(select(UsageEvent).where(UsageEvent.created_at >= since))).scalars().all()
+    events = (
+        await db.execute(
+            select(UsageEvent)
+            .join(Recording, UsageEvent.recording_id == Recording.id)
+            .where(
+                Recording.user_id == current_user_id(),
+                UsageEvent.created_at >= since,
+            )
+        )
+    ).scalars().all()
 
     total_seconds = sum(record.duration_seconds or 0 for record in records)
     total_words = sum(word_count(record.transcript) for record in records)
