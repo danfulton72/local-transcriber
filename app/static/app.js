@@ -577,9 +577,13 @@
     try {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       const ctx = new AudioContext();
-      await ctx.resume();
+      state.audioContext = ctx;
 
+      // getDisplayMedia must stay directly tied to the button press. Ask for
+      // sharing before awaiting AudioContext.resume() so transient activation
+      // is not lost on stricter browsers.
       const capture = await openCaptureStreams(mode, ctx);
+      await ctx.resume();
       const stream = capture.stream;
       const source = ctx.createMediaStreamSource(stream);
       const processor = ctx.createScriptProcessor(4096, 1, 1);
