@@ -12,10 +12,26 @@
   <link rel="apple-touch-icon" href="/icon.svg">
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body class="logged-out">
+  <section id="loginScreen" class="login-screen" aria-labelledby="loginHeading">
+    <form id="loginForm" class="login-card">
+      <p class="eyebrow">Local Transcriber</p>
+      <h1 id="loginHeading">Sign in</h1>
+      <p class="muted">Your recordings, words and progress stay in your own profile.</p>
+      <label>Username<input id="loginUsername" type="text" autocomplete="username" required></label>
+      <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+      <button id="loginButton" class="primary" type="submit">Sign in</button>
+      <p id="loginMessage" class="error hidden" role="alert"></p>
+    </form>
+  </section>
+
   <header class="topbar">
     <div><p class="eyebrow">Local Transcriber</p><h1>Talk to Type</h1></div>
-    <div id="healthBadge" class="health checking" aria-live="polite">Checking…</div>
+    <div class="topbar-account">
+      <div id="healthBadge" class="health checking" aria-live="polite">Checking…</div>
+      <span id="currentUserLabel" class="user-chip"></span>
+      <button id="logoutButton" class="small" type="button">Sign out</button>
+    </div>
   </header>
   <nav class="tabs" aria-label="Main pages">
     <button class="tab active" data-page="talk">🎙 Talk</button>
@@ -100,6 +116,28 @@
         <div id="metricGrid" class="metrics"></div>
         <div class="progress-grid"><section class="panel"><h3>Frequently corrected words</h3><div id="correctionsList"></div></section><section class="panel"><h3>Speaking over time</h3><div id="dailyChart" class="daily-chart"></div></section></div>
         <section class="panel"><h3>Longest piece</h3><div id="longestPiece"></div></section>
+
+        <div class="parent-tools-heading">
+          <p class="eyebrow">Parent tools</p>
+          <h2>Users</h2>
+        </div>
+        <section class="panel user-admin-panel">
+          <div class="section-heading compact-heading">
+            <div>
+              <h3>App profiles</h3>
+              <p class="muted">Each user has separate recordings and progress. Remembered speaker voiceprints are shared.</p>
+            </div>
+            <button id="refreshUsersButton" type="button">Refresh</button>
+          </div>
+          <form id="createUserForm" class="user-create-grid">
+            <label class="admin-label">Username<input id="newUsername" type="text" autocomplete="off" required></label>
+            <label class="admin-label">Display name<input id="newUserDisplayName" type="text" autocomplete="off" required></label>
+            <label class="admin-label">Password<input id="newUserPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+            <button id="createUserButton" class="primary" type="submit">Add user</button>
+          </form>
+          <p id="userAdminMessage" class="muted small-note" aria-live="polite"></p>
+          <div id="userList" class="user-list"></div>
+        </section>
 
         <div class="parent-tools-heading">
           <p class="eyebrow">Parent tools</p>
