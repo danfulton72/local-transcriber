@@ -29,4 +29,5 @@ jobs:
       - run: node --check app/static/sw.js
       - run: python -m json.tool app/static/manifest.webmanifest > /dev/null
       - run: python -m compileall -q app migrations speaker_service
+      - run: docker compose config -q
       - run: docker build -t local-transcriber-ci .
