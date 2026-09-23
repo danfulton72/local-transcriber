@@ -157,3 +157,40 @@ def test_share_event_is_allowed():
             json={"event_type": "share", "recording_id": rid, "event_data": {}},
         )
         assert response.status_code == 204
+
+
+def test_recovery_notice_is_suppressed_after_acknowledgement_until_new_activity():
+    with TestClient(app) as client:
+        created = client.post("/api/recordings", json={}).json()
+        rid = created["id"]
+
+        draft = client.patch(
+            f"/api/recordings/{rid}/draft",
+            json={"text": "These words were interrupted.", "active_capture": True},
+        )
+        assert draft.status_code == 200
+
+        first_notice = client.get("/api/recoverable")
+        assert first_notice.status_code == 200
+        assert first_notice.json()["id"] == rid
+
+        acknowledged = client.post(f"/api/recordings/{rid}/recovery-acknowledged")
+        assert acknowledged.status_code == 204
+
+        suppressed = client.get("/api/recoverable")
+        assert suppressed.status_code == 200
+        assert suppressed.json() is None
+
+        changed = client.patch(
+            f"/api/recordings/{rid}/draft",
+            json={
+                "text": "These words were interrupted, then more words were added.",
+                "active_capture": True,
+            },
+        )
+        assert changed.status_code == 200
+
+        new_notice = client.get("/api/recoverable")
+        assert new_notice.status_code == 200
+        assert new_notice.json()["id"] == rid
+        assert "more words were added" in new_notice.json()["transcript"]
