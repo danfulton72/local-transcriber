@@ -4,6 +4,9 @@ A local-first, kid-friendly speech-to-text app for turning spoken ideas into edi
 
 ## What it does
 
+- Username/password sign-in with separate per-user recordings, drafts, history and progress
+- Parent-only user management for adding accounts, resetting passwords and deactivating/reactivating users
+- Shared remembered speaker voiceprints across all app users
 - Large, simple **Talk** screen with calmer near-live transcription:
   - confirmed words stay solid
   - the newest, still-being-checked words are shown more lightly
@@ -102,6 +105,37 @@ Each remembered person keeps a small bank of up to 8 normalized speaker embeddin
 
 Remembered voiceprints are numeric speaker embeddings stored in your PostgreSQL database. The app does not expose them to the child-facing Talk or My words pages. Recognition is a similarity match, not proof of identity, so parent review remains authoritative.
 
+## Users and sign-in
+
+The app has database-backed user accounts. Each logged-in user has their own:
+
+- recordings and stored audio
+- interrupted-draft recovery
+- My words history and favourites
+- progress statistics and correction history
+- recycle bin
+- parent-run conversation analyses for their recordings
+
+Remembered speaker voiceprints are intentionally shared across users, so a voice remembered while reviewing one user's conversation can be recognised in another user's parent-run conversation analysis.
+
+Passwords are stored only as salted PBKDF2-SHA256 hashes. Login sessions use an HTTP-only SameSite cookie; the database stores only a SHA-256 hash of each random session token.
+
+### First upgrade to multi-user
+
+Before the **first** startup of the multi-user release, add these values to your existing `.env`:
+
+```env
+DEFAULT_USERNAME=your-login-name
+DEFAULT_PASSWORD=choose-a-long-password
+DEFAULT_DISPLAY_NAME=Display name
+AUTH_SESSION_DAYS=30
+AUTH_COOKIE_SECURE=true
+```
+
+On that first startup, the default account is created if it does not already exist and all recordings created before user support are assigned to it. The environment password is a bootstrap value: changing `DEFAULT_PASSWORD` later does not silently overwrite the password already stored for that user. Use **Progress → Users** with the parent PIN to reset passwords after bootstrap.
+
+The application has fallback bootstrap values so an upgrade cannot permanently lock itself out, but you should set your own credentials before first startup.
+
 ## PostgreSQL
 
 Use your existing PostgreSQL **server**, but give this app a dedicated database and login. For example, as a PostgreSQL administrator:
@@ -131,6 +165,13 @@ RECORDINGS_DIR=/data/recordings
 
 # Optional but recommended for the grown-up Progress page
 PARENT_PIN=1234
+
+# First account / legacy recording owner
+DEFAULT_USERNAME=local
+DEFAULT_PASSWORD=choose-a-long-password
+DEFAULT_DISPLAY_NAME=Local user
+AUTH_SESSION_DAYS=30
+AUTH_COOKIE_SECURE=true
 
 DEFAULT_LANGUAGE=
 DEFAULT_VOICE=en_GB-northern_english_male-medium
@@ -203,7 +244,7 @@ docker compose up -d --build
 docker compose logs --tail=100 local-transcriber
 ```
 
-The container runs `alembic upgrade head` automatically during startup. Existing PostgreSQL data and the `recordings/` directory are preserved; this release adds draft/recovery fields and an audio-segment table without replacing existing recordings.
+The container runs `alembic upgrade head` automatically during startup. Existing PostgreSQL data and the `recordings/` directory are preserved. The current schema migrations also add users/sessions and assign legacy recordings to the bootstrap account on startup without replacing existing recordings.
 
 Then hard-refresh the browser. If you previously installed the PWA, its service worker uses network-first updates for the app shell so refreshed versions are picked up rather than being permanently pinned to an old JavaScript/CSS cache.
 
@@ -213,7 +254,9 @@ Open **Grown-up settings → Install on this device**. On browsers with a native
 
 ### Parent storage tools
 
-Open **Progress**, enter the parent PIN, and press **Show progress**. The lower part of the page contains:
+Open **Progress**, enter the parent PIN, and press **Show progress**. Progress and the recycle bin apply only to the currently logged-in user. The lower part of the page contains:
+
+- **Users** — add accounts, change display names, reset passwords, and deactivate/reactivate accounts. A password reset revokes that user's existing sessions.
 
 - **Voice recording retention** — controls stored audio only; transcripts/history remain.
 - **Backup & status** — checks PostgreSQL, the speech gateway and local audio storage, and can download an application backup ZIP.
