@@ -1082,7 +1082,11 @@
     for (const profile of profiles) {
       const row = document.createElement('div'); row.className = 'speaker-profile-row';
       const input = document.createElement('input'); input.value = profile.name; input.setAttribute('aria-label', 'Remembered speaker name');
-      const meta = document.createElement('span'); meta.className = 'muted'; meta.textContent = profile.sample_count + ' voice sample' + (profile.sample_count === 1 ? '' : 's');
+
+      const meta = document.createElement('span'); meta.className = 'muted';
+      meta.textContent =
+        profile.sample_count + '/' + profile.max_samples + ' voice samples · profile ' + profile.profile_quality;
+
       const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Save name';
       save.addEventListener('click', async () => {
         const name = input.value.trim();
@@ -1096,6 +1100,7 @@
         await loadSpeakerProfiles();
         if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
       });
+
       const forget = document.createElement('button'); forget.type = 'button'; forget.className = 'danger'; forget.textContent = 'Forget voiceprint';
       forget.addEventListener('click', async () => {
         if (!confirm('Forget the saved voiceprint for ' + profile.name + '? Past conversation labels will stay.')) return;
@@ -1104,7 +1109,45 @@
         await loadSpeakerProfiles();
         if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
       });
-      row.append(input, meta, save, forget);
+
+      const samples = document.createElement('details'); samples.className = 'voice-sample-details';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Review ' + profile.sample_count + ' voice sample' + (profile.sample_count === 1 ? '' : 's');
+      samples.appendChild(summary);
+
+      const list = document.createElement('div'); list.className = 'voice-sample-list';
+      for (const sample of profile.samples || []) {
+        const sampleRow = document.createElement('div'); sampleRow.className = 'voice-sample-row';
+        const info = document.createElement('div');
+        const title = document.createElement('strong'); title.textContent = sample.source_recording_title || 'Saved voice sample';
+        const detail = document.createElement('span'); detail.className = 'muted';
+        const speech = sample.speech_seconds == null ? 'legacy sample' : (sample.speech_seconds.toFixed(1) + 's speech');
+        detail.textContent = speech + ' · ' + friendlyDate(sample.created_at);
+        info.append(title, detail);
+
+        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger small'; remove.textContent = 'Remove sample';
+        remove.disabled = profile.sample_count <= 1;
+        remove.title = profile.sample_count <= 1 ? 'Use Forget voiceprint to remove the final sample.' : 'Remove this sample from future matching';
+        remove.addEventListener('click', async () => {
+          if (!confirm('Remove this voice sample from ' + profile.name + '?')) return;
+          try {
+            await api('/api/admin/speakers/profiles/' + profile.id + '/samples/' + sample.id, {
+              method: 'DELETE', headers: parentHeaders(),
+            });
+            showToast('Voice sample removed');
+            await loadSpeakerProfiles();
+            if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
+          } catch (error) {
+            showToast(error.message);
+          }
+        });
+
+        sampleRow.append(info, remove);
+        list.appendChild(sampleRow);
+      }
+      samples.appendChild(list);
+
+      row.append(input, meta, save, forget, samples);
       els.speakerProfilesList.appendChild(row);
     }
   }
@@ -1209,20 +1252,32 @@
         await refreshCurrentSpeakerAnalysis();
       });
       const remember = document.createElement('button'); remember.type = 'button'; remember.className = 'primary';
-      remember.textContent = detection.profile_id ? 'Update voiceprint' : 'Remember this speaker';
+      remember.textContent = detection.profile_id ? 'Add voice sample' : 'Remember this speaker';
+      remember.disabled = !detection.can_remember;
+      remember.title = detection.can_remember
+        ? 'Add this conversation as another confirmed voice sample'
+        : 'Need at least 3 seconds of this person speaking before learning their voice.';
+      const speechInfo = document.createElement('span'); speechInfo.className = 'muted small-note';
+      speechInfo.textContent = Number(detection.speech_seconds || 0).toFixed(1) + 's attributed speech';
       remember.addEventListener('click', async () => {
         const name = input.value.trim();
         if (!name) return;
-        await api('/api/admin/speakers/analyses/' + analysis.id + '/detections/' + encodeURIComponent(detection.speaker_key) + '/remember', {
-          method: 'POST',
-          headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name }),
-        });
-        showToast('Speaker remembered locally');
-        await Promise.all([loadSpeakerProfiles(), refreshCurrentSpeakerAnalysis()]);
+        try {
+          const saved = await api('/api/admin/speakers/analyses/' + analysis.id + '/detections/' + encodeURIComponent(detection.speaker_key) + '/remember', {
+            method: 'POST',
+            headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name }),
+          });
+          showToast(saved.already_saved
+            ? 'This voice sample was already saved'
+            : ('Voice sample added · ' + saved.sample_count + ' total'));
+          await Promise.all([loadSpeakerProfiles(), refreshCurrentSpeakerAnalysis()]);
+        } catch (error) {
+          showToast(error.message);
+        }
       });
       actions.append(save, remember);
-      card.append(top, input, actions);
+      card.append(top, input, speechInfo, actions);
       speakerGrid.appendChild(card);
     }
 
