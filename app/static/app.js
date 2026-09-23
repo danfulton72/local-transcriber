@@ -509,6 +509,7 @@
       const wav = encodeWav(mergeBuffers(state.fullBuffers), state.sampleRate);
       const audioForm = new FormData();
       audioForm.append('file', wav, 'recording-' + Date.now() + '.wav');
+      audioForm.append('duration_seconds', String(elapsed));
       await api('/api/recordings/' + state.currentRecording.id + '/audio', { method: 'POST', body: audioForm });
 
       let finalText = state.transcript.trim();
@@ -688,34 +689,61 @@
     } catch (error) { setError('Read-aloud failed: ' + error.message); }
   }
 
-  async function playAudioUrl(url, token) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('Voice recording is not available');
-    const blob = await response.blob(); const objectUrl = URL.createObjectURL(blob);
-    const audio = new Audio(objectUrl);
-    state.currentAudio = audio; state.currentAudioUrl = objectUrl;
-    await new Promise((resolve, reject) => {
-      audio.addEventListener('ended', resolve, { once: true });
-      audio.addEventListener('error', reject, { once: true });
-      audio.play().catch(reject);
-    });
-    if (state.playbackToken !== token) return false;
-    URL.revokeObjectURL(objectUrl); state.currentAudioUrl = null; state.currentAudio = null;
-    return true;
-  }
-
   async function playRecording() {
     if (!state.currentRecording?.has_audio) return;
     stopSpeech();
     const token = ++state.playbackToken;
+    const buttonText = els.playRecordingButton.textContent;
+    els.playRecordingButton.disabled = true;
+    els.playRecordingButton.textContent = 'Loading voice…';
+
     try {
-      const data = await api('/api/recordings/' + state.currentRecording.id + '/audio-segments', { cache: 'no-store' });
-      for (const segment of data.segments || []) {
-        if (state.playbackToken !== token) break;
-        const keepGoing = await playAudioUrl(segment.url, token);
-        if (!keepGoing) break;
+      const response = await fetch('/api/recordings/' + state.currentRecording.id + '/audio-combined', { cache: 'no-store' });
+      if (!response.ok) {
+        const type = response.headers.get('content-type') || '';
+        const payload = type.includes('application/json') ? await response.json() : await response.text();
+        const detail = typeof payload === 'string'
+          ? payload
+          : (typeof payload?.detail === 'string' ? payload.detail : payload?.detail?.message);
+        throw new Error(detail || 'The complete voice recording is not available.');
       }
-    } catch (error) { setError(error.message); }
+
+      const blob = await response.blob();
+      if (state.playbackToken !== token) return;
+
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      state.currentAudio = audio;
+      state.currentAudioUrl = url;
+
+      const segmentCount = Number(response.headers.get('X-Audio-Segments') || 1);
+      const duration = Number(response.headers.get('X-Audio-Duration') || 0);
+      els.playRecordingButton.textContent = segmentCount > 1 ? '■ Stop voice' : '■ Stop';
+
+      await new Promise((resolve, reject) => {
+        audio.addEventListener('ended', resolve, { once: true });
+        audio.addEventListener('error', () => reject(new Error('Voice playback failed.')), { once: true });
+        audio.play().catch(reject);
+      });
+
+      if (state.playbackToken === token) {
+        showToast(
+          segmentCount > 1
+            ? ('Played all ' + segmentCount + ' voice parts' + (duration ? ' · ' + formatTime(duration) : ''))
+            : 'Voice playback finished'
+        );
+      }
+    } catch (error) {
+      if (state.playbackToken === token) setError(error.message);
+    } finally {
+      if (state.playbackToken === token) {
+        if (state.currentAudioUrl) URL.revokeObjectURL(state.currentAudioUrl);
+        state.currentAudio = null;
+        state.currentAudioUrl = null;
+        els.playRecordingButton.disabled = false;
+        els.playRecordingButton.textContent = buttonText;
+      }
+    }
   }
 
   async function toggleFavourite() {
