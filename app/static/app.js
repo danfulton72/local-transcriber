@@ -55,7 +55,7 @@
     loginScreen: $('loginScreen'), loginForm: $('loginForm'), loginUsername: $('loginUsername'), loginPassword: $('loginPassword'),
     loginButton: $('loginButton'), loginMessage: $('loginMessage'), currentUserLabel: $('currentUserLabel'), logoutButton: $('logoutButton'),
     healthBadge: $('healthBadge'),
-    recordButton: $('recordButton'), recordButtonText: $('recordButtonText'), meter: $('meter'),
+    recordButton: $('recordButton'), recordButtonIcon: $('recordButtonIcon'), recordButtonText: $('recordButtonText'), meter: $('meter'),
     statusText: $('statusText'), statusDetail: $('statusDetail'), timer: $('timer'), pauseButton: $('pauseButton'),
     errorBox: $('errorBox'), transcriptView: $('transcriptView'), wordCount: $('wordCount'),
     editorWrap: $('editorWrap'), sentenceEditor: $('sentenceEditor'), editSaveStatus: $('editSaveStatus'), saveEditButton: $('saveEditButton'), cancelEditButton: $('cancelEditButton'),
@@ -383,10 +383,15 @@
     const mode = els.captureSource?.value || 'microphone';
     const label = captureModeLabel(mode);
     if (els.captureSourceHint) {
+      const displaySupported = Boolean(navigator.mediaDevices?.getDisplayMedia);
       const description = mode === 'computer'
-        ? 'Choose a browser tab, window or screen and enable Share audio when the browser offers it.'
+        ? (displaySupported
+          ? 'Choose a browser tab, window or screen and enable Share audio when the browser offers it.'
+          : 'This browser does not offer computer-audio sharing. Use the microphone or a supported desktop browser.')
         : (mode === 'mixed'
-          ? 'Captures shared computer audio and this device\'s microphone into one recording.'
+          ? (displaySupported
+            ? 'Captures shared computer audio and this device\'s microphone into one recording.'
+            : 'This browser does not offer computer-audio sharing. Use the microphone instead.')
           : 'Uses this device\'s microphone.');
       els.captureSourceHint.replaceChildren();
       const strong = document.createElement('strong'); strong.textContent = label;
@@ -394,6 +399,7 @@
       els.captureSourceHint.append(strong, span);
     }
     if (!state.recording && !state.transcribing) {
+      els.recordButtonIcon.textContent = mode === 'microphone' ? '🎙' : (mode === 'mixed' ? '🎧' : '🔊');
       els.recordButtonText.textContent = mode === 'microphone' ? 'Start talking' : 'Start capture';
       els.recordButton.setAttribute(
         'aria-label',
@@ -733,7 +739,8 @@
         acceptLiveTranscript(result.text);
         state.liveCompleted += 1;
         state.liveProcessingSeconds += Number(result.processing_seconds || 0);
-        setStatus(state.recording ? 'I’m listening' : 'Nearly done', state.liveQueue.length ? (state.liveQueue.length + ' little bits waiting') : 'Checking your latest words…');
+        const activeTitle = state.captureMode === 'microphone' ? 'I’m listening' : 'Capturing audio';
+        setStatus(state.recording ? activeTitle : 'Nearly done', state.liveQueue.length ? (state.liveQueue.length + ' little bits waiting') : 'Checking your latest words…');
       } catch (error) { setError('One short part could not be written down: ' + error.message); }
     }
     state.liveProcessing = false;
@@ -818,7 +825,8 @@
     if (!state.recording) return;
     state.paused = !state.paused; if (state.paused) setMeter(0);
     els.pauseButton.textContent = state.paused ? 'Carry on' : 'Pause';
-    setStatus(state.paused ? 'Paused' : 'I’m listening', state.paused ? 'Press Carry on when you are ready.' : 'Keep talking.');
+    const activeTitle = state.captureMode === 'microphone' ? 'I’m listening' : 'Capturing audio';
+    setStatus(state.paused ? 'Paused' : activeTitle, state.paused ? 'Press Carry on when you are ready.' : (state.captureMode === 'microphone' ? 'Keep talking.' : 'Shared audio capture is running.'));
   }
 
   async function importFile(file) {
