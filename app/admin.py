@@ -17,7 +17,18 @@ from starlette.background import BackgroundTask
 
 from .config import settings
 from .db import get_db
-from .models import AppSetting, Recording, RecordingAudioSegment, TranscriptRevision, TranscriptionChunk, UsageEvent
+from .models import (
+    AppSetting,
+    Recording,
+    RecordingAudioSegment,
+    SpeakerAnalysis,
+    SpeakerDetection,
+    SpeakerProfile,
+    SpeakerTurn,
+    TranscriptRevision,
+    TranscriptionChunk,
+    UsageEvent,
+)
 from .services.gateway import gateway
 from .services.progress import word_count
 from .services.retention import cleanup_expired_audio, get_retention_policy, set_retention_policy
@@ -255,11 +266,15 @@ async def download_backup(
     audio_segments = (await db.execute(select(RecordingAudioSegment).order_by(RecordingAudioSegment.created_at))).scalars().all()
     revisions = (await db.execute(select(TranscriptRevision).order_by(TranscriptRevision.created_at))).scalars().all()
     events = (await db.execute(select(UsageEvent).order_by(UsageEvent.created_at))).scalars().all()
+    speaker_profiles = (await db.execute(select(SpeakerProfile).order_by(SpeakerProfile.created_at))).scalars().all()
+    speaker_analyses = (await db.execute(select(SpeakerAnalysis).order_by(SpeakerAnalysis.created_at))).scalars().all()
+    speaker_detections = (await db.execute(select(SpeakerDetection).order_by(SpeakerDetection.analysis_id, SpeakerDetection.person_index))).scalars().all()
+    speaker_turns = (await db.execute(select(SpeakerTurn).order_by(SpeakerTurn.analysis_id, SpeakerTurn.start_seconds))).scalars().all()
     app_settings = (await db.execute(select(AppSetting).order_by(AppSetting.key))).scalars().all()
 
     exported_at = datetime.now(timezone.utc)
     manifest = {
-        "format": "local-transcriber-backup-v1",
+        "format": "local-transcriber-backup-v2",
         "exported_at": exported_at.isoformat(),
         "recordings": [_recording_dict(row) for row in recordings],
         "chunks": [
@@ -283,6 +298,34 @@ async def download_backup(
         "events": [
             _serialize_row(row, ["id", "recording_id", "event_type", "event_data", "created_at"])
             for row in events
+        ],
+        "speaker_profiles": [
+            _serialize_row(row, [
+                "id", "name", "embedding", "sample_count", "source_recording_id",
+                "created_at", "updated_at",
+            ])
+            for row in speaker_profiles
+        ],
+        "speaker_analyses": [
+            _serialize_row(row, [
+                "id", "recording_id", "status", "model", "speaker_count",
+                "processing_seconds", "error", "created_at", "completed_at",
+            ])
+            for row in speaker_analyses
+        ],
+        "speaker_detections": [
+            _serialize_row(row, [
+                "id", "analysis_id", "speaker_key", "person_index",
+                "display_name", "embedding", "profile_id", "match_score",
+            ])
+            for row in speaker_detections
+        ],
+        "speaker_turns": [
+            _serialize_row(row, [
+                "id", "analysis_id", "detection_id", "start_seconds",
+                "end_seconds", "text",
+            ])
+            for row in speaker_turns
         ],
         "settings": {row.key: row.value for row in app_settings},
     }
