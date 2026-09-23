@@ -3,6 +3,7 @@ import uuid
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.speaker_admin import (
     average_embeddings,
@@ -94,13 +95,15 @@ def test_remembered_speaker_collects_multiple_samples_and_rejects_short_speech(m
     from app.main import app
     from app import speaker_admin
     from app.db import SessionLocal
-    from app.models import Recording, SpeakerAnalysis, SpeakerDetection, SpeakerTurn
+    from app.models import Recording, SpeakerAnalysis, SpeakerDetection, SpeakerTurn, User
 
     monkeypatch.setattr(speaker_admin.settings, "parent_pin", "")
 
     async def seed_detection(seconds: float, embedding: list[float]):
         async with SessionLocal() as db:
+            user = (await db.execute(select(User).where(User.username == "local"))).scalar_one()
             recording = Recording(
+                user_id=user.id,
                 status="ready",
                 transcript_original="speaker sample",
                 duration_seconds=seconds,
