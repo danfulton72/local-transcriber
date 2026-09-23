@@ -3,6 +3,8 @@ import hashlib
 import hmac
 import re
 import secrets
+import uuid
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -19,6 +21,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 COOKIE_NAME = "talk_to_type_session"
 PBKDF2_ITERATIONS = 600_000
+_current_user_id: ContextVar[uuid.UUID | None] = ContextVar("current_user_id", default=None)
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{2,80}$")
 
 
@@ -118,10 +121,7 @@ async def ensure_default_user(db: AsyncSession) -> User:
     return user
 
 
-async def optional_user(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> User | None:
+async def user_from_request(request: Request, db: AsyncSession) -> User | None:
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         return None
@@ -143,6 +143,28 @@ async def optional_user(
     if not user or not user.is_active:
         return None
     return user
+
+
+async def optional_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> User | None:
+    return await user_from_request(request, db)
+
+
+def set_current_user_id(user_id: uuid.UUID):
+    return _current_user_id.set(user_id)
+
+
+def reset_current_user_id(token) -> None:
+    _current_user_id.reset(token)
+
+
+def current_user_id() -> uuid.UUID:
+    user_id = _current_user_id.get()
+    if user_id is None:
+        raise RuntimeError("No authenticated user in request context.")
+    return user_id
 
 
 async def require_user(user: User | None = Depends(optional_user)) -> User:
