@@ -405,6 +405,7 @@ async def download_backup(
 ) -> FileResponse:
     require_parent_pin(x_parent_pin)
 
+    users = (await db.execute(select(User).order_by(User.created_at))).scalars().all()
     recordings = (await db.execute(select(Recording).order_by(Recording.created_at))).scalars().all()
     chunks = (await db.execute(select(TranscriptionChunk).order_by(TranscriptionChunk.created_at))).scalars().all()
     audio_segments = (await db.execute(select(RecordingAudioSegment).order_by(RecordingAudioSegment.created_at))).scalars().all()
@@ -437,6 +438,10 @@ async def download_backup(
     manifest = {
         "format": "local-transcriber-backup-v3",
         "exported_at": exported_at.isoformat(),
+        "users": [
+            _serialize_row(row, ["id", "username", "display_name", "is_active", "created_at", "updated_at"])
+            for row in users
+        ],
         "recordings": [_recording_dict(row) for row in recordings],
         "chunks": [
             _serialize_row(row, [
