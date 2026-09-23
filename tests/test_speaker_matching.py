@@ -78,6 +78,8 @@ def test_speaker_admin_requires_parent_pin(monkeypatch):
     monkeypatch.setattr(speaker_admin.settings, "parent_pin", "2468")
 
     with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "local", "password": "change-me-now"})
+        assert login.status_code == 200
         denied = client.get("/api/admin/speakers/profiles")
         assert denied.status_code == 401
 
@@ -135,6 +137,8 @@ def test_remembered_speaker_collects_multiple_samples_and_rejects_short_speech(m
             return str(analysis.id), detection.speaker_key
 
     with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "local", "password": "change-me-now"})
+        assert login.status_code == 200
         short_analysis, short_key = asyncio.run(seed_detection(1.5, [1.0, 0.0]))
         short = client.post(
             f"/api/admin/speakers/analyses/{short_analysis}/detections/{short_key}/remember",
