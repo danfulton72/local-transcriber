@@ -95,6 +95,8 @@
         <div class="settings-grid">
           <label>Language<select id="language"><option value="">Auto detect</option><option value="en">English</option><option value="no">Norwegian</option></select></label>
           <label>Near-live chunk<select id="chunkSeconds"><option value="3">3 seconds</option><option value="5" selected>5 seconds</option><option value="8">8 seconds</option><option value="12">12 seconds</option></select></label>
+          <label>Audio source<select id="captureSource"><option value="microphone">Microphone</option><option value="computer">Computer / shared tab audio</option><option value="mixed">Computer + microphone</option></select></label>
+          <div id="captureSourceHint" class="wide capture-source-hint"><strong>Microphone</strong><span class="muted">Uses this device's microphone.</span></div>
           <label>Read-aloud voice<select id="voice"><option value="en_GB-northern_english_male-medium">Northern English</option></select></label>
           <label>Read-aloud speed<select id="speechSpeed"><option value="0.8">Slower</option><option value="0.9" selected>Calm</option><option value="1">Normal</option><option value="1.15">Faster</option></select></label>
           <label class="wide">Whisper context prompt<input id="prompt" type="text" placeholder="Optional names or topic words"></label>
