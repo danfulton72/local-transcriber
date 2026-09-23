@@ -815,15 +815,40 @@
       }
       if (!record.transcript || record.status === 'ready') return;
 
+      const noticeToken = recoveryNoticeToken(record);
+      if (noticeToken && localStorage.getItem('dismissedRecoveryNotice') === noticeToken) return;
+
       state.recoverableRecording = record;
       els.recoveryDetail.textContent = record.word_count + ' words were saved as a draft.';
       els.recoveryBanner.classList.remove('hidden');
     } catch {}
   }
 
+  function recoveryNoticeToken(record) {
+    if (!record?.id) return '';
+    const activity = record.last_activity_at || '';
+    let hash = 2166136261;
+    const text = String(record.draft_text || record.transcript || '');
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return record.id + ':' + activity + ':' + (hash >>> 0).toString(16);
+  }
+
+  async function acknowledgeRecovery(record) {
+    if (!record?.id) return;
+    const token = recoveryNoticeToken(record);
+    if (token) localStorage.setItem('dismissedRecoveryNotice', token);
+    try {
+      await api('/api/recordings/' + record.id + '/recovery-acknowledged', { method: 'POST' });
+    } catch {}
+  }
+
   function recoverWords() {
     const record = state.recoverableRecording;
     if (!record) return;
+    acknowledgeRecovery(record);
     state.currentRecording = record;
     setTranscript(record.draft_text || record.transcript);
     els.recoveryBanner.classList.add('hidden');
@@ -833,7 +858,11 @@
   }
 
   function dismissRecovery() {
+    const record = state.recoverableRecording;
+    if (record) acknowledgeRecovery(record);
+    state.recoverableRecording = null;
     els.recoveryBanner.classList.add('hidden');
+    showToast('Recovery reminder dismissed');
   }
 
   async function installApp() {
