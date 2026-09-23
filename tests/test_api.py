@@ -5,6 +5,8 @@ from app.main import app
 
 def test_recording_lifecycle():
     with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "local", "password": "change-me-now"})
+        assert login.status_code == 200
         created = client.post("/api/recordings", json={"language": "en"})
         assert created.status_code == 200
         recording = created.json()
