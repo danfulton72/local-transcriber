@@ -82,6 +82,7 @@ def recording_out(recording: Recording) -> RecordingOut:
         id=recording.id,
         created_at=recording.created_at,
         finished_at=recording.finished_at,
+        last_activity_at=recording.last_activity_at,
         duration_seconds=recording.duration_seconds,
         language=recording.language,
         title=recording.title,
