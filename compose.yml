@@ -10,4 +10,22 @@ services:
       - ./recordings:/data/recordings
     ports:
       - "8090:8080"
+    depends_on:
+      - speaker-analyzer
+    restart: unless-stopped
+
+  speaker-analyzer:
+    build:
+      context: ./speaker_service
+    container_name: local-transcriber-speaker-analyzer
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_HOME: /models
+      PYANNOTE_MODEL: ${PYANNOTE_MODEL:-pyannote/speaker-diarization-community-1}
+      SPEAKER_DEVICE: ${SPEAKER_DEVICE:-cpu}
+      GATEWAY_BASE_URL: http://host.docker.internal:8555/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./speaker-model-cache:/models
     restart: unless-stopped
