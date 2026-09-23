@@ -34,9 +34,12 @@ A local-first, kid-friendly speech-to-text app for turning spoken ideas into edi
   - post-process a saved conversation into Person 1 / Person 2 / Person 3 turns
   - optionally set the expected number of speakers
   - rename detected people for that analysis
-  - **Remember this speaker** stores a local speaker embedding for future matching
+  - **Remember this speaker** stores local speaker embeddings for future matching
+  - each remembered person can keep up to 8 confirmed voice samples from different recordings
+  - matching uses the strongest 1–3 samples rather than one running average, which is more tolerant of room/microphone variation and one poor sample
+  - samples under 3 seconds of attributed speech are rejected
+  - review/remove individual voice samples, rename the person, or forget the whole voiceprint at any time
   - recognised speakers are suggested by name only in the parent area
-  - rename or forget remembered speakers at any time
 - Parent storage tools:
   - recycle bin with restore and permanent delete
   - voice-audio retention (forever / 30 / 90 / 365 days)
@@ -93,6 +96,9 @@ Open **Progress**, enter the parent PIN, then use **Conversation speakers**:
 4. Review turns labelled Person 1, Person 2, etc.
 5. Rename a detected person if useful.
 6. Press **Remember this speaker** only when you want that local voiceprint used for future matching.
+7. On later conversations, use **Add voice sample** for the same person to strengthen their profile.
+
+Each remembered person keeps a small bank of up to 8 normalized speaker embeddings. The matcher scores a new voice against the strongest few samples rather than relying on one running average. Samples with less than 3 seconds of attributed speech are not accepted, and the same detected speaker cannot be added twice from one analysis. Existing single-embedding profiles are migrated into the bank as their first sample.
 
 Remembered voiceprints are numeric speaker embeddings stored in your PostgreSQL database. The app does not expose them to the child-facing Talk or My words pages. Recognition is a similarity match, not proof of identity, so parent review remains authoritative.
 
