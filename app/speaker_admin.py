@@ -10,6 +10,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .admin import require_parent_pin
+from .auth import current_user_id
 from .config import settings
 from .db import SessionLocal, get_db
 from .models import (
@@ -217,6 +218,14 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
     }
 
 
+async def owned_analysis(analysis_id: uuid.UUID, db: AsyncSession) -> SpeakerAnalysis:
+    analysis = await owned_analysis(analysis_id, db)
+    recording = await db.get(Recording, analysis.recording_id)
+    if not recording or recording.user_id != current_user_id():
+        raise HTTPException(status_code=404, detail="Speaker analysis not found")
+    return analysis
+
+
 async def process_analysis(analysis_id: uuid.UUID, num_speakers: int | None) -> None:
     started = time.perf_counter()
     temp_path = None
@@ -347,6 +356,7 @@ async def speaker_recordings(
         await db.execute(
             select(Recording)
             .where(
+                Recording.user_id == current_user_id(),
                 Recording.deleted_at.is_(None),
                 Recording.status == "ready",
                 Recording.audio_path.is_not(None),
@@ -377,7 +387,12 @@ async def start_speaker_analysis(
 ) -> dict:
     require_parent_pin(x_parent_pin)
     recording = await db.get(Recording, recording_id)
-    if not recording or recording.deleted_at is not None or recording.status != "ready":
+    if (
+        not recording
+        or recording.user_id != current_user_id()
+        or recording.deleted_at is not None
+        or recording.status != "ready"
+    ):
         raise HTTPException(status_code=404, detail="Saved recording not found")
     if not recording.audio_path:
         raise HTTPException(status_code=400, detail="This recording has no retained voice audio.")
@@ -397,9 +412,7 @@ async def get_speaker_analysis(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     require_parent_pin(x_parent_pin)
-    analysis = await db.get(SpeakerAnalysis, analysis_id)
-    if not analysis:
-        raise HTTPException(status_code=404, detail="Speaker analysis not found")
+    analysis = await owned_analysis(analysis_id, db)
     return await _analysis_payload(analysis, db)
 
 
@@ -412,6 +425,7 @@ async def label_detection(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     require_parent_pin(x_parent_pin)
+    await owned_analysis(analysis_id, db)
     detection = (
         await db.execute(
             select(SpeakerDetection).where(
@@ -443,6 +457,7 @@ async def remember_speaker(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     require_parent_pin(x_parent_pin)
+    await owned_analysis(analysis_id, db)
     detection = (
         await db.execute(
             select(SpeakerDetection).where(
@@ -565,7 +580,12 @@ async def list_speaker_profiles(
     ).scalars().all()
     recording_ids = {sample.source_recording_id for sample in samples if sample.source_recording_id}
     recordings = (
-        await db.execute(select(Recording).where(Recording.id.in_(recording_ids)))
+        await db.execute(
+            select(Recording).where(
+                Recording.id.in_(recording_ids),
+                Recording.user_id == current_user_id(),
+            )
+        )
     ).scalars().all() if recording_ids else []
     recording_titles = {recording.id: recording.title or "Recording" for recording in recordings}
 
@@ -592,7 +612,7 @@ async def list_speaker_profiles(
                     "id": str(sample.id),
                     "speech_seconds": round(sample.speech_seconds, 1) if sample.speech_seconds is not None else None,
                     "source_recording_id": str(sample.source_recording_id) if sample.source_recording_id else None,
-                    "source_recording_title": recording_titles.get(sample.source_recording_id, "Legacy voiceprint"),
+                    "source_recording_title": recording_titles.get(sample.source_recording_id, "Shared voice sample"),
                     "created_at": sample.created_at.isoformat(),
                 }
                 for sample in bank
