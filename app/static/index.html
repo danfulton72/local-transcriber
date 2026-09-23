@@ -103,6 +103,53 @@
 
         <div class="parent-tools-heading">
           <p class="eyebrow">Parent tools</p>
+          <h2>Conversation speakers</h2>
+        </div>
+        <div class="speaker-admin-grid">
+          <section class="panel speaker-panel">
+            <div class="section-heading compact-heading">
+              <div>
+                <h3>Who said what?</h3>
+                <p class="muted">Run this after a recording to label turns as Person 1, Person 2, and so on.</p>
+              </div>
+              <span id="speakerServiceStatus" class="pill">Checking…</span>
+            </div>
+            <div class="speaker-analysis-controls">
+              <label class="admin-label">Recording
+                <select id="speakerRecordingSelect"><option value="">Choose a recording…</option></select>
+              </label>
+              <label class="admin-label">Expected speakers
+                <select id="speakerCountSelect">
+                  <option value="">Auto detect</option>
+                  <option value="2">2 people</option>
+                  <option value="3">3 people</option>
+                  <option value="4">4 people</option>
+                  <option value="5">5 people</option>
+                  <option value="6">6 people</option>
+                </select>
+              </label>
+              <button id="runSpeakerAnalysisButton" class="primary" type="button">Analyse conversation</button>
+            </div>
+            <p class="muted small-note">Analysis is parent-triggered and runs after recording. Live transcription is unchanged.</p>
+            <p id="speakerAnalysisMessage" class="muted small-note" aria-live="polite"></p>
+            <div id="speakerAnalysisResult" class="speaker-analysis-result"></div>
+          </section>
+
+          <section class="panel">
+            <div class="section-heading compact-heading">
+              <div>
+                <h3>Remembered speakers</h3>
+                <p class="muted">Voiceprints stay in your local PostgreSQL database and are used only for future parent-run speaker analysis.</p>
+              </div>
+              <button id="refreshSpeakerProfilesButton" type="button">Refresh</button>
+            </div>
+            <div id="speakerProfilesList" class="speaker-profiles-list"><p class="muted">No remembered speakers loaded yet.</p></div>
+            <p class="muted small-note">A voiceprint is biometric data. You can rename or forget a remembered speaker here at any time.</p>
+          </section>
+        </div>
+
+        <div class="parent-tools-heading">
+          <p class="eyebrow">Parent tools</p>
           <h2>Storage &amp; safety</h2>
         </div>
         <div class="admin-grid">
