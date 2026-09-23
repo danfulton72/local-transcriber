@@ -215,7 +215,7 @@ Open **Progress**, enter the parent PIN, and press **Show progress**. The lower 
 
 Retention cleanup runs on application startup and whenever a recording finishes. Permanent delete removes the database history for that recording and its stored audio.
 
-The downloadable ZIP is a convenient app-level backup. For infrastructure/disaster recovery, retaining your normal PostgreSQL backup as well is still recommended.
+The downloadable ZIP is a convenient app-level backup. It includes remembered speaker embeddings and speaker-analysis metadata when those features have been used, so treat backup ZIPs as sensitive data just like the stored voice recordings. For infrastructure/disaster recovery, retaining your normal PostgreSQL backup as well is still recommended.
 
 ## Development
 
