@@ -32,6 +32,7 @@ class Recording(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     draft_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_activity_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    recovery_dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     chunks: Mapped[list["TranscriptionChunk"]] = relationship(back_populates="recording", cascade="all, delete-orphan")
     revisions: Mapped[list["TranscriptRevision"]] = relationship(back_populates="recording", cascade="all, delete-orphan")
