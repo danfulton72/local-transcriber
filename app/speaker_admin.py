@@ -132,6 +132,29 @@ def best_profile(
     return best, best_score
 
 
+async def detection_speech_seconds(db: AsyncSession, detection_id: uuid.UUID) -> float:
+    turns = (
+        await db.execute(
+            select(SpeakerTurn).where(SpeakerTurn.detection_id == detection_id)
+        )
+    ).scalars().all()
+    return sum(max(0.0, turn.end_seconds - turn.start_seconds) for turn in turns)
+
+
+async def rebuild_profile_summary(profile: SpeakerProfile, db: AsyncSession) -> list[SpeakerProfileSample]:
+    samples = (
+        await db.execute(
+            select(SpeakerProfileSample)
+            .where(SpeakerProfileSample.profile_id == profile.id)
+            .order_by(SpeakerProfileSample.created_at.asc())
+        )
+    ).scalars().all()
+    profile.embedding = average_embeddings([sample.embedding or [] for sample in samples])
+    profile.sample_count = len(samples)
+    profile.updated_at = datetime.now(timezone.utc)
+    return samples
+
+
 async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict:
     recording = await db.get(Recording, analysis.recording_id)
     detections = (
@@ -432,6 +455,19 @@ async def remember_speaker(
         raise HTTPException(status_code=404, detail="Detected speaker not found")
 
     analysis = await db.get(SpeakerAnalysis, analysis_id)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Speaker analysis not found")
+
+    speech_seconds = await detection_speech_seconds(db, detection.id)
+    if speech_seconds < MIN_SAMPLE_SPEECH_SECONDS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Need at least {MIN_SAMPLE_SPEECH_SECONDS:.0f} seconds of this person's "
+                f"speech before adding a voice sample. This detection has {speech_seconds:.1f}s."
+            ),
+        )
+
     name = payload.name.strip()
     profile = (
         await db.execute(
@@ -439,29 +475,80 @@ async def remember_speaker(
         )
     ).scalar_one_or_none()
 
-    if profile:
-        profile.embedding = blend_embeddings(
-            profile.embedding or [],
-            detection.embedding or [],
-            profile.sample_count,
+    prior_sample = (
+        await db.execute(
+            select(SpeakerProfileSample).where(
+                SpeakerProfileSample.source_detection_id == detection.id
+            )
         )
-        profile.sample_count += 1
-        profile.updated_at = datetime.now(timezone.utc)
+    ).scalar_one_or_none()
+    if prior_sample:
+        prior_profile = await db.get(SpeakerProfile, prior_sample.profile_id)
+        if prior_profile and (not profile or prior_profile.id != profile.id):
+            raise HTTPException(
+                status_code=409,
+                detail=f"This detected voice is already stored for {prior_profile.name}.",
+            )
+        if prior_profile:
+            detection.profile_id = prior_profile.id
+            detection.display_name = prior_profile.name
+            detection.match_score = 1.0
+            await db.commit()
+            return {
+                "id": str(prior_profile.id),
+                "name": prior_profile.name,
+                "sample_count": prior_profile.sample_count,
+                "profile_quality": profile_quality(prior_profile.sample_count),
+                "already_saved": True,
+            }
+
+    if profile:
+        samples = (
+            await db.execute(
+                select(SpeakerProfileSample).where(SpeakerProfileSample.profile_id == profile.id)
+            )
+        ).scalars().all()
+        if len(samples) >= MAX_PROFILE_SAMPLES:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{profile.name} already has {MAX_PROFILE_SAMPLES} voice samples. "
+                    "Remove an older sample before adding another."
+                ),
+            )
     else:
         profile = SpeakerProfile(
             name=name,
             embedding=normalise_embedding(detection.embedding or []),
-            sample_count=1,
-            source_recording_id=analysis.recording_id if analysis else None,
+            sample_count=0,
+            source_recording_id=analysis.recording_id,
         )
         db.add(profile)
         await db.flush()
+
+    sample = SpeakerProfileSample(
+        profile_id=profile.id,
+        embedding=normalise_embedding(detection.embedding or []),
+        source_recording_id=analysis.recording_id,
+        source_analysis_id=analysis.id,
+        source_detection_id=detection.id,
+        speech_seconds=speech_seconds,
+    )
+    db.add(sample)
+    await db.flush()
+    samples = await rebuild_profile_summary(profile, db)
 
     detection.profile_id = profile.id
     detection.display_name = profile.name
     detection.match_score = 1.0
     await db.commit()
-    return {"id": str(profile.id), "name": profile.name, "sample_count": profile.sample_count}
+    return {
+        "id": str(profile.id),
+        "name": profile.name,
+        "sample_count": len(samples),
+        "profile_quality": profile_quality(len(samples)),
+        "already_saved": False,
+    }
 
 
 @router.get("/profiles")
@@ -470,17 +557,49 @@ async def list_speaker_profiles(
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     require_parent_pin(x_parent_pin)
-    rows = (await db.execute(select(SpeakerProfile).order_by(SpeakerProfile.name.asc()))).scalars().all()
-    return [
-        {
-            "id": str(row.id),
-            "name": row.name,
-            "sample_count": row.sample_count,
-            "created_at": row.created_at.isoformat(),
-            "updated_at": row.updated_at.isoformat(),
-        }
-        for row in rows
-    ]
+    profiles = (await db.execute(select(SpeakerProfile).order_by(SpeakerProfile.name.asc()))).scalars().all()
+    samples = (
+        await db.execute(
+            select(SpeakerProfileSample).order_by(SpeakerProfileSample.created_at.desc())
+        )
+    ).scalars().all()
+    recording_ids = {sample.source_recording_id for sample in samples if sample.source_recording_id}
+    recordings = (
+        await db.execute(select(Recording).where(Recording.id.in_(recording_ids)))
+    ).scalars().all() if recording_ids else []
+    recording_titles = {recording.id: recording.title or "Recording" for recording in recordings}
+
+    by_profile: dict[uuid.UUID, list[SpeakerProfileSample]] = {}
+    for sample in samples:
+        by_profile.setdefault(sample.profile_id, []).append(sample)
+
+    result = []
+    for profile in profiles:
+        bank = by_profile.get(profile.id, [])
+        actual_count = len(bank)
+        if profile.sample_count != actual_count:
+            profile.sample_count = actual_count
+        result.append({
+            "id": str(profile.id),
+            "name": profile.name,
+            "sample_count": actual_count,
+            "profile_quality": profile_quality(actual_count),
+            "max_samples": MAX_PROFILE_SAMPLES,
+            "created_at": profile.created_at.isoformat(),
+            "updated_at": profile.updated_at.isoformat(),
+            "samples": [
+                {
+                    "id": str(sample.id),
+                    "speech_seconds": round(sample.speech_seconds, 1) if sample.speech_seconds is not None else None,
+                    "source_recording_id": str(sample.source_recording_id) if sample.source_recording_id else None,
+                    "source_recording_title": recording_titles.get(sample.source_recording_id, "Legacy voiceprint"),
+                    "created_at": sample.created_at.isoformat(),
+                }
+                for sample in bank
+            ],
+        })
+    await db.commit()
+    return result
 
 
 @router.patch("/profiles/{profile_id}")
@@ -505,6 +624,39 @@ async def rename_speaker_profile(
     return {"id": str(profile.id), "name": profile.name}
 
 
+@router.delete("/profiles/{profile_id}/samples/{sample_id}", status_code=204)
+async def remove_speaker_sample(
+    profile_id: uuid.UUID,
+    sample_id: uuid.UUID,
+    x_parent_pin: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    require_parent_pin(x_parent_pin)
+    profile = await db.get(SpeakerProfile, profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Remembered speaker not found")
+    samples = (
+        await db.execute(
+            select(SpeakerProfileSample)
+            .where(SpeakerProfileSample.profile_id == profile.id)
+            .order_by(SpeakerProfileSample.created_at.asc())
+        )
+    ).scalars().all()
+    sample = next((item for item in samples if item.id == sample_id), None)
+    if not sample:
+        raise HTTPException(status_code=404, detail="Voice sample not found")
+    if len(samples) <= 1:
+        raise HTTPException(
+            status_code=400,
+            detail="A voiceprint needs at least one sample. Use Forget voiceprint to remove it completely.",
+        )
+
+    await db.delete(sample)
+    await db.flush()
+    await rebuild_profile_summary(profile, db)
+    await db.commit()
+
+
 @router.delete("/profiles/{profile_id}", status_code=204)
 async def forget_speaker_profile(
     profile_id: uuid.UUID,
@@ -521,5 +673,6 @@ async def forget_speaker_profile(
     for detection in detections:
         detection.profile_id = None
         detection.match_score = None
+    await db.execute(delete(SpeakerProfileSample).where(SpeakerProfileSample.profile_id == profile.id))
     await db.delete(profile)
     await db.commit()
