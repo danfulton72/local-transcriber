@@ -122,6 +122,27 @@ class SpeakerProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class SpeakerProfileSample(Base):
+    __tablename__ = "speaker_profile_samples"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    profile_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("speaker_profiles.id", ondelete="CASCADE"), index=True
+    )
+    embedding: Mapped[list] = mapped_column(JSON)
+    source_recording_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("recordings.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source_analysis_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("speaker_analyses.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    source_detection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("speaker_detections.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    speech_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class SpeakerAnalysis(Base):
     __tablename__ = "speaker_analyses"
 
