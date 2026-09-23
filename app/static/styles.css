@@ -955,3 +955,49 @@ body.reading-focus .sentence{
   .speaker-profile-row{grid-template-columns:1fr}
   .speaker-profile-row input{grid-column:auto}
 }
+
+
+/* Multi-sample remembered speaker banks */
+.voice-sample-details{
+  grid-column:1/-1;
+  border-top:1px solid var(--line);
+  padding-top:7px;
+}
+.voice-sample-details summary{
+  cursor:pointer;
+  color:var(--accent);
+  font-weight:700;
+  padding:.35rem 0;
+}
+.voice-sample-list{
+  display:grid;
+  gap:7px;
+  margin-top:7px;
+}
+.voice-sample-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:10px;
+  align-items:center;
+  padding:9px 0;
+  border-top:1px dashed var(--line);
+}
+.voice-sample-row>div{
+  min-width:0;
+  display:grid;
+  gap:1px;
+}
+.voice-sample-row strong{
+  overflow-wrap:anywhere;
+}
+.voice-sample-row .muted{
+  font-size:.78rem;
+}
+.voice-sample-row button{
+  min-height:38px;
+  white-space:nowrap;
+}
+@media(max-width:600px){
+  .voice-sample-row{grid-template-columns:1fr}
+  .voice-sample-row button{width:100%}
+}
