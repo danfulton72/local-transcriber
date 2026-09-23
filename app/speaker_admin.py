@@ -17,6 +17,7 @@ from .models import (
     SpeakerAnalysis,
     SpeakerDetection,
     SpeakerProfile,
+    SpeakerProfileSample,
     SpeakerTurn,
 )
 from .services.progress import word_count
@@ -25,6 +26,10 @@ from .services.speaker_service import speaker_service
 
 
 router = APIRouter(prefix="/api/admin/speakers", tags=["speaker-analysis"])
+
+MIN_SAMPLE_SPEECH_SECONDS = 3.0
+MAX_PROFILE_SAMPLES = 8
+MATCH_TOP_SAMPLES = 3
 
 
 class AnalysisRequest(BaseModel):
@@ -61,25 +66,64 @@ def normalise_embedding(values: list[float]) -> list[float]:
     return [float(value / norm) for value in values]
 
 
-def blend_embeddings(old: list[float], new: list[float], sample_count: int) -> list[float]:
-    if len(old) != len(new) or not old:
-        return normalise_embedding(new)
-    count = max(1, int(sample_count))
-    combined = [
-        (float(a) * count + float(b)) / (count + 1)
-        for a, b in zip(old, new)
-    ]
-    return normalise_embedding(combined)
+def average_embeddings(embeddings: list[list[float]]) -> list[float]:
+    valid = [normalise_embedding(values) for values in embeddings if values]
+    if not valid:
+        return []
+    width = len(valid[0])
+    valid = [values for values in valid if len(values) == width]
+    if not valid:
+        return []
+    return normalise_embedding([
+        sum(values[index] for values in valid) / len(valid)
+        for index in range(width)
+    ])
+
+
+def robust_sample_score(embedding: list[float], samples: list[list[float]]) -> float:
+    scores = sorted(
+        (
+            cosine_similarity(embedding, sample)
+            for sample in samples
+            if sample and len(sample) == len(embedding)
+        ),
+        reverse=True,
+    )
+    if not scores:
+        return -1.0
+    if len(scores) == 1:
+        return scores[0]
+    if len(scores) == 2:
+        return scores[0] * 0.65 + scores[1] * 0.35
+    top = scores[:MATCH_TOP_SAMPLES]
+    return top[0] * 0.55 + top[1] * 0.30 + top[2] * 0.15
+
+
+def profile_quality(sample_count: int) -> str:
+    if sample_count >= 5:
+        return "strong"
+    if sample_count >= 3:
+        return "good"
+    if sample_count >= 2:
+        return "building"
+    return "starter"
 
 
 def best_profile(
     embedding: list[float],
     profiles: list[SpeakerProfile],
+    samples_by_profile: dict[uuid.UUID, list[SpeakerProfileSample]] | None = None,
 ) -> tuple[SpeakerProfile | None, float | None]:
     best = None
     best_score = -1.0
     for profile in profiles:
-        score = cosine_similarity(embedding, profile.embedding or [])
+        bank = (samples_by_profile or {}).get(profile.id, [])
+        sample_embeddings = [sample.embedding or [] for sample in bank]
+        score = (
+            robust_sample_score(embedding, sample_embeddings)
+            if sample_embeddings
+            else cosine_similarity(embedding, profile.embedding or [])
+        )
         if score > best_score:
             best = profile
             best_score = score
@@ -105,6 +149,12 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
         )
     ).scalars().all()
     by_id = {item.id: item for item in detections}
+    speech_by_detection: dict[uuid.UUID, float] = {}
+    for turn in turns:
+        speech_by_detection[turn.detection_id] = (
+            speech_by_detection.get(turn.detection_id, 0.0)
+            + max(0.0, turn.end_seconds - turn.start_seconds)
+        )
 
     return {
         "id": str(analysis.id),
@@ -125,6 +175,8 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
                 "display_name": item.display_name,
                 "profile_id": str(item.profile_id) if item.profile_id else None,
                 "match_score": round(item.match_score, 3) if item.match_score is not None else None,
+                "speech_seconds": round(speech_by_detection.get(item.id, 0.0), 2),
+                "can_remember": speech_by_detection.get(item.id, 0.0) >= MIN_SAMPLE_SPEECH_SECONDS,
             }
             for item in detections
         ],
@@ -173,6 +225,11 @@ async def process_analysis(analysis_id: uuid.UUID, num_speakers: int | None) -> 
             await db.execute(delete(SpeakerDetection).where(SpeakerDetection.analysis_id == analysis.id))
 
             profiles = (await db.execute(select(SpeakerProfile))).scalars().all()
+            profile_samples = (await db.execute(select(SpeakerProfileSample))).scalars().all()
+            samples_by_profile: dict[uuid.UUID, list[SpeakerProfileSample]] = {}
+            for sample in profile_samples:
+                samples_by_profile.setdefault(sample.profile_id, []).append(sample)
+
             turns = result.get("turns", [])
             first_seen: dict[str, int] = {}
             for turn in turns:
@@ -186,7 +243,7 @@ async def process_analysis(analysis_id: uuid.UUID, num_speakers: int | None) -> 
                 if not key:
                     continue
                 embedding = normalise_embedding([float(value) for value in raw.get("embedding", [])])
-                profile, score = best_profile(embedding, profiles)
+                profile, score = best_profile(embedding, profiles, samples_by_profile)
                 person_index = first_seen.get(key, len(first_seen) + len(detections) + 1)
                 display_name = profile.name if profile else f"Person {person_index}"
                 detection = SpeakerDetection(
