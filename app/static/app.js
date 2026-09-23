@@ -7,10 +7,14 @@
     paused: false,
     transcribing: false,
     stream: null,
+    captureStreams: [],
     audioContext: null,
     source: null,
+    inputSources: [],
+    mixDestination: null,
     processor: null,
     mute: null,
+    captureMode: 'microphone',
     sampleRate: 48000,
     fullBuffers: [],
     liveBuffers: [],
@@ -60,7 +64,8 @@
     followWordsButton: $('followWordsButton'),
     recoveryBanner: $('recoveryBanner'), recoveryDetail: $('recoveryDetail'), recoverButton: $('recoverButton'), dismissRecoveryButton: $('dismissRecoveryButton'),
     toast: $('toast'),
-    language: $('language'), chunkSeconds: $('chunkSeconds'), voice: $('voice'), speechSpeed: $('speechSpeed'), prompt: $('prompt'), fileInput: $('fileInput'),
+    language: $('language'), chunkSeconds: $('chunkSeconds'), captureSource: $('captureSource'), captureSourceHint: $('captureSourceHint'),
+    voice: $('voice'), speechSpeed: $('speechSpeed'), prompt: $('prompt'), fileInput: $('fileInput'),
     installAppButton: $('installAppButton'), installHint: $('installHint'),
     historyList: $('historyList'), historySearch: $('historySearch'), historyFavourites: $('historyFavourites'), refreshHistoryButton: $('refreshHistoryButton'),
     progressDays: $('progressDays'), parentPin: $('parentPin'), loadProgressButton: $('loadProgressButton'), progressContent: $('progressContent'),
@@ -368,6 +373,98 @@
     } catch {}
   }
 
+  function captureModeLabel(mode = els.captureSource?.value || 'microphone') {
+    if (mode === 'computer') return 'Computer audio';
+    if (mode === 'mixed') return 'Computer + microphone';
+    return 'Microphone';
+  }
+
+  function updateCaptureSourceUI() {
+    const mode = els.captureSource?.value || 'microphone';
+    const label = captureModeLabel(mode);
+    if (els.captureSourceHint) {
+      const description = mode === 'computer'
+        ? 'Choose a browser tab, window or screen and enable Share audio when the browser offers it.'
+        : (mode === 'mixed'
+          ? 'Captures shared computer audio and this device\'s microphone into one recording.'
+          : 'Uses this device\'s microphone.');
+      els.captureSourceHint.replaceChildren();
+      const strong = document.createElement('strong'); strong.textContent = label;
+      const span = document.createElement('span'); span.className = 'muted'; span.textContent = description;
+      els.captureSourceHint.append(strong, span);
+    }
+    if (!state.recording && !state.transcribing) {
+      els.recordButtonText.textContent = mode === 'microphone' ? 'Start talking' : 'Start capture';
+      els.recordButton.setAttribute(
+        'aria-label',
+        mode === 'microphone' ? 'Start talking' : 'Start ' + label.toLowerCase(),
+      );
+    }
+  }
+
+  async function openCaptureStreams(mode, ctx) {
+    if (!navigator.mediaDevices) throw new Error('Audio capture is not supported in this browser.');
+
+    if (mode === 'microphone') {
+      const mic = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      return { stream: mic, streams: [mic], sources: [] };
+    }
+
+    if (!navigator.mediaDevices.getDisplayMedia) {
+      throw new Error('Computer audio capture is not supported by this browser. Try Chrome or Edge on a computer.');
+    }
+
+    let display;
+    try {
+      display = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+        systemAudio: 'include',
+        surfaceSwitching: 'include',
+        selfBrowserSurface: 'exclude',
+      });
+    } catch (error) {
+      if (error?.name === 'NotAllowedError') throw new Error('Computer audio sharing was cancelled or not allowed.');
+      throw error;
+    }
+
+    const sharedAudio = display.getAudioTracks();
+    if (!sharedAudio.length) {
+      display.getTracks().forEach((track) => track.stop());
+      throw new Error('No shared audio was provided. Choose a tab/screen with Share audio enabled, or use the microphone.');
+    }
+
+    if (mode === 'computer') {
+      const audioOnly = new MediaStream(sharedAudio);
+      return { stream: audioOnly, streams: [display], sources: [] };
+    }
+
+    let mic;
+    try {
+      mic = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    } catch (error) {
+      display.getTracks().forEach((track) => track.stop());
+      throw error;
+    }
+
+    const destination = ctx.createMediaStreamDestination();
+    const displaySource = ctx.createMediaStreamSource(new MediaStream(sharedAudio));
+    const micSource = ctx.createMediaStreamSource(mic);
+    displaySource.connect(destination);
+    micSource.connect(destination);
+
+    return {
+      stream: destination.stream,
+      streams: [display, mic],
+      sources: [displaySource, micSource],
+      destination,
+    };
+  }
+
   function startTimer() {
     state.startedAt = Date.now();
     els.timer.textContent = '00:00';
@@ -425,12 +522,15 @@
 
   function syncRecordingUI() {
     els.recordButton.classList.toggle('recording', state.recording);
-    els.recordButtonText.textContent = state.recording ? 'Stop & finish' : 'Start talking';
+    els.recordButtonText.textContent = state.recording
+      ? 'Stop & finish'
+      : ((els.captureSource?.value || 'microphone') === 'microphone' ? 'Start talking' : 'Start capture');
     els.recordButton.disabled = state.transcribing;
     els.pauseButton.classList.toggle('hidden', !state.recording);
     els.pauseButton.textContent = state.paused ? 'Carry on' : 'Pause';
     els.language.disabled = state.recording || state.transcribing;
     els.chunkSeconds.disabled = state.recording || state.transcribing;
+    if (els.captureSource) els.captureSource.disabled = state.recording || state.transcribing;
     els.fileInput.disabled = state.recording || state.transcribing;
     renderTranscript();
   }
@@ -469,12 +569,18 @@
     setError('');
     stopSpeech();
     exitReadingFocus();
-    if (!window.isSecureContext && !['localhost', '127.0.0.1'].includes(location.hostname)) return setError('The microphone needs HTTPS.');
+    const mode = els.captureSource?.value || 'microphone';
+    if (!window.isSecureContext && !['localhost', '127.0.0.1'].includes(location.hostname)) {
+      return setError(mode === 'microphone' ? 'The microphone needs HTTPS.' : 'Computer audio capture needs HTTPS.');
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       const ctx = new AudioContext();
       await ctx.resume();
+
+      const capture = await openCaptureStreams(mode, ctx);
+      const stream = capture.stream;
       const source = ctx.createMediaStreamSource(stream);
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       const mute = ctx.createGain(); mute.gain.value = 0;
@@ -483,7 +589,9 @@
       try {
         if (!record) record = await createRecording();
       } catch (error) {
-        stream.getTracks().forEach((t) => t.stop());
+        capture.streams.forEach((item) => item.getTracks().forEach((track) => track.stop()));
+        capture.sources.forEach((item) => { try { item.disconnect(); } catch {} });
+        try { capture.destination?.disconnect(); } catch {}
         await ctx.close();
         throw error;
       }
@@ -493,8 +601,20 @@
       state.currentRecording = record;
       state.captureBaseTranscript = savedBase;
       state.continuation = Boolean(reuseExisting && savedBase);
-      state.stream = stream; state.audioContext = ctx; state.source = source; state.processor = processor; state.mute = mute;
-      state.sampleRate = ctx.sampleRate; state.fullBuffers = []; resetLive(); state.recording = true; state.paused = false;
+      state.stream = stream;
+      state.captureStreams = capture.streams;
+      state.audioContext = ctx;
+      state.source = source;
+      state.inputSources = capture.sources;
+      state.mixDestination = capture.destination || null;
+      state.processor = processor;
+      state.mute = mute;
+      state.captureMode = mode;
+      state.sampleRate = ctx.sampleRate;
+      state.fullBuffers = [];
+      resetLive();
+      state.recording = true;
+      state.paused = false;
       state.autoFollow = true;
       state.confirmedTranscript = displayedText;
       state.transcript = displayedText;
@@ -502,21 +622,48 @@
       userLocalSet('activeRecordingDraft', displayedText);
       renderTranscript();
 
+      const displayStream = capture.streams.find((item) => item.getVideoTracks().length);
+      const displayTrack = displayStream?.getVideoTracks()[0];
+      if (displayTrack) {
+        displayTrack.addEventListener('ended', () => {
+          if (state.recording && state.captureMode !== 'microphone') stopRecording();
+        }, { once: true });
+      }
+
       processor.onaudioprocess = (event) => {
         if (!state.recording || state.paused) return setMeter(0);
         const input = event.inputBuffer.getChannelData(0);
         const chunk = new Float32Array(input);
         state.fullBuffers.push(chunk);
-        state.liveBuffers.push(chunk); state.liveSampleCount += chunk.length; state.liveFreshSamples += chunk.length;
+        state.liveBuffers.push(chunk);
+        state.liveSampleCount += chunk.length;
+        state.liveFreshSamples += chunk.length;
         maybeFlushLiveChunk();
-        let sum = 0; for (let i = 0; i < input.length; i += 1) sum += input[i] * input[i];
+        let sum = 0;
+        for (let i = 0; i < input.length; i += 1) sum += input[i] * input[i];
         setMeter(Math.sqrt(sum / input.length));
       };
-      source.connect(processor); processor.connect(mute); mute.connect(ctx.destination);
-      startTimer(); syncRecordingUI();
-      setStatus(reuseExisting ? 'Keep going' : 'I’m listening', reuseExisting ? 'Your new words will be added to this piece.' : 'Your words will appear a few seconds behind you.');
+
+      source.connect(processor);
+      processor.connect(mute);
+      mute.connect(ctx.destination);
+      startTimer();
+      syncRecordingUI();
+
+      const label = captureModeLabel(mode);
+      const detail = reuseExisting
+        ? 'Your new words will be added to this piece.'
+        : (mode === 'microphone'
+          ? 'Your words will appear a few seconds behind you.'
+          : (mode === 'mixed'
+            ? 'Shared computer audio and microphone are being captured together.'
+            : 'Shared computer audio is being captured directly.'));
+      setStatus(reuseExisting ? 'Keep going' : (mode === 'microphone' ? 'I’m listening' : 'Capturing ' + label.toLowerCase()), detail);
       scheduleDraftSave(true);
-    } catch (error) { cleanupRecording(); setError(error?.message || 'I could not open the microphone.'); }
+    } catch (error) {
+      cleanupRecording();
+      setError(error?.message || 'I could not open the selected audio source.');
+    }
   }
 
   function maybeFlushLiveChunk() {
@@ -597,11 +744,24 @@
   function cleanupRecording() {
     stopTimer(); setMeter(0);
     if (state.processor) { state.processor.onaudioprocess = null; try { state.processor.disconnect(); } catch {} }
-    try { state.source?.disconnect(); } catch {} try { state.mute?.disconnect(); } catch {}
-    state.stream?.getTracks().forEach((track) => track.stop());
+    try { state.source?.disconnect(); } catch {}
+    for (const inputSource of state.inputSources || []) { try { inputSource.disconnect(); } catch {} }
+    try { state.mixDestination?.disconnect(); } catch {}
+    try { state.mute?.disconnect(); } catch {}
+    const streams = state.captureStreams?.length ? state.captureStreams : (state.stream ? [state.stream] : []);
+    for (const stream of streams) stream.getTracks().forEach((track) => track.stop());
     if (state.audioContext && state.audioContext.state !== 'closed') state.audioContext.close().catch(() => {});
-    state.stream = null; state.audioContext = null; state.source = null; state.processor = null; state.mute = null;
-    state.recording = false; state.paused = false; syncRecordingUI();
+    state.stream = null;
+    state.captureStreams = [];
+    state.audioContext = null;
+    state.source = null;
+    state.inputSources = [];
+    state.mixDestination = null;
+    state.processor = null;
+    state.mute = null;
+    state.recording = false;
+    state.paused = false;
+    syncRecordingUI();
   }
 
   async function stopRecording() {
@@ -678,7 +838,14 @@
     if (state.recording) return;
     stopSpeech(); exitReadingFocus();
     state.currentRecording = null; state.captureBaseTranscript = ''; state.continuation = false;
-    setTranscript(''); setError(''); setStatus('Ready when you are', 'Press the microphone and talk normally.');
+    setTranscript(''); setError('');
+    const mode = els.captureSource?.value || 'microphone';
+    setStatus(
+      'Ready when you are',
+      mode === 'microphone'
+        ? 'Press the microphone and talk normally.'
+        : 'Press Start capture, then choose what to share and enable Share audio.',
+    );
   }
 
   function editorText() {
@@ -1702,7 +1869,17 @@
     if (els.deleteAudioImmediately.checked) els.retentionDays.value = '0';
   });
   els.voice.addEventListener('change', () => localStorage.setItem('voice', els.voice.value));
+  els.captureSource.addEventListener('change', () => {
+    localStorage.setItem('captureSource', els.captureSource.value);
+    updateCaptureSourceUI();
+    if (!state.currentRecording) newRecordingView();
+  });
   els.parentPin.value = sessionStorage.getItem('parentPin') || '';
+  const savedCaptureSource = localStorage.getItem('captureSource');
+  if (savedCaptureSource && [...els.captureSource.options].some((option) => option.value === savedCaptureSource)) {
+    els.captureSource.value = savedCaptureSource;
+  }
+  updateCaptureSourceUI();
 
   window.addEventListener('scroll', () => {
     const current = window.scrollY;
