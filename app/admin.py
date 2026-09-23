@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
+from .auth import current_user_id, hash_password, normalize_username
 from .config import settings
 from .db import get_db
 from .models import (
@@ -29,6 +30,8 @@ from .models import (
     TranscriptRevision,
     TranscriptionChunk,
     UsageEvent,
+    User,
+    UserSession,
 )
 from .services.gateway import gateway
 from .services.progress import word_count
@@ -47,6 +50,18 @@ def require_parent_pin(x_parent_pin: str | None) -> None:
         raise HTTPException(status_code=401, detail="Parent PIN required")
 
 
+class UserCreate(BaseModel):
+    username: str = Field(min_length=2, max_length=80)
+    display_name: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=8, max_length=200)
+
+
+class UserUpdate(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    password: str | None = Field(default=None, min_length=8, max_length=200)
+    is_active: bool | None = None
+
+
 class RetentionUpdate(BaseModel):
     audio_retention_days: int = Field(default=0, ge=0, le=3650)
     delete_audio_after_transcription: bool = False
@@ -56,6 +71,7 @@ def _recording_dict(recording: Recording) -> dict:
     transcript = recording.transcript
     return {
         "id": str(recording.id),
+        "user_id": str(recording.user_id) if recording.user_id else None,
         "created_at": recording.created_at.isoformat(),
         "finished_at": recording.finished_at.isoformat() if recording.finished_at else None,
         "deleted_at": recording.deleted_at.isoformat() if recording.deleted_at else None,
@@ -116,10 +132,16 @@ async def admin_status(
         gateway_ok = False
 
     recordings_count = await db.scalar(
-        select(func.count()).select_from(Recording).where(Recording.deleted_at.is_(None))
+        select(func.count()).select_from(Recording).where(
+            Recording.user_id == current_user_id(),
+            Recording.deleted_at.is_(None),
+        )
     )
     deleted_count = await db.scalar(
-        select(func.count()).select_from(Recording).where(Recording.deleted_at.is_not(None))
+        select(func.count()).select_from(Recording).where(
+            Recording.user_id == current_user_id(),
+            Recording.deleted_at.is_not(None),
+        )
     )
 
     audio_files = 0
@@ -146,6 +168,123 @@ async def admin_status(
         "audio_bytes": audio_bytes,
         "last_backup_at": last_backup_at,
         "retention": await get_retention_policy(db),
+    }
+
+
+@router.get("/users")
+async def list_users(
+    x_parent_pin: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    require_parent_pin(x_parent_pin)
+    users = (await db.execute(select(User).order_by(User.username.asc()))).scalars().all()
+    counts = dict(
+        (
+            await db.execute(
+                select(Recording.user_id, func.count(Recording.id))
+                .where(Recording.deleted_at.is_(None))
+                .group_by(Recording.user_id)
+            )
+        ).all()
+    )
+    return [
+        {
+            "id": str(user.id),
+            "username": user.username,
+            "display_name": user.display_name,
+            "is_active": user.is_active,
+            "recordings": int(counts.get(user.id, 0)),
+            "is_current": user.id == current_user_id(),
+            "created_at": user.created_at.isoformat(),
+        }
+        for user in users
+    ]
+
+
+@router.post("/users", status_code=201)
+async def create_user(
+    payload: UserCreate,
+    x_parent_pin: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    require_parent_pin(x_parent_pin)
+    try:
+        username = normalize_username(payload.username)
+        password_hash = hash_password(payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    existing = (
+        await db.execute(select(User).where(User.username == username))
+    ).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="That username already exists.")
+
+    user = User(
+        username=username,
+        display_name=payload.display_name.strip(),
+        password_hash=password_hash,
+        is_active=True,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "display_name": user.display_name,
+        "is_active": user.is_active,
+        "recordings": 0,
+        "is_current": False,
+    }
+
+
+@router.patch("/users/{user_id}")
+async def update_user(
+    user_id: uuid.UUID,
+    payload: UserUpdate,
+    x_parent_pin: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    require_parent_pin(x_parent_pin)
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if payload.is_active is False and user.id == current_user_id():
+        raise HTTPException(status_code=400, detail="You cannot deactivate the account you are currently using.")
+
+    invalidate_sessions = False
+    if payload.display_name is not None:
+        user.display_name = payload.display_name.strip()
+    if payload.password is not None:
+        try:
+            user.password_hash = hash_password(payload.password)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        invalidate_sessions = True
+    if payload.is_active is not None:
+        user.is_active = payload.is_active
+        invalidate_sessions = True
+
+    user.updated_at = datetime.now(timezone.utc)
+    if invalidate_sessions:
+        await db.execute(delete(UserSession).where(UserSession.user_id == user.id))
+    await db.commit()
+
+    recordings = await db.scalar(
+        select(func.count()).select_from(Recording).where(
+            Recording.user_id == user.id,
+            Recording.deleted_at.is_(None),
+        )
+    )
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "display_name": user.display_name,
+        "is_active": user.is_active,
+        "recordings": int(recordings or 0),
+        "is_current": user.id == current_user_id(),
     }
 
 
@@ -195,7 +334,10 @@ async def recycle_bin(
     records = (
         await db.execute(
             select(Recording)
-            .where(Recording.deleted_at.is_not(None))
+            .where(
+                Recording.user_id == current_user_id(),
+                Recording.deleted_at.is_not(None),
+            )
             .order_by(Recording.deleted_at.desc())
         )
     ).scalars().all()
@@ -213,6 +355,7 @@ async def restore_from_bin(
         await db.execute(
             select(Recording).where(
                 Recording.id == recording_id,
+                Recording.user_id == current_user_id(),
                 Recording.deleted_at.is_not(None),
             )
         )
