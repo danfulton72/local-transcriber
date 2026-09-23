@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     parent_pin: str = ""
     default_language: str = ""
     default_voice: str = "en_GB-northern_english_male-medium"
+    speaker_service_url: str = "http://speaker-analyzer:9000"
+    speaker_match_threshold: float = 0.78
 
 
 settings = Settings()
