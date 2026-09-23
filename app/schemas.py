@@ -31,6 +31,7 @@ class RecordingOut(BaseModel):
     id: uuid.UUID
     created_at: datetime
     finished_at: datetime | None
+    last_activity_at: datetime
     duration_seconds: float | None
     language: str | None
     title: str | None
