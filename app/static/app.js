@@ -1110,7 +1110,112 @@
   }
 
   async function loadParentTools() {
-    await Promise.allSettled([loadAdminStatus(), loadRecycleBin(), loadSpeakerTools()]);
+    await Promise.allSettled([loadAdminStatus(), loadRecycleBin(), loadSpeakerTools(), loadUsers()]);
+  }
+
+  async function loadUsers() {
+    try {
+      const users = await api('/api/admin/users', { headers: parentHeaders(), cache: 'no-store' });
+      renderUsers(users);
+    } catch (error) {
+      els.userList.replaceChildren();
+      const p = document.createElement('p'); p.className = 'error'; p.textContent = error.message;
+      els.userList.appendChild(p);
+    }
+  }
+
+  function renderUsers(users) {
+    els.userList.replaceChildren();
+    for (const user of users) {
+      const row = document.createElement('div'); row.className = 'user-row';
+
+      const main = document.createElement('div'); main.className = 'user-row-main';
+      const name = document.createElement('strong');
+      name.textContent = user.display_name + (user.is_current ? ' · current' : '');
+      const meta = document.createElement('span'); meta.className = 'user-row-meta';
+      meta.textContent = '@' + user.username + ' · ' + user.recordings + ' recording' + (user.recordings === 1 ? '' : 's') + (user.is_active ? '' : ' · inactive');
+      main.append(name, meta);
+
+      const display = document.createElement('input');
+      display.value = user.display_name;
+      display.setAttribute('aria-label', 'Display name for ' + user.username);
+
+      const password = document.createElement('input');
+      password.type = 'password';
+      password.placeholder = 'New password (optional)';
+      password.autocomplete = 'new-password';
+      password.setAttribute('aria-label', 'New password for ' + user.username);
+
+      const actions = document.createElement('div'); actions.className = 'button-row';
+      const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Save';
+      save.addEventListener('click', async () => {
+        const body = { display_name: display.value.trim() };
+        if (password.value) body.password = password.value;
+        try {
+          await api('/api/admin/users/' + user.id, {
+            method: 'PATCH',
+            headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          password.value = '';
+          showToast('User updated');
+          await loadUsers();
+          if (user.is_current && body.display_name) {
+            state.authUser.display_name = body.display_name;
+            els.currentUserLabel.textContent = body.display_name;
+          }
+        } catch (error) {
+          els.userAdminMessage.textContent = error.message;
+        }
+      });
+
+      const toggle = document.createElement('button'); toggle.type = 'button';
+      toggle.textContent = user.is_active ? 'Deactivate' : 'Reactivate';
+      toggle.className = user.is_active ? 'danger' : '';
+      toggle.disabled = Boolean(user.is_current && user.is_active);
+      toggle.addEventListener('click', async () => {
+        if (user.is_active && !confirm('Deactivate ' + user.display_name + '? They will no longer be able to sign in.')) return;
+        try {
+          await api('/api/admin/users/' + user.id, {
+            method: 'PATCH',
+            headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_active: !user.is_active }),
+          });
+          showToast(user.is_active ? 'User deactivated' : 'User reactivated');
+          await loadUsers();
+        } catch (error) {
+          els.userAdminMessage.textContent = error.message;
+        }
+      });
+
+      actions.append(save, toggle);
+      row.append(main, display, password, actions);
+      els.userList.appendChild(row);
+    }
+  }
+
+  async function createUser(event) {
+    event.preventDefault();
+    els.createUserButton.disabled = true;
+    els.userAdminMessage.textContent = '';
+    try {
+      await api('/api/admin/users', {
+        method: 'POST',
+        headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: els.newUsername.value.trim(),
+          display_name: els.newUserDisplayName.value.trim(),
+          password: els.newUserPassword.value,
+        }),
+      });
+      els.createUserForm.reset();
+      els.userAdminMessage.textContent = 'User added.';
+      await loadUsers();
+    } catch (error) {
+      els.userAdminMessage.textContent = error.message;
+    } finally {
+      els.createUserButton.disabled = false;
+    }
   }
 
   async function loadSpeakerTools() {
@@ -1579,10 +1684,14 @@
   els.refreshHistoryButton.addEventListener('click', loadHistory);
   els.historyFavourites.addEventListener('change', loadHistory);
   els.historySearch.addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(loadHistory, 250); });
+  els.loginForm.addEventListener('submit', loginUser);
+  els.logoutButton.addEventListener('click', logoutUser);
   els.loadProgressButton.addEventListener('click', loadProgress);
   els.progressDays.addEventListener('change', () => { if (!els.progressContent.classList.contains('hidden')) loadProgress(); });
   els.runSpeakerAnalysisButton.addEventListener('click', runSpeakerAnalysis);
   els.refreshSpeakerProfilesButton.addEventListener('click', loadSpeakerProfiles);
+  els.refreshUsersButton.addEventListener('click', loadUsers);
+  els.createUserForm.addEventListener('submit', createUser);
   els.saveRetentionButton.addEventListener('click', saveRetention);
   els.applyRetentionButton.addEventListener('click', applyRetentionNow);
   els.refreshAdminButton.addEventListener('click', loadAdminStatus);
@@ -1623,10 +1732,8 @@
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   }
 
-  checkHealth();
-  loadVoices();
   renderTranscript();
   syncRecordingUI();
-  checkRecoverable();
+  bootstrapAuth();
 
 })();
