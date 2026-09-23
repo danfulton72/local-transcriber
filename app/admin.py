@@ -271,6 +271,10 @@ async def download_backup(
     speaker_detections = (await db.execute(select(SpeakerDetection).order_by(SpeakerDetection.analysis_id, SpeakerDetection.person_index))).scalars().all()
     speaker_turns = (await db.execute(select(SpeakerTurn).order_by(SpeakerTurn.analysis_id, SpeakerTurn.start_seconds))).scalars().all()
     app_settings = (await db.execute(select(AppSetting).order_by(AppSetting.key))).scalars().all()
+    speaker_profiles = (await db.execute(select(SpeakerProfile).order_by(SpeakerProfile.created_at))).scalars().all()
+    speaker_analyses = (await db.execute(select(SpeakerAnalysis).order_by(SpeakerAnalysis.created_at))).scalars().all()
+    speaker_detections = (await db.execute(select(SpeakerDetection))).scalars().all()
+    speaker_turns = (await db.execute(select(SpeakerTurn).order_by(SpeakerTurn.start_seconds))).scalars().all()
 
     exported_at = datetime.now(timezone.utc)
     manifest = {
@@ -328,6 +332,33 @@ async def download_backup(
             for row in speaker_turns
         ],
         "settings": {row.key: row.value for row in app_settings},
+        "speaker_profiles": [
+            _serialize_row(row, [
+                "id", "name", "embedding", "sample_count", "source_recording_id",
+                "created_at", "updated_at",
+            ])
+            for row in speaker_profiles
+        ],
+        "speaker_analyses": [
+            _serialize_row(row, [
+                "id", "recording_id", "status", "model", "speaker_count",
+                "processing_seconds", "error", "created_at", "completed_at",
+            ])
+            for row in speaker_analyses
+        ],
+        "speaker_detections": [
+            _serialize_row(row, [
+                "id", "analysis_id", "speaker_key", "person_index", "display_name",
+                "embedding", "profile_id", "match_score",
+            ])
+            for row in speaker_detections
+        ],
+        "speaker_turns": [
+            _serialize_row(row, [
+                "id", "analysis_id", "detection_id", "start_seconds", "end_seconds", "text",
+            ])
+            for row in speaker_turns
+        ],
     }
 
     temp = tempfile.NamedTemporaryFile(prefix="local-transcriber-", suffix=".zip", delete=False)
