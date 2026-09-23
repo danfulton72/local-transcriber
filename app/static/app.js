@@ -54,7 +54,8 @@
   const els = {
     loginScreen: $('loginScreen'), loginForm: $('loginForm'), loginUsername: $('loginUsername'), loginPassword: $('loginPassword'),
     loginButton: $('loginButton'), loginMessage: $('loginMessage'), currentUserLabel: $('currentUserLabel'), logoutButton: $('logoutButton'),
-    healthBadge: $('healthBadge'),
+    healthBadge: $('healthBadge'), menuButton: $('menuButton'), closeMenuButton: $('closeMenuButton'),
+    appDrawer: $('appDrawer'), drawerBackdrop: $('drawerBackdrop'),
     recordButton: $('recordButton'), recordButtonIcon: $('recordButtonIcon'), recordButtonText: $('recordButtonText'), meter: $('meter'),
     statusText: $('statusText'), statusDetail: $('statusDetail'), timer: $('timer'), pauseButton: $('pauseButton'),
     errorBox: $('errorBox'), transcriptView: $('transcriptView'), wordCount: $('wordCount'),
@@ -100,6 +101,7 @@
   }
 
   function showLoggedOut(message = '') {
+    closeDrawer();
     state.authUser = null;
     state.currentRecording = null;
     state.recoverableRecording = null;
@@ -176,6 +178,29 @@
     } catch {
       showLoggedOut('Could not check sign-in status.');
     }
+  }
+
+  function openDrawer() {
+    if (!els.appDrawer || !els.drawerBackdrop) return;
+    els.appDrawer.classList.add('open');
+    els.appDrawer.setAttribute('aria-hidden', 'false');
+    els.drawerBackdrop.classList.remove('hidden');
+    els.drawerBackdrop.setAttribute('aria-hidden', 'false');
+    els.menuButton?.setAttribute('aria-expanded', 'true');
+    document.body.classList.add('drawer-open');
+    setTimeout(() => els.closeMenuButton?.focus(), 0);
+  }
+
+  function closeDrawer({ restoreFocus = false } = {}) {
+    if (!els.appDrawer || !els.drawerBackdrop) return;
+    const wasOpen = els.appDrawer.classList.contains('open');
+    els.appDrawer.classList.remove('open');
+    els.appDrawer.setAttribute('aria-hidden', 'true');
+    els.drawerBackdrop.classList.add('hidden');
+    els.drawerBackdrop.setAttribute('aria-hidden', 'true');
+    els.menuButton?.setAttribute('aria-expanded', 'false');
+    document.body.classList.remove('drawer-open');
+    if (restoreFocus && wasOpen) els.menuButton?.focus();
   }
 
   function setError(message = '') {
@@ -1178,9 +1203,13 @@
   }
 
   function switchPage(name) {
+    closeDrawer();
     document.querySelectorAll('.page').forEach((page) => page.classList.toggle('active', page.id === 'page-' + name));
     document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.page === name));
     if (name === 'history') loadHistory();
+    if (name === 'progress') {
+      requestAnimationFrame(() => document.getElementById('pinPanel')?.scrollIntoView({ block: 'start' }));
+    }
   }
 
   function friendlyDate(value) {
@@ -1838,6 +1867,16 @@
     }
   }
 
+  els.menuButton?.addEventListener('click', openDrawer);
+  els.closeMenuButton?.addEventListener('click', () => closeDrawer({ restoreFocus: true }));
+  els.drawerBackdrop?.addEventListener('click', () => closeDrawer({ restoreFocus: true }));
+  document.querySelectorAll('.drawer-page-link').forEach((button) => {
+    button.addEventListener('click', () => {
+      const page = button.dataset.drawerPage;
+      if (page) switchPage(page);
+    });
+  });
+
   document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
     if (state.recording || state.transcribing) {
       showToast('Finish this recording before changing page');
@@ -1923,7 +1962,12 @@
   });
 
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && document.body.classList.contains('reading-focus')) exitReadingFocus();
+    if (event.key !== 'Escape') return;
+    if (document.body.classList.contains('reading-focus')) {
+      exitReadingFocus();
+      return;
+    }
+    if (els.appDrawer?.classList.contains('open')) closeDrawer({ restoreFocus: true });
   });
 
   if ('serviceWorker' in navigator) {
