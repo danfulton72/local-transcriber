@@ -1,6 +1,9 @@
+import io
 import secrets
+import tempfile
 import time
 import uuid
+import wave
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,6 +14,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from .config import settings
 from .db import SessionLocal, get_db, init_db
@@ -380,6 +384,7 @@ async def transcribe_chunk(
 async def upload_audio(
     recording_id: uuid.UUID,
     file: UploadFile = File(...),
+    duration_seconds: float | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     recording = await find_recording(recording_id, db)
@@ -390,9 +395,15 @@ async def upload_audio(
         file.filename or "recording.wav",
         file.content_type or "audio/wav",
         db,
+        duration_seconds=duration_seconds,
     )
     await db.commit()
-    return {"stored": True, "bytes": len(data), "segment_id": str(segment.id)}
+    return {
+        "stored": True,
+        "bytes": len(data),
+        "segment_id": str(segment.id),
+        "duration_seconds": duration_seconds,
+    }
 
 
 @app.post("/api/recordings/{recording_id}/transcribe", response_model=RecordingOut)
@@ -517,6 +528,120 @@ async def recording_audio_segments(recording_id: uuid.UUID, db: AsyncSession = D
             if segment.audio_path and Path(segment.audio_path).exists()
         ]
     }
+
+
+@app.get("/api/recordings/{recording_id}/audio-combined")
+async def recording_audio_combined(
+    recording_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    recording = await find_recording(recording_id, db)
+    segments = (
+        await db.execute(
+            select(RecordingAudioSegment)
+            .where(RecordingAudioSegment.recording_id == recording.id)
+            .order_by(
+                RecordingAudioSegment.created_at.asc(),
+                RecordingAudioSegment.id.asc(),
+            )
+        )
+    ).scalars().all()
+
+    # Recordings created before audio segments existed have one legacy file.
+    if not segments:
+        if recording.audio_path and Path(recording.audio_path).exists():
+            return FileResponse(
+                recording.audio_path,
+                media_type=recording.audio_mime_type or "audio/wav",
+                filename=f"{recording.id}.wav",
+                headers={"X-Audio-Segments": "1"},
+            )
+        raise HTTPException(status_code=404, detail="Audio not available")
+
+    missing = [
+        str(segment.id)
+        for segment in segments
+        if not segment.audio_path or not Path(segment.audio_path).exists()
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "This voice recording is incomplete because one or more audio segments are missing.",
+                "missing_segment_ids": missing,
+                "segment_count": len(segments),
+            },
+        )
+
+    temp = tempfile.NamedTemporaryFile(
+        prefix=f"local-transcriber-{recording.id}-",
+        suffix=".wav",
+        delete=False,
+    )
+    temp_path = Path(temp.name)
+    temp.close()
+
+    try:
+        expected_format: tuple[int, int, int, str, str] | None = None
+        total_frames = 0
+
+        with wave.open(str(temp_path), "wb") as output:
+            for index, segment in enumerate(segments):
+                try:
+                    source = wave.open(str(segment.audio_path), "rb")
+                except (wave.Error, EOFError) as exc:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Audio segment {index + 1} is not a valid PCM WAV file.",
+                    ) from exc
+
+                with source:
+                    current_format = (
+                        source.getnchannels(),
+                        source.getsampwidth(),
+                        source.getframerate(),
+                        source.getcomptype(),
+                        source.getcompname(),
+                    )
+                    if expected_format is None:
+                        expected_format = current_format
+                        output.setnchannels(source.getnchannels())
+                        output.setsampwidth(source.getsampwidth())
+                        output.setframerate(source.getframerate())
+                        output.setcomptype(source.getcomptype(), source.getcompname())
+                    elif current_format != expected_format:
+                        raise HTTPException(
+                            status_code=409,
+                            detail=(
+                                "The voice segments use different audio formats and cannot "
+                                "be combined safely. The original segments are still stored."
+                            ),
+                        )
+
+                    frames = source.readframes(source.getnframes())
+                    total_frames += source.getnframes()
+                    output.writeframesraw(frames)
+
+            output.writeframes(b"")
+
+        headers = {
+            "X-Audio-Segments": str(len(segments)),
+            "X-Audio-Frames": str(total_frames),
+        }
+        if expected_format:
+            sample_rate = expected_format[2]
+            headers["X-Audio-Duration"] = f"{total_frames / sample_rate:.3f}"
+
+        return FileResponse(
+            temp_path,
+            media_type="audio/wav",
+            filename=f"{recording.id}-complete.wav",
+            headers=headers,
+            background=BackgroundTask(lambda: temp_path.unlink(missing_ok=True)),
+        )
+    except Exception:
+        temp_path.unlink(missing_ok=True)
+        raise
 
 
 @app.get("/api/recordings/{recording_id}/audio-segments/{segment_id}")
