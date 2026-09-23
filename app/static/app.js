@@ -691,58 +691,66 @@
 
   async function playRecording() {
     if (!state.currentRecording?.has_audio) return;
+
     stopSpeech();
-    const token = ++state.playbackToken;
+    const token = state.playbackToken;
     const buttonText = els.playRecordingButton.textContent;
     els.playRecordingButton.disabled = true;
-    els.playRecordingButton.textContent = 'Loading voice…';
+    els.playRecordingButton.textContent = 'Checking voice…';
 
     try {
-      const response = await fetch('/api/recordings/' + state.currentRecording.id + '/audio-combined', { cache: 'no-store' });
-      if (!response.ok) {
-        const type = response.headers.get('content-type') || '';
-        const payload = type.includes('application/json') ? await response.json() : await response.text();
-        const detail = typeof payload === 'string'
-          ? payload
-          : (typeof payload?.detail === 'string' ? payload.detail : payload?.detail?.message);
-        throw new Error(detail || 'The complete voice recording is not available.');
+      const manifest = await api(
+        '/api/recordings/' + state.currentRecording.id + '/audio-segments',
+        { cache: 'no-store' },
+      );
+      if (!manifest.complete) {
+        throw new Error(
+          'This voice recording is incomplete: ' +
+          manifest.available_count + ' of ' + manifest.segment_count +
+          ' voice parts are available.'
+        );
       }
-
-      const blob = await response.blob();
+      if (!manifest.segment_count) {
+        throw new Error('No saved voice audio is available for this piece.');
+      }
       if (state.playbackToken !== token) return;
 
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
+      const audio = new Audio(
+        '/api/recordings/' + state.currentRecording.id +
+        '/audio-combined?play=' + Date.now()
+      );
+      audio.preload = 'metadata';
       state.currentAudio = audio;
-      state.currentAudioUrl = url;
+      state.currentAudioUrl = null;
+      els.playRecordingButton.textContent = 'Playing voice…';
 
-      const segmentCount = Number(response.headers.get('X-Audio-Segments') || 1);
-      const duration = Number(response.headers.get('X-Audio-Duration') || 0);
-      els.playRecordingButton.textContent = segmentCount > 1 ? '■ Stop voice' : '■ Stop';
-
-      await new Promise((resolve, reject) => {
-        audio.addEventListener('ended', resolve, { once: true });
-        audio.addEventListener('error', () => reject(new Error('Voice playback failed.')), { once: true });
+      const result = await new Promise((resolve, reject) => {
+        audio.addEventListener('ended', () => resolve('ended'), { once: true });
+        audio.addEventListener('pause', () => {
+          if (!audio.ended) resolve('paused');
+        }, { once: true });
+        audio.addEventListener('error', () => {
+          reject(new Error('The complete voice recording could not be played.'));
+        }, { once: true });
         audio.play().catch(reject);
       });
 
-      if (state.playbackToken === token) {
+      if (state.playbackToken === token && result === 'ended') {
+        const duration = Number(manifest.duration_seconds || 0);
         showToast(
-          segmentCount > 1
-            ? ('Played all ' + segmentCount + ' voice parts' + (duration ? ' · ' + formatTime(duration) : ''))
+          manifest.segment_count > 1
+            ? ('Played all ' + manifest.segment_count + ' voice parts' + (duration ? ' · ' + formatTime(duration) : ''))
             : 'Voice playback finished'
         );
       }
     } catch (error) {
       if (state.playbackToken === token) setError(error.message);
     } finally {
-      if (state.playbackToken === token) {
-        if (state.currentAudioUrl) URL.revokeObjectURL(state.currentAudioUrl);
+      if (state.currentAudio && state.playbackToken === token) {
         state.currentAudio = null;
-        state.currentAudioUrl = null;
-        els.playRecordingButton.disabled = false;
-        els.playRecordingButton.textContent = buttonText;
       }
+      els.playRecordingButton.disabled = false;
+      els.playRecordingButton.textContent = buttonText;
     }
   }
 
