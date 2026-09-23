@@ -42,11 +42,14 @@
     programmaticScrollAt: 0,
     lastScrollY: window.scrollY,
     installPrompt: null,
-    currentSpeakerAnalysisId: localStorage.getItem('speakerAnalysisId') || null,
+    currentSpeakerAnalysisId: null,
     speakerPolling: false,
+    authUser: null,
   };
 
   const els = {
+    loginScreen: $('loginScreen'), loginForm: $('loginForm'), loginUsername: $('loginUsername'), loginPassword: $('loginPassword'),
+    loginButton: $('loginButton'), loginMessage: $('loginMessage'), currentUserLabel: $('currentUserLabel'), logoutButton: $('logoutButton'),
     healthBadge: $('healthBadge'),
     recordButton: $('recordButton'), recordButtonText: $('recordButtonText'), meter: $('meter'),
     statusText: $('statusText'), statusDetail: $('statusDetail'), timer: $('timer'), pauseButton: $('pauseButton'),
@@ -70,7 +73,105 @@
     speakerCountSelect: $('speakerCountSelect'), runSpeakerAnalysisButton: $('runSpeakerAnalysisButton'),
     speakerAnalysisMessage: $('speakerAnalysisMessage'), speakerAnalysisResult: $('speakerAnalysisResult'),
     speakerProfilesList: $('speakerProfilesList'), refreshSpeakerProfilesButton: $('refreshSpeakerProfilesButton'),
+    userList: $('userList'), refreshUsersButton: $('refreshUsersButton'), createUserForm: $('createUserForm'),
+    newUsername: $('newUsername'), newUserDisplayName: $('newUserDisplayName'), newUserPassword: $('newUserPassword'),
+    createUserButton: $('createUserButton'), userAdminMessage: $('userAdminMessage'),
   };
+
+  function userStorageKey(name) {
+    return 'user:' + (state.authUser?.id || 'anonymous') + ':' + name;
+  }
+
+  function userLocalGet(name) {
+    return localStorage.getItem(userStorageKey(name));
+  }
+
+  function userLocalSet(name, value) {
+    localStorage.setItem(userStorageKey(name), value);
+  }
+
+  function userLocalRemove(name) {
+    localStorage.removeItem(userStorageKey(name));
+  }
+
+  function showLoggedOut(message = '') {
+    state.authUser = null;
+    state.currentRecording = null;
+    state.recoverableRecording = null;
+    state.currentSpeakerAnalysisId = null;
+    document.body.classList.add('logged-out');
+    els.currentUserLabel.textContent = '';
+    els.loginMessage.textContent = message;
+    els.loginMessage.classList.toggle('hidden', !message);
+    els.loginPassword.value = '';
+    setTimeout(() => els.loginUsername.focus(), 0);
+  }
+
+  function showLoggedIn(user) {
+    state.authUser = user;
+    state.currentSpeakerAnalysisId = userLocalGet('speakerAnalysisId') || null;
+    els.currentUserLabel.textContent = user.display_name || user.username;
+    document.body.classList.remove('logged-out');
+    els.loginMessage.classList.add('hidden');
+  }
+
+  async function loginUser(event) {
+    event?.preventDefault();
+    els.loginButton.disabled = true;
+    els.loginMessage.classList.add('hidden');
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: els.loginUsername.value.trim(),
+          password: els.loginPassword.value,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || 'Sign in failed');
+      showLoggedIn(payload.user);
+      await startAuthenticatedApp();
+    } catch (error) {
+      showLoggedOut(error.message);
+    } finally {
+      els.loginButton.disabled = false;
+    }
+  }
+
+  async function logoutUser() {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } finally {
+      sessionStorage.removeItem('parentPin');
+      els.parentPin.value = '';
+      setTranscript('');
+      showLoggedOut();
+    }
+  }
+
+  async function startAuthenticatedApp() {
+    await Promise.allSettled([checkHealth(), loadVoices()]);
+    renderTranscript();
+    syncRecordingUI();
+    await checkRecoverable();
+  }
+
+  async function bootstrapAuth() {
+    await checkHealth();
+    try {
+      const response = await fetch('/api/auth/me', { cache: 'no-store' });
+      if (!response.ok) {
+        showLoggedOut();
+        return;
+      }
+      const payload = await response.json();
+      showLoggedIn(payload.user);
+      await startAuthenticatedApp();
+    } catch {
+      showLoggedOut('Could not check sign-in status.');
+    }
+  }
 
   function setError(message = '') {
     els.errorBox.textContent = message;
@@ -210,8 +311,8 @@
     state.livePending = dedupeIncoming(state.confirmedTranscript, incoming);
     state.transcript = joinText(state.confirmedTranscript, state.livePending);
     if (state.currentRecording) {
-      localStorage.setItem('activeRecordingId', state.currentRecording.id);
-      localStorage.setItem('activeRecordingDraft', state.transcript);
+      userLocalSet('activeRecordingId', state.currentRecording.id);
+      userLocalSet('activeRecordingDraft', state.transcript);
     }
     renderTranscript();
     if (state.recording) scheduleDraftSave();
@@ -230,6 +331,9 @@
     const payload = response.status === 204 ? null : (type.includes('application/json') ? await response.json() : await response.text());
     if (!response.ok) {
       const detail = typeof payload === 'string' ? payload : payload?.detail || JSON.stringify(payload);
+      if (response.status === 401 && detail === 'Login required') {
+        showLoggedOut('Your session ended. Please sign in again.');
+      }
       throw new Error(detail || ('HTTP ' + response.status));
     }
     return payload;
@@ -341,8 +445,8 @@
   async function persistDraftNow(text = state.transcript) {
     if (!state.currentRecording) return;
     const draft = String(text || '').trim();
-    localStorage.setItem('activeRecordingId', state.currentRecording.id);
-    localStorage.setItem('activeRecordingDraft', draft);
+    userLocalSet('activeRecordingId', state.currentRecording.id);
+    userLocalSet('activeRecordingDraft', draft);
     const updated = await api('/api/recordings/' + state.currentRecording.id + '/draft', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -394,8 +498,8 @@
       state.autoFollow = true;
       state.confirmedTranscript = displayedText;
       state.transcript = displayedText;
-      localStorage.setItem('activeRecordingId', record.id);
-      localStorage.setItem('activeRecordingDraft', displayedText);
+      userLocalSet('activeRecordingId', record.id);
+      userLocalSet('activeRecordingDraft', displayedText);
       renderTranscript();
 
       processor.onaudioprocess = (event) => {
@@ -533,8 +637,8 @@
         }),
       });
       state.currentRecording = finished;
-      localStorage.removeItem('activeRecordingId');
-      localStorage.removeItem('activeRecordingDraft');
+      userLocalRemove('activeRecordingId');
+      userLocalRemove('activeRecordingDraft');
       state.captureBaseTranscript = ''; state.continuation = false;
       setTranscript(finished.transcript);
       setStatus('All done!', 'Your piece is saved. You can keep talking, read it, edit it, or use your words.');
@@ -558,13 +662,13 @@
     setError(''); state.transcribing = true; syncRecordingUI(); setStatus('Writing it down', 'Listening to ' + file.name + '…');
     try {
       const record = await createRecording(); state.currentRecording = record;
-      localStorage.setItem('activeRecordingId', record.id);
+      userLocalSet('activeRecordingId', record.id);
       const form = new FormData(); form.append('file', file, file.name); form.append('task', 'transcriptions');
       if (els.language.value) form.append('language', els.language.value);
       if (els.prompt.value.trim()) form.append('prompt', els.prompt.value.trim());
       const finished = await api('/api/recordings/' + record.id + '/transcribe', { method: 'POST', body: form });
       state.currentRecording = finished;
-      localStorage.removeItem('activeRecordingId'); localStorage.removeItem('activeRecordingDraft');
+      userLocalRemove('activeRecordingId'); userLocalRemove('activeRecordingDraft');
       setTranscript(finished.transcript); setStatus('All done!', 'The file is saved in My words.');
     } catch (error) { setError(error.message); setStatus('Something went wrong', 'You can try again.'); }
     finally { state.transcribing = false; els.fileInput.value = ''; syncRecordingUI(); }
@@ -597,7 +701,7 @@
       textarea.addEventListener('input', () => {
         autoGrowEditor(textarea);
         state.transcript = editorText();
-        localStorage.setItem('editDraft:' + state.currentRecording.id, state.transcript);
+        userLocalSet('editDraft:' + state.currentRecording.id, state.transcript);
         els.wordCount.textContent = wordCount(state.transcript) + ' words';
         scheduleEditAutosave();
       });
@@ -608,7 +712,7 @@
   function openEditor() {
     if (!state.currentRecording || !state.transcript || state.recording) return;
     state.editSnapshot = state.transcript;
-    const localDraft = localStorage.getItem('editDraft:' + state.currentRecording.id);
+    const localDraft = userLocalGet('editDraft:' + state.currentRecording.id);
     const draft = state.currentRecording.draft_text || localDraft || state.transcript;
     state.transcript = draft;
     renderSentenceEditor(draft);
@@ -626,7 +730,7 @@
     if (!state.currentRecording) return;
     const edited = editorText();
     state.transcript = edited;
-    localStorage.setItem('editDraft:' + state.currentRecording.id, edited);
+    userLocalSet('editDraft:' + state.currentRecording.id, edited);
     els.editSaveStatus.textContent = 'Saving…';
     try {
       const updated = await api('/api/recordings/' + state.currentRecording.id + '/draft', {
@@ -652,7 +756,7 @@
       const updated = await api('/api/recordings/' + state.currentRecording.id, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ transcript_edited: edited }),
       });
-      localStorage.removeItem('editDraft:' + state.currentRecording.id);
+      userLocalRemove('editDraft:' + state.currentRecording.id);
       state.currentRecording = updated; setTranscript(updated.transcript); closeEditor();
       showToast('Words saved');
     } catch (error) { setError(error.message); }
@@ -661,7 +765,7 @@
   async function undoEdit() {
     clearTimeout(state.editSaveTimer);
     const original = state.editSnapshot;
-    localStorage.removeItem('editDraft:' + state.currentRecording.id);
+    userLocalRemove('editDraft:' + state.currentRecording.id);
     try {
       await api('/api/recordings/' + state.currentRecording.id + '/draft', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '' }),
@@ -808,8 +912,8 @@
   async function checkRecoverable() {
     try {
       let record = await api('/api/recoverable', { cache: 'no-store' });
-      const localId = localStorage.getItem('activeRecordingId');
-      const localDraft = (localStorage.getItem('activeRecordingDraft') || '').trim();
+      const localId = userLocalGet('activeRecordingId');
+      const localDraft = (userLocalGet('activeRecordingDraft') || '').trim();
 
       if (!record && localId) {
         try { record = await api('/api/recordings/' + localId, { cache: 'no-store' }); } catch {}
@@ -822,7 +926,7 @@
       if (!record.transcript || record.status === 'ready') return;
 
       const noticeToken = recoveryNoticeToken(record);
-      if (noticeToken && localStorage.getItem('dismissedRecoveryNotice') === noticeToken) return;
+      if (noticeToken && userLocalGet('dismissedRecoveryNotice') === noticeToken) return;
 
       state.recoverableRecording = record;
       els.recoveryDetail.textContent = record.word_count + ' words were saved as a draft.';
@@ -845,7 +949,7 @@
   async function acknowledgeRecovery(record) {
     if (!record?.id) return;
     const token = recoveryNoticeToken(record);
-    if (token) localStorage.setItem('dismissedRecoveryNotice', token);
+    if (token) userLocalSet('dismissedRecoveryNotice', token);
     try {
       await api('/api/recordings/' + record.id + '/recovery-acknowledged', { method: 'POST' });
     } catch {}
@@ -1169,7 +1273,7 @@
         body: JSON.stringify({ num_speakers: count }),
       });
       state.currentSpeakerAnalysisId = job.id;
-      localStorage.setItem('speakerAnalysisId', job.id);
+      userLocalSet('speakerAnalysisId', job.id);
       await pollSpeakerAnalysis(job.id);
     } catch (error) {
       els.speakerAnalysisMessage.textContent = error.message;
@@ -1186,7 +1290,7 @@
         const analysis = await api('/api/admin/speakers/analyses/' + analysisId, { headers: parentHeaders(), cache: 'no-store' });
         if (analysis.status === 'completed') {
           state.currentSpeakerAnalysisId = analysis.id;
-          localStorage.setItem('speakerAnalysisId', analysis.id);
+          userLocalSet('speakerAnalysisId', analysis.id);
           renderSpeakerAnalysis(analysis);
           await loadSpeakerProfiles();
           return;
