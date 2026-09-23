@@ -1143,3 +1143,693 @@ body.logged-out .login-screen{
   font-size:.84rem;
   line-height:1.45;
 }
+
+
+/* --------------------------------------------------------------------------
+   v0.7 word-first interface
+   -------------------------------------------------------------------------- */
+:root{
+  --bg:#fbf5e7;
+  --card:#fffdf8;
+  --ink:#13263b;
+  --muted:#687582;
+  --accent:#17745f;
+  --accent-2:#dff3ea;
+  --line:#e4dccb;
+  --danger:#a13e3e;
+  --shadow:0 12px 34px rgba(41,52,48,.07);
+  --content:1100px;
+  --radius:24px;
+}
+body{
+  background:
+    radial-gradient(circle at 8% 18%,rgba(203,235,219,.26),transparent 24rem),
+    radial-gradient(circle at 92% 68%,rgba(255,222,157,.22),transparent 28rem),
+    var(--bg);
+}
+body.drawer-open{overflow:hidden}
+.sr-only{
+  position:absolute!important;
+  width:1px!important;
+  height:1px!important;
+  padding:0!important;
+  margin:-1px!important;
+  overflow:hidden!important;
+  clip:rect(0,0,0,0)!important;
+  white-space:nowrap!important;
+  border:0!important;
+}
+
+/* Header */
+.topbar{
+  width:min(var(--content),calc(100% - 36px));
+  min-height:88px;
+  padding:16px 0 12px;
+  align-items:center;
+}
+.brand{
+  display:flex;
+  align-items:center;
+  gap:.75rem;
+  min-width:0;
+}
+.brand-mark{
+  flex:0 0 auto;
+  display:grid;
+  place-items:center;
+  width:48px;
+  height:48px;
+  border-radius:16px 16px 16px 5px;
+  background:linear-gradient(145deg,#8bd5be,#4fad96);
+  color:#12394a;
+  font-size:1.45rem;
+  font-weight:800;
+  box-shadow:0 8px 20px rgba(23,116,95,.12);
+}
+.brand h1{
+  font-size:clamp(1.4rem,2.4vw,2rem);
+  letter-spacing:-.025em;
+}
+.brand-subtitle{
+  display:block;
+  margin-top:.08rem;
+  color:var(--muted);
+  font-size:.82rem;
+}
+.topbar-actions{
+  display:flex;
+  align-items:center;
+  gap:.6rem;
+}
+.health{
+  font-size:.76rem;
+  padding:.38rem .68rem;
+}
+.menu-button,.drawer-close{
+  display:grid;
+  place-items:center;
+  width:46px;
+  height:46px;
+  min-height:46px;
+  padding:0;
+  border-radius:50%;
+  background:var(--card);
+  font-size:1.35rem;
+  font-weight:800;
+  box-shadow:0 6px 18px rgba(36,48,58,.06);
+}
+
+/* Core navigation */
+.tabs{
+  gap:.55rem;
+  padding:4px 0 14px;
+  background:transparent;
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+.tab{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:.45rem;
+  border-color:transparent;
+  background:rgba(255,253,248,.7);
+}
+.tab.active{
+  background:var(--accent);
+  color:#fff;
+  box-shadow:0 8px 20px rgba(23,116,95,.12);
+}
+
+/* Word-first talk page */
+.talk-page{
+  display:none;
+  gap:12px;
+}
+.talk-page.active{display:grid}
+.words-card{
+  position:relative;
+  display:flex;
+  flex-direction:column;
+  min-height:clamp(430px,58vh,720px);
+  padding:clamp(22px,3.2vw,42px);
+  border-color:rgba(219,209,189,.88);
+  box-shadow:0 14px 38px rgba(45,55,52,.065);
+  overflow:hidden;
+}
+.words-card::after{
+  content:"";
+  position:absolute;
+  right:-34px;
+  bottom:-48px;
+  width:150px;
+  height:150px;
+  border-radius:60% 40% 55% 45%;
+  background:rgba(129,199,171,.10);
+  pointer-events:none;
+}
+.card-heading{
+  align-items:center;
+  min-height:32px;
+}
+.card-heading .eyebrow{
+  margin:0;
+  color:#607080;
+  font-size:.72rem;
+}
+.word-tools{
+  margin-left:auto;
+}
+.pill{
+  padding:.3rem .68rem;
+  background:#d9f3ee;
+  color:#167063;
+  font-size:.78rem;
+  font-weight:700;
+}
+.transcript{
+  flex:1 1 auto;
+  min-height:300px;
+  margin:18px 0 8px;
+  font-size:clamp(1.7rem,3.8vw,2.75rem);
+  line-height:1.58;
+  letter-spacing:.005em;
+  color:#10294b;
+}
+.transcript.empty{
+  display:flex;
+  align-items:flex-start;
+  color:#6e7c88;
+}
+.transcript.empty p{
+  max-width:18ch;
+  margin:0;
+}
+.sentence{
+  color:inherit;
+  font-weight:500;
+}
+.live-preview{
+  color:#71877f;
+  border-bottom-color:#a6c9bb;
+}
+
+/* Small, close-to-the-words actions */
+.quick-actions{
+  width:min(100%,520px);
+  margin-inline:auto;
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+}
+.quick-action{
+  min-height:66px;
+  padding:.62rem .45rem;
+  border:0;
+  box-shadow:none;
+  display:grid;
+  place-items:center;
+  align-content:center;
+  gap:.12rem;
+  font-size:.78rem;
+  font-weight:700;
+  line-height:1.15;
+}
+.quick-action>span:first-child{
+  font-size:1.35rem;
+  line-height:1;
+}
+.quick-action.hear-action{background:#e8f2ff;color:#164fa3}
+.quick-action.read-action{background:#f3eaff;color:#6231a5}
+.quick-action.use-action{background:#e5f5ed;color:#17614f}
+.quick-action:disabled{filter:saturate(.55)}
+
+/* Recording controls now support the transcript rather than dominating it */
+.capture-zone{
+  display:grid;
+  justify-items:center;
+  gap:8px;
+  padding:4px 0 2px;
+}
+.capture-status{
+  display:grid;
+  justify-items:center;
+  gap:1px;
+  text-align:center;
+}
+.capture-status .meter{
+  grid-area:auto;
+  justify-content:center;
+  height:20px;
+  margin:0;
+}
+.capture-status .status{
+  grid-area:auto;
+  font-size:.9rem;
+}
+.capture-status .status-detail{
+  grid-area:auto;
+  max-width:560px;
+  font-size:.78rem;
+  line-height:1.35;
+}
+.capture-status .timer{
+  grid-area:auto;
+  font-size:.78rem;
+  color:var(--muted);
+}
+.record-button{
+  grid-area:auto;
+  width:88px;
+  min-width:88px;
+  border-width:5px;
+  box-shadow:0 9px 24px rgba(23,116,95,.18);
+  font-size:.7rem;
+}
+.record-button.recording{
+  box-shadow:0 9px 24px rgba(181,77,77,.2);
+}
+.mic{font-size:1.85rem}
+.capture-secondary-actions{
+  display:flex;
+  gap:.55rem;
+  justify-content:center;
+}
+.capture-secondary-actions button{
+  min-height:40px;
+  padding:.42rem .75rem;
+  font-size:.78rem;
+}
+#pauseButton{
+  grid-area:auto;
+  justify-self:auto;
+}
+.continue-row{display:contents}
+
+/* Secondary actions stay available but visually quiet. */
+.more-actions{
+  width:min(100%,680px);
+  margin:2px auto 0;
+  padding-top:5px;
+  border-top:0;
+  text-align:center;
+}
+.more-actions summary{
+  margin-inline:auto;
+  padding:.35rem .5rem;
+  font-size:.78rem;
+}
+.more-actions .actions{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:7px;
+  padding-top:5px;
+}
+.more-actions .actions button{
+  min-height:42px;
+  padding:.46rem .5rem;
+  font-size:.76rem;
+  background:rgba(255,253,248,.72);
+}
+
+/* Settings drawer */
+.drawer-backdrop{
+  position:fixed;
+  inset:0;
+  z-index:79;
+  background:rgba(17,32,47,.38);
+  backdrop-filter:blur(2px);
+  -webkit-backdrop-filter:blur(2px);
+}
+.app-drawer{
+  position:fixed;
+  inset:0 0 0 auto;
+  z-index:80;
+  width:min(430px,94vw);
+  min-width:0;
+  display:grid;
+  grid-template-rows:auto minmax(0,1fr) auto;
+  background:#fffdf8;
+  box-shadow:-18px 0 44px rgba(19,38,59,.16);
+  transform:translateX(105%);
+  transition:transform .22s ease;
+  visibility:hidden;
+}
+.app-drawer.open{
+  transform:translateX(0);
+  visibility:visible;
+}
+.drawer-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:1rem;
+  padding:max(16px,env(safe-area-inset-top)) 18px 14px;
+  border-bottom:1px solid var(--line);
+}
+.drawer-brand strong,.drawer-brand span{display:block}
+.drawer-brand>div>span{
+  margin-top:.05rem;
+  color:var(--muted);
+  font-size:.76rem;
+}
+.small-mark{
+  width:38px;
+  height:38px;
+  border-radius:13px 13px 13px 4px;
+  font-size:1.1rem;
+}
+.drawer-close{
+  box-shadow:none;
+  background:#f8f3e8;
+}
+.drawer-scroll{
+  overflow:auto;
+  padding:8px 18px 24px;
+}
+.drawer-section{
+  padding:12px 0 16px;
+  border-bottom:1px solid var(--line);
+}
+.drawer-section:last-child{border-bottom:0}
+.drawer-kicker{
+  margin:0 0 8px;
+  font-size:.72rem;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  font-weight:800;
+  color:var(--muted);
+}
+.drawer-settings{
+  display:grid;
+  gap:8px;
+}
+.drawer-field{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(145px,48%);
+  gap:10px;
+  align-items:center;
+  min-height:54px;
+  padding:6px 0;
+  font-weight:700;
+}
+.drawer-field select,.drawer-field input{
+  min-height:42px;
+  padding:.5rem .6rem;
+  font-size:.82rem;
+}
+.capture-source-hint{
+  padding:.68rem .75rem;
+  border-radius:14px;
+}
+.capture-privacy-note{
+  margin:.2rem 0 .6rem;
+  font-size:.73rem;
+  line-height:1.45;
+}
+.drawer-action{
+  width:100%;
+  min-height:56px;
+  display:flex;
+  align-items:center;
+  gap:.75rem;
+  padding:.65rem .75rem;
+  border:0;
+  border-radius:14px;
+  background:transparent;
+  text-align:left;
+}
+.drawer-action:hover{background:#f6f1e7}
+.drawer-action>span{
+  display:grid;
+  gap:.04rem;
+}
+.drawer-action strong{font-size:.9rem}
+.drawer-action small{
+  color:var(--muted);
+  font-size:.72rem;
+}
+.parent-entry{
+  margin-top:4px;
+  background:#e8f6ef;
+}
+.file-action{
+  position:relative;
+  font-weight:700;
+  cursor:pointer;
+}
+.file-action input{
+  position:absolute;
+  width:1px;
+  height:1px;
+  opacity:0;
+  pointer-events:none;
+}
+.drawer-account{
+  display:flex;
+  align-items:center;
+  gap:.65rem;
+  justify-content:space-between;
+  padding:12px 18px max(14px,env(safe-area-inset-bottom));
+  border-top:1px solid var(--line);
+  background:#fffaf1;
+}
+.drawer-account .user-chip{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.drawer-account button{
+  flex:0 0 auto;
+  min-height:40px;
+}
+
+/* Other pages stay clean, but use the same visual language. */
+#page-history,#page-progress{
+  max-width:960px;
+  margin-inline:auto;
+}
+.history-card,.recycle-card,.panel,.pin-panel,.metric{
+  background:rgba(255,253,248,.94);
+}
+.section-heading{
+  margin-top:10px;
+}
+.parent-tools-heading{
+  margin-top:34px;
+}
+
+/* Reading focus must hide every control in the new shell. */
+body.reading-focus .quick-actions,
+body.reading-focus .capture-zone,
+body.reading-focus .more-actions,
+body.reading-focus .app-drawer,
+body.reading-focus .drawer-backdrop{
+  display:none!important;
+}
+
+/* Wide desktop: turn the same three core tabs into a simple left rail. */
+@media (min-width:1180px){
+  .topbar{
+    width:min(1080px,calc(100% - 250px));
+    margin-left:210px;
+    margin-right:auto;
+  }
+  .tabs{
+    position:fixed;
+    left:24px;
+    top:116px;
+    z-index:18;
+    width:160px;
+    padding:0;
+    display:grid;
+    gap:7px;
+  }
+  .tab{
+    justify-content:flex-start;
+    min-height:48px;
+    padding:.65rem .8rem;
+  }
+  main{
+    width:min(1080px,calc(100% - 250px));
+    margin-left:210px;
+    margin-right:auto;
+    padding-bottom:40px;
+  }
+  footer{
+    width:min(1080px,calc(100% - 250px));
+    margin-left:210px;
+    margin-right:auto;
+  }
+  .talk-page{
+    max-width:900px;
+    margin-inline:auto;
+  }
+  .words-card{
+    min-height:clamp(480px,61vh,760px);
+  }
+}
+
+/* Tablet keeps the compact top navigation. */
+@media (min-width:701px) and (max-width:1179px){
+  .topbar,.tabs,main,footer{
+    width:min(940px,calc(100% - 36px));
+  }
+  .talk-page{
+    max-width:820px;
+    margin-inline:auto;
+  }
+}
+
+/* Phones: word area gets most of the viewport and navigation stays thumb-friendly. */
+@media (max-width:700px){
+  body{
+    padding-bottom:calc(76px + env(safe-area-inset-bottom));
+  }
+  .topbar{
+    width:calc(100% - 24px);
+    min-height:72px;
+    padding-top:max(10px,env(safe-area-inset-top));
+    align-items:center;
+  }
+  .brand-mark{
+    width:40px;
+    height:40px;
+    border-radius:14px 14px 14px 5px;
+    font-size:1.15rem;
+  }
+  .brand h1{font-size:1.28rem}
+  .brand-subtitle{display:none}
+  .topbar-actions{gap:.4rem}
+  .health{
+    max-width:none;
+    width:32px;
+    height:32px;
+    display:grid;
+    place-items:center;
+    padding:0;
+    overflow:hidden;
+    font-size:0;
+    white-space:nowrap;
+  }
+  .health::before{
+    content:"";
+    width:9px;
+    height:9px;
+    border-radius:50%;
+    background:#999;
+  }
+  .health.online::before{background:#22956f}
+  .health.degraded::before{background:#c88722}
+  .menu-button{
+    width:42px;
+    height:42px;
+    min-height:42px;
+    font-size:1.2rem;
+  }
+
+  .tabs{
+    position:fixed;
+    inset:auto 0 0 0;
+    width:100%;
+    z-index:50;
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:6px;
+    padding:7px 10px calc(7px + env(safe-area-inset-bottom));
+    background:rgba(255,253,248,.97);
+    border-top:1px solid var(--line);
+    box-shadow:0 -8px 24px rgba(48,49,45,.08);
+  }
+  .tab{
+    min-height:52px;
+    padding:.38rem .25rem;
+    border-radius:14px;
+    display:grid;
+    gap:0;
+    place-items:center;
+    align-content:center;
+    font-size:.76rem;
+  }
+  .tab>span:first-child{font-size:1rem}
+
+  main{
+    width:calc(100% - 18px);
+    padding-bottom:18px;
+  }
+  .talk-page{gap:9px}
+  .recovery-banner{margin-top:0}
+  .words-card{
+    min-height:clamp(410px,57dvh,670px);
+    padding:18px 18px 16px;
+    border-radius:22px;
+  }
+  .transcript{
+    min-height:300px;
+    margin-top:12px;
+    font-size:clamp(1.65rem,7.2vw,2.15rem);
+    line-height:1.58;
+  }
+  .quick-actions{
+    gap:7px;
+  }
+  .quick-action{
+    min-height:58px;
+    padding:.45rem .3rem;
+    font-size:.69rem;
+    border-radius:14px;
+  }
+  .quick-action>span:first-child{font-size:1.15rem}
+  .capture-zone{
+    gap:5px;
+    padding-top:1px;
+  }
+  .capture-status .status-detail{
+    max-width:92vw;
+    font-size:.72rem;
+  }
+  .record-button{
+    width:80px;
+    min-width:80px;
+  }
+  .record-button span:last-child{font-size:.66rem}
+  .more-actions{
+    margin-top:0;
+  }
+  .more-actions .actions{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .app-drawer{
+    width:min(420px,96vw);
+  }
+  footer{
+    width:calc(100% - 18px);
+    padding-bottom:12px;
+  }
+}
+
+/* Very narrow phones: preserve legibility before compactness. */
+@media (max-width:390px){
+  .topbar{width:calc(100% - 16px)}
+  .brand{gap:.5rem}
+  .brand h1{font-size:1.16rem}
+  .words-card{padding:16px 14px}
+  .transcript{
+    font-size:clamp(1.5rem,7.4vw,1.9rem);
+    line-height:1.62;
+  }
+  .quick-action{
+    min-height:56px;
+    font-size:.64rem;
+  }
+  .drawer-field{
+    grid-template-columns:1fr;
+    gap:4px;
+  }
+}
+
+/* Reduce motion without losing drawer state. */
+@media (prefers-reduced-motion:reduce){
+  .app-drawer{transition:none}
+}
