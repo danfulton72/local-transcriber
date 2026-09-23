@@ -1125,3 +1125,21 @@ body.logged-out .login-screen{
     grid-template-columns:1fr;
   }
 }
+
+
+/* Selectable microphone / computer-audio capture */
+.capture-source-hint{
+  display:grid;
+  gap:.12rem;
+  padding:.75rem .85rem;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:color-mix(in srgb,var(--accent-2) 45%,white);
+}
+.capture-source-hint strong{
+  color:var(--accent);
+}
+.capture-source-hint span{
+  font-size:.84rem;
+  line-height:1.45;
+}
