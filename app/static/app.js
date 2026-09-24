@@ -65,12 +65,15 @@
     speakerPreviewKey: null,
     speakerPreviewButton: null,
     authUser: null,
+    actingAs: null,
   };
 
   const els = {
     loginScreen: $('loginScreen'), loginForm: $('loginForm'), loginUsername: $('loginUsername'), loginPassword: $('loginPassword'),
     loginButton: $('loginButton'), loginMessage: $('loginMessage'), currentUserLabel: $('currentUserLabel'), logoutButton: $('logoutButton'),
     healthBadge: $('healthBadge'), menuButton: $('menuButton'), closeMenuButton: $('closeMenuButton'),
+    actAsControl: $('actAsControl'), actAsSelect: $('actAsSelect'), actAsBanner: $('actAsBanner'),
+    actAsName: $('actAsName'), actAsDetail: $('actAsDetail'), stopActAsButton: $('stopActAsButton'),
     appDrawer: $('appDrawer'), drawerBackdrop: $('drawerBackdrop'),
     recordButton: $('recordButton'), recordButtonIcon: $('recordButtonIcon'), recordButtonText: $('recordButtonText'), meter: $('meter'),
     statusText: $('statusText'), statusDetail: $('statusDetail'), timer: $('timer'), pauseButton: $('pauseButton'),
@@ -105,8 +108,12 @@
     createUserButton: $('createUserButton'), userAdminMessage: $('userAdminMessage'),
   };
 
+  function effectiveUser() {
+    return state.actingAs || state.authUser;
+  }
+
   function userStorageKey(name) {
-    return 'user:' + (state.authUser?.id || 'anonymous') + ':' + name;
+    return 'user:' + (effectiveUser()?.id || 'anonymous') + ':' + name;
   }
 
   function userLocalGet(name) {
@@ -125,6 +132,26 @@
     return Boolean(state.authUser?.is_admin);
   }
 
+  function isActingAs() {
+    return Boolean(state.actingAs?.id);
+  }
+
+  function applyActAsUI() {
+    const acting = isActingAs();
+    document.body.classList.toggle('acting-as-user', acting);
+    els.actAsBanner?.classList.toggle('hidden', !acting);
+    if (els.actAsName) els.actAsName.textContent = acting ? (state.actingAs.display_name || state.actingAs.username) : '';
+    if (els.actAsDetail) {
+      els.actAsDetail.textContent = acting
+        ? 'Signed in as ' + (state.authUser?.display_name || state.authUser?.username || 'admin') + '. You can review and correct saved work; new recording and deletion are disabled.'
+        : '';
+    }
+    if (els.actAsSelect) els.actAsSelect.value = acting ? state.actingAs.id : '';
+    if (els.currentUserLabel && state.authUser) {
+      els.currentUserLabel.textContent = (state.authUser.display_name || state.authUser.username) + (state.authUser.is_admin ? ' · Admin' : '');
+    }
+  }
+
   function applyRoleVisibility() {
     const allowed = isAdmin();
     document.body.classList.toggle('admin-user', allowed);
@@ -133,11 +160,13 @@
     });
     const activeAdminPage = document.querySelector('.page.active.admin-page');
     if (!allowed && activeAdminPage) switchPage('talk');
+    applyActAsUI();
   }
 
   function showLoggedOut(message = '') {
     closeDrawer();
     state.authUser = null;
+    state.actingAs = null;
     state.currentRecording = null;
     state.recoverableRecording = null;
     state.currentSpeakerAnalysisId = null;
@@ -150,10 +179,10 @@
     setTimeout(() => els.loginUsername.focus(), 0);
   }
 
-  function showLoggedIn(user) {
+  function showLoggedIn(user, actingAs = null) {
     state.authUser = user;
+    state.actingAs = actingAs;
     state.currentSpeakerAnalysisId = userLocalGet('speakerAnalysisId') || null;
-    els.currentUserLabel.textContent = user.display_name || user.username;
     document.body.classList.remove('logged-out');
     els.loginMessage.classList.add('hidden');
     applyRoleVisibility();
@@ -174,7 +203,7 @@
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || 'Sign in failed');
-      showLoggedIn(payload.user);
+      showLoggedIn(payload.user, payload.acting_as || null);
       await startAuthenticatedApp();
     } catch (error) {
       showLoggedOut(error.message);
@@ -193,10 +222,17 @@
   }
 
   async function startAuthenticatedApp() {
-    await Promise.allSettled([checkHealth(), loadVoices(), loadKnownSpeakerProfiles()]);
+    const tasks = [checkHealth(), loadVoices(), loadKnownSpeakerProfiles()];
+    if (isAdmin()) tasks.push(loadActAsOptions());
+    await Promise.allSettled(tasks);
     renderTranscript();
     syncRecordingUI();
-    await checkRecoverable();
+    if (isActingAs()) {
+      state.recoverableRecording = null;
+      els.recoveryBanner.classList.add('hidden');
+    } else {
+      await checkRecoverable();
+    }
   }
 
   async function bootstrapAuth() {
@@ -208,14 +244,64 @@
         return;
       }
       const payload = await response.json();
-      showLoggedIn(payload.user);
+      showLoggedIn(payload.user, payload.acting_as || null);
       await startAuthenticatedApp();
     } catch {
       showLoggedOut('Could not check sign-in status.');
     }
   }
 
-  function openDrawer() {
+  function renderActAsOptions(users) {
+    if (!els.actAsSelect) return;
+    const selected = isActingAs() ? state.actingAs.id : '';
+    els.actAsSelect.replaceChildren();
+    const own = document.createElement('option');
+    own.value = '';
+    own.textContent = 'My account';
+    els.actAsSelect.appendChild(own);
+    for (const user of users || []) {
+      if (!user.is_active || user.is_admin || user.is_current) continue;
+      const option = document.createElement('option');
+      option.value = user.id;
+      option.textContent = user.display_name + ' (@' + user.username + ')';
+      els.actAsSelect.appendChild(option);
+    }
+    els.actAsSelect.value = selected;
+  }
+
+  async function loadActAsOptions() {
+    if (!isAdmin()) return [];
+    const users = await api('/api/admin/users', { cache: 'no-store' });
+    renderActAsOptions(users);
+    return users;
+  }
+
+  async function switchActAs(userId = '') {
+    if (!isAdmin()) return;
+    stopSpeech();
+    closeEditor();
+    state.currentRecording = null;
+    state.recoverableRecording = null;
+    state.speakerTurns = [];
+    setTranscript('');
+    els.recoveryBanner.classList.add('hidden');
+    try {
+      const payload = userId
+        ? await api('/api/admin/act-as/' + userId, { method: 'POST' })
+        : await api('/api/admin/act-as', { method: 'DELETE' });
+      showLoggedIn(payload.user, payload.acting_as || null);
+      await startAuthenticatedApp();
+      switchPage(payload.acting_as ? 'history' : 'talk');
+      showToast(payload.acting_as
+        ? 'Now acting as ' + (payload.acting_as.display_name || payload.acting_as.username)
+        : 'Returned to your account');
+    } catch (error) {
+      await loadActAsOptions().catch(() => {});
+      setError(error.message);
+    }
+  }
+
+    function openDrawer() {
     if (!els.appDrawer || !els.drawerBackdrop) return;
     els.appDrawer.classList.add('open');
     els.appDrawer.setAttribute('aria-hidden', 'false');
@@ -1088,18 +1174,23 @@
   }
 
   function syncRecordingUI() {
+    const acting = isActingAs();
     els.recordButton.classList.toggle('recording', state.recording);
-    els.recordButtonText.textContent = state.recording
-      ? 'Stop & finish'
-      : ((els.captureSource?.value || 'microphone') === 'microphone' ? 'Start talking' : 'Start capture');
-    els.recordButton.disabled = state.transcribing;
+    els.recordButtonText.textContent = acting
+      ? 'Recording disabled'
+      : (state.recording
+        ? 'Stop & finish'
+        : ((els.captureSource?.value || 'microphone') === 'microphone' ? 'Start talking' : 'Start capture'));
+    els.recordButton.disabled = state.transcribing || acting;
     if (els.menuButton) els.menuButton.disabled = state.recording || state.transcribing;
     els.pauseButton.classList.toggle('hidden', !state.recording);
     els.pauseButton.textContent = state.paused ? 'Carry on' : 'Pause';
     els.language.disabled = state.recording || state.transcribing;
     els.chunkSeconds.disabled = state.recording || state.transcribing;
     if (els.captureSource) els.captureSource.disabled = state.recording || state.transcribing;
-    els.fileInput.disabled = state.recording || state.transcribing;
+    els.fileInput.disabled = state.recording || state.transcribing || acting;
+    els.keepTalkingButton.disabled = acting;
+    els.newButton.disabled = acting;
     renderTranscript();
   }
 
@@ -1135,6 +1226,10 @@
 
   async function startRecording(reuseExisting = false) {
     setError('');
+    if (isActingAs()) {
+      setError('Return to your own account before creating or continuing a recording.');
+      return;
+    }
     stopSpeech();
     exitReadingFocus();
     const mode = els.captureSource?.value || 'microphone';
@@ -1859,7 +1954,10 @@
       const actions = document.createElement('div'); actions.className = 'history-actions';
       const open = document.createElement('button'); open.textContent = 'Open'; open.addEventListener('click', () => openHistoryRecording(record)); actions.appendChild(open);
       const star = document.createElement('button'); star.textContent = record.is_favourite ? '★ Unfavourite' : '☆ Favourite'; star.addEventListener('click', async () => { await api('/api/recordings/' + record.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_favourite: !record.is_favourite }) }); loadHistory(); }); actions.appendChild(star);
-      const del = document.createElement('button'); del.textContent = 'Move to bin'; del.addEventListener('click', async () => { if (!confirm('Move this recording to the bin?')) return; await api('/api/recordings/' + record.id, { method: 'DELETE' }); loadHistory(); }); actions.appendChild(del);
+      const del = document.createElement('button'); del.textContent = 'Move to bin';
+      del.disabled = isActingAs();
+      del.title = isActingAs() ? 'Return to your account before deleting recordings.' : '';
+      del.addEventListener('click', async () => { if (!confirm('Move this recording to the bin?')) return; await api('/api/recordings/' + record.id, { method: 'DELETE' }); loadHistory(); }); actions.appendChild(del);
       card.appendChild(actions); els.historyList.appendChild(card);
     }
   }
@@ -1988,6 +2086,7 @@
     try {
       const users = await api('/api/admin/users', { cache: 'no-store' });
       renderUsers(users);
+      renderActAsOptions(users);
     } catch (error) {
       els.userList.replaceChildren();
       const p = document.createElement('p'); p.className = 'error'; p.textContent = error.message;
@@ -2069,6 +2168,15 @@
           els.userAdminMessage.textContent = error.message;
         }
       });
+
+      if (user.is_active && !user.is_admin && !user.is_current) {
+        const manage = document.createElement('button');
+        manage.type = 'button';
+        manage.textContent = 'Manage as user';
+        manage.title = 'Open this user\'s My words and Progress';
+        manage.addEventListener('click', () => switchActAs(user.id));
+        actions.prepend(manage);
+      }
 
       actions.append(save, toggle);
       row.append(main, display, password, adminLabel, actions);
@@ -3027,7 +3135,9 @@
       els.recordingTitleInput.blur();
     }
   });
-  els.progressDays.addEventListener('change', () => { if (isAdmin()) loadProgress(); });
+  els.actAsSelect?.addEventListener('change', () => switchActAs(els.actAsSelect.value));
+  els.stopActAsButton?.addEventListener('click', () => switchActAs(''));
+    els.progressDays.addEventListener('change', () => { if (isAdmin()) loadProgress(); });
   els.runSpeakerAnalysisButton.addEventListener('click', runSpeakerAnalysis);
   els.refreshSpeakerProfilesButton.addEventListener('click', loadSpeakerProfiles);
   els.refreshRelabelSamplesButton?.addEventListener('click', loadRelabelSamples);
