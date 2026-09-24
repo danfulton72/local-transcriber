@@ -1,7 +1,7 @@
 # Talk to Type integration for the existing ai-stack Compose project.
 #
 # Install with:
-#   python /home/dan/local-transcriber/deploy/ai-stack/install.py
+#   python /home/dan/ai/local-transcriber/deploy/ai-stack/install.py
 #
 # The installer symlinks this file to /home/dan/ai/compose.override.yml so the
 # normal "cd /home/dan/ai && docker compose ..." commands include these services.
