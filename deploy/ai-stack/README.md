@@ -9,7 +9,7 @@ That directory is the Git checkout and also owns the app's local runtime files.
 ## Layout
 
     /home/dan/ai/
-      compose.yml
+      <existing Compose file>
       compose.override.yml -> local-transcriber/deploy/ai-stack/compose.override.yml
       llama-swap/
         t4.yaml
@@ -73,7 +73,7 @@ The installer will:
 - back up /home/dan/ai/llama-swap/t4.yaml;
 - patch the T4 matrix with the hidden speaker_auto reservation;
 - link /home/dan/ai/compose.override.yml to this checkout;
-- run docker compose config -q in /home/dan/ai.
+- detect the existing standard Compose filename and run docker compose config -q in /home/dan/ai.
 
 It does not copy data from an older installation.
 
