@@ -15,13 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
 from .auth import (
+    actor_user_id,
     current_user_id,
     ensure_default_user,
-    reset_current_user_id,
+    is_acting_as,
+    request_identity_from_request,
+    reset_request_user_ids,
     require_admin,
     router as auth_router,
-    set_current_user_id,
-    user_from_request,
+    set_request_user_ids,
 )
 from .config import settings
 from .db import SessionLocal, get_db, init_db
@@ -77,14 +79,15 @@ async def authenticated_api(request, call_next):
     path = request.url.path
     if path.startswith("/api/") and not path.startswith("/api/auth/"):
         async with SessionLocal() as db:
-            user = await user_from_request(request, db)
-        if not user:
+            identity = await request_identity_from_request(request, db)
+        if not identity:
             return JSONResponse({"detail": "Login required"}, status_code=401)
-        token = set_current_user_id(user.id)
+        actor, effective, _session = identity
+        tokens = set_request_user_ids(actor.id, effective.id)
         try:
             return await call_next(request)
         finally:
-            reset_current_user_id(token)
+            reset_request_user_ids(tokens)
     return await call_next(request)
 
 
@@ -161,6 +164,29 @@ async def find_recording(recording_id: uuid.UUID, db: AsyncSession, include_dele
     return recording
 
 
+def ensure_capture_allowed() -> None:
+    if is_acting_as():
+        raise HTTPException(
+            status_code=403,
+            detail="Return to your own account before creating or continuing a recording.",
+        )
+
+
+def admin_audit_event(recording_id: uuid.UUID, action: str, details: dict | None = None) -> UsageEvent | None:
+    if not is_acting_as():
+        return None
+    return UsageEvent(
+        recording_id=recording_id,
+        event_type="admin_act_as_edit",
+        event_data={
+            "actor_user_id": str(actor_user_id()),
+            "effective_user_id": str(current_user_id()),
+            "action": action,
+            **(details or {}),
+        },
+    )
+
+
 async def store_audio_segment(
     recording: Recording,
     data: bytes,
@@ -233,6 +259,7 @@ async def speaker_profile_names(db: AsyncSession = Depends(get_db)) -> list[dict
 
 @app.post("/api/recordings", response_model=RecordingOut)
 async def create_recording(payload: RecordingCreate, db: AsyncSession = Depends(get_db)) -> RecordingOut:
+    ensure_capture_allowed()
     recording = Recording(
         user_id=current_user_id(),
         language=payload.language or None,
@@ -256,7 +283,7 @@ async def list_recordings(
     db: AsyncSession = Depends(get_db),
 ) -> list[RecordingOut]:
     if deleted:
-        user = await db.get(User, current_user_id())
+        user = await db.get(User, actor_user_id())
         if not user or not user.is_admin:
             raise HTTPException(status_code=403, detail="Admin access required")
     query = select(Recording).where(Recording.user_id == current_user_id())
@@ -281,6 +308,8 @@ async def list_recordings(
 
 @app.get("/api/recoverable", response_model=RecordingOut | None)
 async def recoverable_recording(db: AsyncSession = Depends(get_db)) -> RecordingOut | None:
+    if is_acting_as():
+        return None
     recording = (
         await db.execute(
             select(Recording)
@@ -339,6 +368,8 @@ async def save_recording_draft(
     db: AsyncSession = Depends(get_db),
 ) -> RecordingOut:
     recording = await find_recording(recording_id, db)
+    if payload.active_capture:
+        ensure_capture_allowed()
     recording.draft_text = payload.text.strip() or None
     if payload.active_capture:
         recording.status = "recording"
@@ -517,7 +548,7 @@ async def update_recording_speaker_identity(
         ).scalar_one_or_none()
 
     now = utcnow()
-    user_id = current_user_id()
+    user_id = actor_user_id()
     for item in turns:
         item_detection = await db.get(SpeakerDetection, item.detection_id)
         if not item_detection:
@@ -627,7 +658,18 @@ async def update_recording_speaker_turn(
                 UsageEvent(
                     recording_id=recording.id,
                     event_type="edit",
-                    event_data={"source": "speaker_turn", "turn_id": str(turn.id)},
+                    event_data={
+                        "source": "speaker_turn",
+                        "turn_id": str(turn.id),
+                        **(
+                            {
+                                "admin_actor_user_id": str(actor_user_id()),
+                                "effective_user_id": str(current_user_id()),
+                            }
+                            if is_acting_as()
+                            else {}
+                        ),
+                    },
                 )
             )
             recording.transcript_edited = rebuilt
@@ -669,6 +711,17 @@ async def update_recording(recording_id: uuid.UUID, payload: RecordingUpdate, db
             recording.last_activity_at = utcnow()
             if not recording.title or recording.title == "New recording":
                 recording.title = make_title(new_text)
+    audit = admin_audit_event(
+        recording.id,
+        "recording_update",
+        {
+            "title_changed": payload.title is not None,
+            "transcript_changed": payload.transcript_edited is not None,
+            "favourite_changed": payload.is_favourite is not None,
+        },
+    )
+    if audit:
+        db.add(audit)
     await db.commit()
     await db.refresh(recording)
     return recording_out(recording)
@@ -676,6 +729,11 @@ async def update_recording(recording_id: uuid.UUID, payload: RecordingUpdate, db
 
 @app.delete("/api/recordings/{recording_id}", status_code=204)
 async def delete_recording(recording_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> Response:
+    if is_acting_as():
+        raise HTTPException(
+            status_code=403,
+            detail="Return to your own account before moving recordings to the bin.",
+        )
     recording = await find_recording(recording_id, db)
     recording.deleted_at = utcnow()
     await db.commit()
@@ -707,6 +765,7 @@ async def transcribe_chunk(
     task: str = Form(default="transcriptions"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    ensure_capture_allowed()
     recording = await find_recording(recording_id, db)
     data = await file.read()
     relative = f"chunks/{chunk_number:05d}.wav"
@@ -751,6 +810,7 @@ async def upload_audio(
     duration_seconds: float | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    ensure_capture_allowed()
     recording = await find_recording(recording_id, db)
     data = await file.read()
     segment = await store_audio_segment(
@@ -780,6 +840,7 @@ async def transcribe_recording(
     duration_seconds: float | None = Form(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> RecordingOut:
+    ensure_capture_allowed()
     recording = await find_recording(recording_id, db)
     data = await file.read()
     await store_audio_segment(
@@ -823,6 +884,7 @@ async def transcribe_recording(
 
 @app.post("/api/recordings/{recording_id}/finish", response_model=RecordingOut)
 async def finish_recording(recording_id: uuid.UUID, payload: RecordingFinish, db: AsyncSession = Depends(get_db)) -> RecordingOut:
+    ensure_capture_allowed()
     recording = await find_recording(recording_id, db)
     new_text = payload.transcript.strip()
 
