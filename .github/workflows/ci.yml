@@ -32,11 +32,13 @@ jobs:
       - run: cp .env.example .env && docker compose config -q
       - name: Validate AI-stack integration overlay
         run: |
-          mkdir -p /tmp/ai/local-transcriber/runtime /tmp/ai/local-transcriber/recordings /tmp/models/talk-to-type/pyannote
-          cp .env.example /tmp/ai/local-transcriber/app.env
+          mkdir -p "$PWD/runtime" "$PWD/recordings" /tmp/models/talk-to-type/pyannote
+          rm -rf /tmp/ai/local-transcriber
+          mkdir -p /tmp/ai
+          ln -s "$PWD" /tmp/ai/local-transcriber
           AI_HOME=/tmp/ai \
           MODELS_DIR=/tmp/models \
-          LOCAL_TRANSCRIBER_DIR="$PWD" \
+          LOCAL_TRANSCRIBER_DIR=/tmp/ai/local-transcriber \
           T4_UUID=GPU-test \
           LLAMA_SWAP_KEY=sk-local \
           docker compose \
