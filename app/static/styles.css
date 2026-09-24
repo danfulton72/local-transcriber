@@ -2158,3 +2158,29 @@ body.reading-focus .playback-bar{
 @media(max-width:520px){
   .speaker-label-actions{grid-template-columns:1fr}
 }
+
+
+.voice-sample-actions{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:7px;
+  flex-wrap:wrap;
+}
+.voice-sample-preview{
+  width:auto;
+  min-width:94px;
+  min-height:38px;
+  padding:.45rem .65rem;
+  white-space:nowrap;
+}
+@media(max-width:600px){
+  .voice-sample-actions{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    width:100%;
+  }
+  .voice-sample-actions>button{
+    width:100%;
+  }
+}
