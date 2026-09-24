@@ -46,3 +46,20 @@ def test_computer_capture_requests_system_audio_hints():
     assert "selfBrowserSurface: 'exclude'" in source
     assert "Entire Screen + Share system audio" in source
     assert "Share tab audio" in source
+
+
+
+def test_saved_speaker_transcript_and_full_width_workspace_contract():
+    from pathlib import Path
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    styles = Path("app/static/styles.css").read_text(encoding="utf-8")
+
+    assert "/speaker-turns" in source
+    assert "transcript-speaker-turn" in source
+    assert "recognised speakers shown" in source
+    assert "speakerTurns = []" in source
+    assert "width:calc(100% - 250px)" in styles
+    assert "max-width:none" in styles
+    assert ".transcript-speaker-turn" in styles
+    assert "grid-template-columns:repeat(2,minmax(0,1fr))" in styles
