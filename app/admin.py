@@ -40,15 +40,6 @@ from .services.retention import cleanup_expired_audio, get_retention_policy, set
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
 
-def require_parent_pin(x_parent_pin: str | None) -> None:
-    expected = settings.parent_pin.strip()
-    if not expected:
-        return
-    supplied = (x_parent_pin or "").strip()
-    if not supplied or not secrets.compare_digest(supplied, expected):
-        raise HTTPException(status_code=401, detail="Parent PIN required")
-
-
 class UserCreate(BaseModel):
     username: str = Field(min_length=2, max_length=80)
     display_name: str = Field(min_length=1, max_length=120)
@@ -252,9 +243,16 @@ async def update_user(
     if payload.is_admin is False and user.id == current_user_id():
         raise HTTPException(status_code=400, detail="You cannot remove your own admin access.")
 
-    if payload.is_admin is False and user.is_admin:
+    removing_last_admin = (
+        (payload.is_admin is False and user.is_admin)
+        or (payload.is_active is False and user.is_admin and user.is_active)
+    )
+    if removing_last_admin:
         admin_count = await db.scalar(
-            select(func.count()).select_from(User).where(User.is_admin.is_(True))
+            select(func.count()).select_from(User).where(
+                User.is_admin.is_(True),
+                User.is_active.is_(True),
+            )
         )
         if int(admin_count or 0) <= 1:
             raise HTTPException(status_code=400, detail="At least one active administrator is required.")
