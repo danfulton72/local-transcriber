@@ -45,6 +45,10 @@ class RecordingOut(BaseModel):
     draft_text: str | None = None
 
 
+class SpeakerTurnUpdate(BaseModel):
+    text: str = Field(max_length=20000)
+
+
 class SpeechRequest(BaseModel):
     input: str
     recording_id: uuid.UUID | None = None
