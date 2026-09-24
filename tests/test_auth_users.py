@@ -25,6 +25,7 @@ def test_login_required_and_users_are_isolated():
 
         default_user = login(first, "local", "change-me-now")
         assert default_user["username"] == "local"
+        assert default_user["is_admin"] is True
 
         created_user = first.post(
             "/api/admin/users",
@@ -61,8 +62,10 @@ def test_login_required_and_users_are_isolated():
         )
 
         progress = first.get("/api/progress")
-        assert progress.status_code == 200
-        assert progress.json()["sessions"] >= 1
+        assert progress.status_code == 403
+
+        admin_users = first.get("/api/admin/users")
+        assert admin_users.status_code == 403
 
         first.post("/api/auth/logout")
         login(first, "local", "change-me-now")
@@ -107,3 +110,32 @@ def test_parent_can_reset_password_and_old_session_is_invalidated():
 
             login(child, username, "replacement-password")
             assert child.get("/api/recordings").status_code == 200
+
+
+
+def test_admin_can_assign_admin_permission():
+    suffix = uuid.uuid4().hex[:8]
+    username = f"admin-{suffix}"
+    password = "admin-password-123"
+
+    with TestClient(app) as client:
+        owner = login(client, "local", "change-me-now")
+        assert owner["is_admin"] is True
+
+        created = client.post(
+            "/api/admin/users",
+            json={
+                "username": username,
+                "display_name": "Second admin",
+                "password": password,
+                "is_admin": True,
+            },
+        )
+        assert created.status_code == 201
+        assert created.json()["is_admin"] is True
+
+        client.post("/api/auth/logout")
+        second = login(client, username, password)
+        assert second["is_admin"] is True
+        assert client.get("/api/progress").status_code == 200
+        assert client.get("/api/admin/status").status_code == 200
