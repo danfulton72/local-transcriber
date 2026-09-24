@@ -2149,7 +2149,8 @@
         const option = document.createElement('option');
         option.value = recording.id;
         const duration = recording.duration_seconds ? ' · ' + formatTime(recording.duration_seconds) : '';
-        option.textContent = (recording.title || 'Recording') + ' · ' + friendlyDate(recording.created_at) + duration;
+        const owner = recording.owner_display_name || recording.owner_username || 'Unknown user';
+        option.textContent = owner + ' · ' + (recording.title || 'Recording') + ' · ' + friendlyDate(recording.created_at) + duration;
         els.speakerRecordingSelect.appendChild(option);
       }
       if ([...els.speakerRecordingSelect.options].some((option) => option.value === selected)) {
@@ -2284,7 +2285,8 @@
         const title = document.createElement('strong'); title.textContent = sample.source_recording_title || 'Saved voice sample';
         const detail = document.createElement('span'); detail.className = 'muted';
         const speech = sample.speech_seconds == null ? 'legacy sample' : (sample.speech_seconds.toFixed(1) + 's speech');
-        detail.textContent = speech + ' · ' + friendlyDate(sample.created_at);
+        const owner = sample.source_recording_owner ? (' · owner ' + sample.source_recording_owner) : '';
+        detail.textContent = speech + owner + ' · ' + friendlyDate(sample.created_at);
         info.append(title, detail);
 
         const sampleActions = document.createElement('div');
@@ -2301,9 +2303,7 @@
         preview.disabled = !sample.can_preview;
         preview.title = sample.can_preview
           ? 'Play this remembered voice sample'
-          : (sample.source_recording_title === 'Shared voice sample'
-              ? 'This sample came from another user; its source audio stays private.'
-              : 'The source audio for this sample is not available.');
+          : 'The source audio for this sample is not available.';
         preview.setAttribute('aria-pressed', 'false');
         preview.addEventListener('click', () => toggleRememberedSamplePreview(profile, sample, preview));
 
@@ -2444,6 +2444,7 @@
       title.textContent = sample.original_display_name + ' → ' + sample.corrected_display_name;
       const detail = document.createElement('span'); detail.className = 'muted';
       detail.textContent =
+        (sample.recording_owner ? sample.recording_owner + ' · ' : '') +
         (sample.recording_title || 'Recording') + ' · ' +
         formatTime(sample.start_seconds) + ' · ' +
         friendlyDate(sample.created_at);
@@ -2651,7 +2652,10 @@
 
   function renderSpeakerAnalysis(analysis) {
     stopSpeakerPreview();
+    const owner = analysis.recording_owner || analysis.recording_owner_username || 'Unknown user';
+    const recordingTitle = analysis.recording_title || 'Recording';
     els.speakerAnalysisMessage.textContent =
+      owner + ' · ' + recordingTitle + ' · ' +
       analysis.speaker_count + ' speaker' + (analysis.speaker_count === 1 ? '' : 's') +
       ' found · processed in ' + analysis.processing_seconds + 's';
     els.speakerAnalysisResult.replaceChildren();
