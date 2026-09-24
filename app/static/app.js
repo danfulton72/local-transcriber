@@ -86,7 +86,7 @@
     voice: $('voice'), speechSpeed: $('speechSpeed'), prompt: $('prompt'), fileInput: $('fileInput'),
     installAppButton: $('installAppButton'), installHint: $('installHint'),
     historyList: $('historyList'), historySearch: $('historySearch'), historyFavourites: $('historyFavourites'), refreshHistoryButton: $('refreshHistoryButton'),
-    progressDays: $('progressDays'), parentPin: $('parentPin'), loadProgressButton: $('loadProgressButton'), progressContent: $('progressContent'),
+    progressDays: $('progressDays'), progressContent: $('progressContent'), progressRecentList: $('progressRecentList'),
     metricGrid: $('metricGrid'), correctionsList: $('correctionsList'), dailyChart: $('dailyChart'), longestPiece: $('longestPiece'),
     retentionDays: $('retentionDays'), deleteAudioImmediately: $('deleteAudioImmediately'),
     saveRetentionButton: $('saveRetentionButton'), applyRetentionButton: $('applyRetentionButton'), retentionMessage: $('retentionMessage'),
@@ -98,7 +98,7 @@
     speakerProfilesList: $('speakerProfilesList'), refreshSpeakerProfilesButton: $('refreshSpeakerProfilesButton'),
     relabelSamplesList: $('relabelSamplesList'), refreshRelabelSamplesButton: $('refreshRelabelSamplesButton'),
     userList: $('userList'), refreshUsersButton: $('refreshUsersButton'), createUserForm: $('createUserForm'),
-    newUsername: $('newUsername'), newUserDisplayName: $('newUserDisplayName'), newUserPassword: $('newUserPassword'),
+    newUsername: $('newUsername'), newUserDisplayName: $('newUserDisplayName'), newUserPassword: $('newUserPassword'), newUserIsAdmin: $('newUserIsAdmin'),
     createUserButton: $('createUserButton'), userAdminMessage: $('userAdminMessage'),
   };
 
@@ -118,6 +118,20 @@
     localStorage.removeItem(userStorageKey(name));
   }
 
+  function isAdmin() {
+    return Boolean(state.authUser?.is_admin);
+  }
+
+  function applyRoleVisibility() {
+    const allowed = isAdmin();
+    document.body.classList.toggle('admin-user', allowed);
+    document.querySelectorAll('.admin-only').forEach((node) => {
+      node.hidden = !allowed;
+    });
+    const activeAdminPage = document.querySelector('.page.active.admin-page');
+    if (!allowed && activeAdminPage) switchPage('talk');
+  }
+
   function showLoggedOut(message = '') {
     closeDrawer();
     state.authUser = null;
@@ -129,6 +143,7 @@
     els.loginMessage.textContent = message;
     els.loginMessage.classList.toggle('hidden', !message);
     els.loginPassword.value = '';
+    applyRoleVisibility();
     setTimeout(() => els.loginUsername.focus(), 0);
   }
 
@@ -138,6 +153,7 @@
     els.currentUserLabel.textContent = user.display_name || user.username;
     document.body.classList.remove('logged-out');
     els.loginMessage.classList.add('hidden');
+    applyRoleVisibility();
   }
 
   async function loginUser(event) {
@@ -168,8 +184,6 @@
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
     } finally {
-      sessionStorage.removeItem('parentPin');
-      els.parentPin.value = '';
       setTranscript('');
       showLoggedOut();
     }
@@ -1680,14 +1694,17 @@
   }
 
   function switchPage(name) {
-    if (name !== 'progress') stopSpeakerPreview();
+    if ((name === 'progress' || name === 'tools') && !isAdmin()) {
+      showToast('Admin access required');
+      name = 'talk';
+    }
+    if (name !== 'tools') stopSpeakerPreview();
     closeDrawer();
     document.querySelectorAll('.page').forEach((page) => page.classList.toggle('active', page.id === 'page-' + name));
     document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.page === name));
     if (name === 'history') loadHistory();
-    if (name === 'progress') {
-      requestAnimationFrame(() => document.getElementById('pinPanel')?.scrollIntoView({ block: 'start' }));
-    }
+    if (name === 'progress') loadProgress();
+    if (name === 'tools') loadTools();
   }
 
   function friendlyDate(value) {
@@ -1753,22 +1770,50 @@
     }
   }
 
-  function parentHeaders() {
-    const pin = els.parentPin.value.trim();
-    sessionStorage.setItem('parentPin', pin);
-    return pin ? { 'X-Parent-Pin': pin } : {};
-  }
-
   async function loadProgress() {
-    const headers = parentHeaders();
+    if (!isAdmin()) return;
     try {
-      const data = await api('/api/progress?days=' + els.progressDays.value, { headers, cache: 'no-store' });
+      const [data, recent] = await Promise.all([
+        api('/api/progress?days=' + els.progressDays.value, { cache: 'no-store' }),
+        api('/api/recordings?limit=20', { cache: 'no-store' }),
+      ]);
       renderProgress(data);
+      renderProgressRecent(recent);
       els.progressContent.classList.remove('hidden');
-      await loadParentTools();
     } catch (error) {
       els.progressContent.classList.add('hidden');
-      alert(error.message);
+      showToast(error.message);
+    }
+  }
+
+  function renderProgressRecent(records) {
+    if (!els.progressRecentList) return;
+    els.progressRecentList.replaceChildren();
+    if (!records.length) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = 'No saved conversations yet.';
+      els.progressRecentList.appendChild(empty);
+      return;
+    }
+    for (const record of records) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'conversation-list-row';
+      const main = document.createElement('span');
+      main.className = 'conversation-list-main';
+      const title = document.createElement('strong');
+      title.textContent = record.title || 'New recording';
+      const snippet = document.createElement('span');
+      snippet.className = 'muted';
+      snippet.textContent = (record.transcript || '').slice(0, 140) + ((record.transcript || '').length > 140 ? '…' : '');
+      main.append(title, snippet);
+      const meta = document.createElement('span');
+      meta.className = 'conversation-list-meta';
+      meta.textContent = friendlyDate(record.created_at) + ' · ' + record.word_count + ' words';
+      row.append(main, meta);
+      row.addEventListener('click', () => openHistoryRecording(record));
+      els.progressRecentList.appendChild(row);
     }
   }
 
@@ -1820,13 +1865,14 @@
     return (value / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
   }
 
-  async function loadParentTools() {
+  async function loadTools() {
+    if (!isAdmin()) return;
     await Promise.allSettled([loadAdminStatus(), loadRecycleBin(), loadSpeakerTools(), loadUsers()]);
   }
 
   async function loadUsers() {
     try {
-      const users = await api('/api/admin/users', { headers: parentHeaders(), cache: 'no-store' });
+      const users = await api('/api/admin/users', { cache: 'no-store' });
       renderUsers(users);
     } catch (error) {
       els.userList.replaceChildren();
@@ -1844,7 +1890,7 @@
       const name = document.createElement('strong');
       name.textContent = user.display_name + (user.is_current ? ' · current' : '');
       const meta = document.createElement('span'); meta.className = 'user-row-meta';
-      meta.textContent = '@' + user.username + ' · ' + user.recordings + ' recording' + (user.recordings === 1 ? '' : 's') + (user.is_active ? '' : ' · inactive');
+      meta.textContent = '@' + user.username + ' · ' + user.recordings + ' recording' + (user.recordings === 1 ? '' : 's') + (user.is_admin ? ' · admin' : '') + (user.is_active ? '' : ' · inactive');
       main.append(name, meta);
 
       const display = document.createElement('input');
@@ -1857,15 +1903,26 @@
       password.autocomplete = 'new-password';
       password.setAttribute('aria-label', 'New password for ' + user.username);
 
+      const adminLabel = document.createElement('label');
+      adminLabel.className = 'check user-admin-toggle';
+      const adminToggle = document.createElement('input');
+      adminToggle.type = 'checkbox';
+      adminToggle.checked = Boolean(user.is_admin);
+      adminToggle.disabled = Boolean(user.is_current && user.is_admin);
+      adminLabel.append(adminToggle, document.createTextNode(' Admin'));
+
       const actions = document.createElement('div'); actions.className = 'button-row';
       const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Save';
       save.addEventListener('click', async () => {
-        const body = { display_name: display.value.trim() };
+        const body = {
+          display_name: display.value.trim(),
+          is_admin: adminToggle.checked,
+        };
         if (password.value) body.password = password.value;
         try {
           await api('/api/admin/users/' + user.id, {
             method: 'PATCH',
-            headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
           password.value = '';
@@ -1889,7 +1946,7 @@
         try {
           await api('/api/admin/users/' + user.id, {
             method: 'PATCH',
-            headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ is_active: !user.is_active }),
           });
           showToast(user.is_active ? 'User deactivated' : 'User reactivated');
@@ -1900,7 +1957,7 @@
       });
 
       actions.append(save, toggle);
-      row.append(main, display, password, actions);
+      row.append(main, display, password, adminLabel, actions);
       els.userList.appendChild(row);
     }
   }
@@ -1912,11 +1969,12 @@
     try {
       await api('/api/admin/users', {
         method: 'POST',
-        headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: els.newUsername.value.trim(),
           display_name: els.newUserDisplayName.value.trim(),
           password: els.newUserPassword.value,
+          is_admin: Boolean(els.newUserIsAdmin?.checked),
         }),
       });
       els.createUserForm.reset();
@@ -1937,7 +1995,7 @@
   }
 
   async function loadSpeakerStatusAndRecordings() {
-    const headers = parentHeaders();
+    const headers = {};
     try {
       const [status, recordings] = await Promise.all([
         api('/api/admin/speakers/status', { headers, cache: 'no-store' }),
@@ -1993,7 +2051,7 @@
 
   async function loadSpeakerProfiles() {
     try {
-      const profiles = await api('/api/admin/speakers/profiles', { headers: parentHeaders(), cache: 'no-store' });
+      const profiles = await api('/api/admin/speakers/profiles', { cache: 'no-store' });
       state.speakerProfiles = profiles;
       renderSpeakerProfiles(profiles);
     } catch (error) {
@@ -2022,7 +2080,7 @@
       const response = await fetch(
         '/api/admin/speakers/profiles/' + profile.id +
         '/samples/' + sample.id + '/sample-audio',
-        { headers: parentHeaders(), cache: 'no-store' },
+        { cache: 'no-store' },
       );
       if (!response.ok) {
         let detail = 'Could not load this remembered voice sample.';
@@ -2084,7 +2142,7 @@
         if (!name) return;
         await api('/api/admin/speakers/profiles/' + profile.id, {
           method: 'PATCH',
-          headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name }),
         });
         showToast('Speaker name saved');
@@ -2095,7 +2153,7 @@
       const forget = document.createElement('button'); forget.type = 'button'; forget.className = 'danger'; forget.textContent = 'Forget voiceprint';
       forget.addEventListener('click', async () => {
         if (!confirm('Forget the saved voiceprint for ' + profile.name + '? Past conversation labels will stay.')) return;
-        await api('/api/admin/speakers/profiles/' + profile.id, { method: 'DELETE', headers: parentHeaders() });
+        await api('/api/admin/speakers/profiles/' + profile.id, { method: 'DELETE' });
         showToast('Voiceprint forgotten');
         await loadSpeakerProfiles();
         if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
@@ -2144,8 +2202,7 @@
           try {
             stopSpeakerPreview();
             await api('/api/admin/speakers/profiles/' + profile.id + '/samples/' + sample.id, {
-              method: 'DELETE', headers: parentHeaders(),
-            });
+              method: 'DELETE', });
             showToast('Voice sample removed');
             await loadSpeakerProfiles();
             if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
@@ -2180,7 +2237,7 @@
         '/api/admin/speakers/analyses/' + analysis.id + '/turns/' + turn.id + '/identity',
         {
           method: 'PATCH',
-          headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(identityPayload(value, scope)),
         },
       );
@@ -2209,7 +2266,7 @@
     try {
       const response = await fetch(
         '/api/admin/speakers/relabels/' + sample.id + '/sample-audio',
-        { headers: parentHeaders(), cache: 'no-store' },
+        { cache: 'no-store' },
       );
       if (!response.ok) {
         let detail = 'Could not load this relabelled voice sample.';
@@ -2248,7 +2305,7 @@
   async function loadRelabelSamples() {
     if (!els.relabelSamplesList) return;
     try {
-      const samples = await api('/api/admin/speakers/relabels', { headers: parentHeaders(), cache: 'no-store' });
+      const samples = await api('/api/admin/speakers/relabels', { cache: 'no-store' });
       renderRelabelSamples(samples);
     } catch (error) {
       els.relabelSamplesList.replaceChildren();
@@ -2303,7 +2360,7 @@
       approve.addEventListener('click', async () => {
         await api('/api/admin/speakers/relabels/' + sample.id, {
           method: 'PATCH',
-          headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'approved' }),
         });
         await loadRelabelSamples();
@@ -2315,7 +2372,7 @@
       exclude.addEventListener('click', async () => {
         await api('/api/admin/speakers/relabels/' + sample.id, {
           method: 'PATCH',
-          headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'excluded' }),
         });
         await loadRelabelSamples();
@@ -2327,8 +2384,7 @@
         if (!confirm('Undo this speaker correction and restore the original detected identity?')) return;
         await api('/api/admin/speakers/relabels/' + sample.id + '/correction', {
           method: 'DELETE',
-          headers: parentHeaders(),
-        });
+          });
         await loadRelabelSamples();
         if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
       });
@@ -2352,7 +2408,7 @@
     try {
       const job = await api('/api/admin/speakers/analyze/' + recordingId, {
         method: 'POST',
-        headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ num_speakers: count }),
       });
       state.currentSpeakerAnalysisId = job.id;
@@ -2370,7 +2426,7 @@
     state.speakerPolling = true;
     try {
       for (let attempt = 0; attempt < 900; attempt += 1) {
-        const analysis = await api('/api/admin/speakers/analyses/' + analysisId, { headers: parentHeaders(), cache: 'no-store' });
+        const analysis = await api('/api/admin/speakers/analyses/' + analysisId, { cache: 'no-store' });
         if (analysis.status === 'completed') {
           state.currentSpeakerAnalysisId = analysis.id;
           userLocalSet('speakerAnalysisId', analysis.id);
@@ -2400,7 +2456,7 @@
   async function refreshCurrentSpeakerAnalysis() {
     if (!state.currentSpeakerAnalysisId) return;
     try {
-      const analysis = await api('/api/admin/speakers/analyses/' + state.currentSpeakerAnalysisId, { headers: parentHeaders(), cache: 'no-store' });
+      const analysis = await api('/api/admin/speakers/analyses/' + state.currentSpeakerAnalysisId, { cache: 'no-store' });
       if (analysis.status === 'completed') renderSpeakerAnalysis(analysis);
     } catch {}
   }
@@ -2440,7 +2496,7 @@
       const response = await fetch(
         '/api/admin/speakers/analyses/' + analysis.id +
         '/detections/' + encodeURIComponent(detection.speaker_key) + '/sample-audio',
-        { headers: parentHeaders(), cache: 'no-store' },
+        { cache: 'no-store' },
       );
       if (!response.ok) {
         let detail = 'Could not load this voice sample.';
@@ -2524,7 +2580,7 @@
         if (!name) return;
         await api('/api/admin/speakers/analyses/' + analysis.id + '/detections/' + encodeURIComponent(detection.speaker_key), {
           method: 'PATCH',
-          headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ display_name: name }),
         });
         showToast('Speaker tag saved');
@@ -2544,7 +2600,7 @@
         try {
           const saved = await api('/api/admin/speakers/analyses/' + analysis.id + '/detections/' + encodeURIComponent(detection.speaker_key) + '/remember', {
             method: 'POST',
-            headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name }),
           });
           showToast(saved.already_saved
@@ -2628,7 +2684,7 @@
   }
 
   async function loadAdminStatus() {
-    const status = await api('/api/admin/status', { headers: parentHeaders(), cache: 'no-store' });
+    const status = await api('/api/admin/status', { cache: 'no-store' });
     els.retentionDays.value = String(status.retention?.audio_retention_days || 0);
     els.deleteAudioImmediately.checked = Boolean(status.retention?.delete_audio_after_transcription);
     els.retentionDays.disabled = els.deleteAudioImmediately.checked;
@@ -2657,7 +2713,7 @@
     try {
       const policy = await api('/api/admin/retention', {
         method: 'PATCH',
-        headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ audio_retention_days: days, delete_audio_after_transcription: immediate }),
       });
       els.retentionDays.value = String(policy.audio_retention_days || 0);
@@ -2675,7 +2731,7 @@
     if (!confirm('Apply the current voice-audio retention rule now? Transcripts and history will stay.')) return;
     els.applyRetentionButton.disabled = true;
     try {
-      const result = await api('/api/admin/retention/apply', { method: 'POST', headers: parentHeaders() });
+      const result = await api('/api/admin/retention/apply', { method: 'POST' });
       els.retentionMessage.textContent = result.removed_recordings
         ? 'Removed stored voice audio from ' + result.removed_recordings + ' recording(s).'
         : 'Nothing needed cleaning up.';
@@ -2696,7 +2752,7 @@
   async function loadRecycleBin() {
     els.recycleList.innerHTML = '<p class="muted">Loading…</p>';
     try {
-      const records = await api('/api/admin/recycle-bin', { headers: parentHeaders(), cache: 'no-store' });
+      const records = await api('/api/admin/recycle-bin', { cache: 'no-store' });
       renderRecycleBin(records);
     } catch (error) {
       els.recycleList.innerHTML = '<p class="error">' + escapeHtml(error.message) + '</p>';
@@ -2722,7 +2778,7 @@
       const restore = document.createElement('button'); restore.textContent = '↩ Restore';
       restore.addEventListener('click', async () => {
         try {
-          await api('/api/admin/recycle-bin/' + record.id + '/restore', { method: 'POST', headers: parentHeaders() });
+          await api('/api/admin/recycle-bin/' + record.id + '/restore', { method: 'POST' });
           await Promise.all([loadRecycleBin(), loadAdminStatus()]);
         } catch (error) { alert(error.message); }
       });
@@ -2730,7 +2786,7 @@
       remove.addEventListener('click', async () => {
         if (!confirm('Permanently delete this recording, transcript history and any saved voice audio? This cannot be undone.')) return;
         try {
-          await api('/api/admin/recycle-bin/' + record.id, { method: 'DELETE', headers: parentHeaders() });
+          await api('/api/admin/recycle-bin/' + record.id, { method: 'DELETE' });
           await Promise.all([loadRecycleBin(), loadAdminStatus()]);
         } catch (error) { alert(error.message); }
       });
@@ -2744,7 +2800,7 @@
     const originalText = els.downloadBackupButton.textContent;
     els.downloadBackupButton.textContent = 'Preparing backup…';
     try {
-      const response = await fetch('/api/admin/backup', { headers: parentHeaders() });
+      const response = await fetch('/api/admin/backup', { headers: {} });
       if (!response.ok) {
         const type = response.headers.get('content-type') || '';
         const payload = type.includes('application/json') ? await response.json() : await response.text();
@@ -2840,8 +2896,7 @@
   els.historySearch.addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(loadHistory, 250); });
   els.loginForm.addEventListener('submit', loginUser);
   els.logoutButton.addEventListener('click', logoutUser);
-  els.loadProgressButton.addEventListener('click', loadProgress);
-  els.progressDays.addEventListener('change', () => { if (!els.progressContent.classList.contains('hidden')) loadProgress(); });
+  els.progressDays.addEventListener('change', () => { if (isAdmin()) loadProgress(); });
   els.runSpeakerAnalysisButton.addEventListener('click', runSpeakerAnalysis);
   els.refreshSpeakerProfilesButton.addEventListener('click', loadSpeakerProfiles);
   els.refreshRelabelSamplesButton?.addEventListener('click', loadRelabelSamples);
@@ -2862,7 +2917,6 @@
     updateCaptureSourceUI();
     if (!state.currentRecording) newRecordingView();
   });
-  els.parentPin.value = sessionStorage.getItem('parentPin') || '';
   const savedCaptureSource = localStorage.getItem('captureSource');
   if (savedCaptureSource && [...els.captureSource.options].some((option) => option.value === savedCaptureSource)) {
     els.captureSource.value = savedCaptureSource;
