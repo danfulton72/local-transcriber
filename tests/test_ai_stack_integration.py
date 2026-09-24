@@ -76,3 +76,15 @@ def test_installer_defaults_to_repo_location_inside_ai():
     assert 'repo / ".env"' in source
     assert 'repo / "recordings"' in source
     assert 'repo / "runtime"' in source
+
+
+def test_find_compose_file_accepts_standard_names(tmp_path):
+    installer = load_installer()
+
+    for name in ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"):
+        for existing in tmp_path.iterdir():
+            if existing.is_file():
+                existing.unlink()
+        candidate = tmp_path / name
+        candidate.write_text("services: {}\n", encoding="utf-8")
+        assert installer.find_compose_file(tmp_path) == candidate
