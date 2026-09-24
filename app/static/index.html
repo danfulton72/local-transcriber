@@ -122,6 +122,15 @@
         <button id="useWordsButton" class="quick-action use-action" type="button" disabled><span aria-hidden="true">↗</span><span>Use my words</span></button>
       </div>
 
+      <div id="playbackBar" class="playback-bar hidden" aria-label="Saved voice playback">
+        <button id="playbackBackButton" class="playback-skip" type="button" aria-label="Back 5 seconds">↶ 5s</button>
+        <button id="playbackToggleButton" class="playback-toggle" type="button" aria-label="Play saved voice">▶</button>
+        <button id="playbackForwardButton" class="playback-skip" type="button" aria-label="Forward 5 seconds">5s ↷</button>
+        <span id="playbackTime" class="playback-time">00:00 / 00:00</span>
+        <label class="playback-rate-label"><span class="sr-only">Playback speed</span><select id="playbackRate" aria-label="Playback speed"><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option></select></label>
+        <button id="playbackFollowButton" class="playback-follow hidden" type="button">↓ Follow audio</button>
+      </div>
+
       <div class="capture-zone">
         <div class="capture-status">
           <div id="meter" class="meter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
