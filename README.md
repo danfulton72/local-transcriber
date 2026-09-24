@@ -87,15 +87,15 @@ Whisper, Piper and the Wyoming OpenAI Gateway remain separate and unchanged. Spe
 
 When speaker analysis starts, Talk to Type asks the existing `llama-swap-t4` instance to load a hidden `speaker_auto` reservation. The T4 matrix evicts the current Qwen/embedding processes first, pyannote runs, and the app restores the previously-running T4 models afterwards unless another request has already claimed the GPU.
 
-## Computer / shared audio capture
+## Computer / system audio capture
 
 Under **Grown-up settings → Audio source**, choose:
 
 - **Microphone** — the normal Talk to Type microphone path.
-- **Computer / shared tab audio** — pressing **Start capture** opens the browser's share picker. Choose a tab/window/screen and enable **Share audio** when offered.
-- **Computer + microphone** — captures the shared audio and the device microphone, mixes them locally with the Web Audio API, and sends the resulting mono stream through the existing near-live Whisper pipeline.
+- **Computer audio** — pressing **Start capture** opens the browser's share picker. For Teams or another desktop application, choose **Entire Screen** and enable **Share system audio**. For browser media, choose the relevant tab and enable **Share tab audio**.
+- **Computer audio + microphone** — captures the selected computer/system audio and the device microphone, mixes them locally with the Web Audio API, and sends the resulting mono stream through the existing near-live Whisper pipeline.
 
-The app never silently intercepts device audio. Browser screen/audio capture requires a fresh user action and permission each time. Browsers require a video/display track for this API, but Talk to Type does not read, encode or store screen pixels; it uses that track only to detect when sharing ends. Browser/OS support varies, and a requested screen share may contain no audio track; Talk to Type detects that case before creating a recording and asks you to retry with **Share audio** enabled or use the microphone.
+The app never silently intercepts device audio. Browser screen/audio capture requires a fresh user action and permission each time. Browsers require a video/display track for this API, but Talk to Type does not read, encode or store screen pixels; it uses that track only to detect when sharing ends. Browser/OS support varies, and a requested screen share may contain no audio track; Talk to Type detects that case before creating a recording and gives mode-specific guidance. On Windows Chrome/Edge, **Entire Screen + Share system audio** is the recommended mode for Teams desktop and other application audio.
 
 Stopping sharing from the browser's sharing controls automatically finishes and saves the current Talk to Type recording. The captured WAV is stored and handled exactly like microphone recordings, so parent-run speaker diarization can also be used afterwards.
 
