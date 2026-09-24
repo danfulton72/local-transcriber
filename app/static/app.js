@@ -408,7 +408,7 @@
 
   function captureModeLabel(mode = els.captureSource?.value || 'microphone') {
     if (mode === 'computer') return 'Computer audio';
-    if (mode === 'mixed') return 'Computer + microphone';
+    if (mode === 'mixed') return 'Computer audio + microphone';
     return 'Microphone';
   }
 
@@ -428,11 +428,11 @@
     if (els.captureSourceHint) {
       const description = mode === 'computer'
         ? (displaySupported
-          ? 'Choose a browser tab, window or screen and enable Share audio when the browser offers it.'
+          ? 'Teams/desktop app: choose Entire Screen + Share system audio. Browser media: choose the tab + Share tab audio.'
           : 'This browser does not offer computer-audio sharing. Use the microphone or a supported desktop browser.')
         : (mode === 'mixed'
           ? (displaySupported
-            ? 'Captures shared computer audio and this device\'s microphone into one recording.'
+            ? 'Teams/desktop app: choose Entire Screen + Share system audio. Your microphone is mixed into the same recording.'
             : 'This browser does not offer computer-audio sharing. Use the microphone instead.')
           : 'Uses this device\'s microphone.');
       els.captureSourceHint.replaceChildren();
@@ -470,6 +470,8 @@
         video: true,
         audio: true,
         systemAudio: 'include',
+        windowAudio: 'system',
+        monitorTypeSurfaces: 'include',
         surfaceSwitching: 'include',
         selfBrowserSurface: 'exclude',
       });
@@ -481,7 +483,11 @@
     const sharedAudio = display.getAudioTracks();
     if (!sharedAudio.length) {
       display.getTracks().forEach((track) => track.stop());
-      throw new Error('No shared audio was provided. Choose a tab/screen with Share audio enabled, or use the microphone.');
+      const surface = display.getVideoTracks()[0]?.getSettings?.().displaySurface || '';
+      const guidance = surface === 'monitor'
+        ? 'Choose Entire Screen and turn on Share system audio.'
+        : 'For Teams/desktop apps choose Entire Screen + Share system audio; for browser media choose the tab + Share tab audio.';
+      throw new Error('No computer audio was provided. ' + guidance);
     }
 
     if (mode === 'computer') {
