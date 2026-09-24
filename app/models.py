@@ -93,6 +93,8 @@ class TranscriptionChunk(Base):
     started_at_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ended_at_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     text: Mapped[str] = mapped_column(Text, default="")
+    edited_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     audio_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     processing_seconds: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
