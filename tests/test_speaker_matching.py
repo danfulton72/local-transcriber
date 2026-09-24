@@ -536,14 +536,13 @@ def test_speaker_identity_corrections_create_private_retraining_samples(monkeypa
         assert second_login.status_code == 200
 
         private_list = client.get("/api/admin/speakers/relabels")
-        assert private_list.status_code == 200
-        assert all(row["analysis_id"] != analysis_id for row in private_list.json())
+        assert private_list.status_code == 403
         blocked_audio = client.get(f"/api/admin/speakers/relabels/{sample['id']}/sample-audio")
-        assert blocked_audio.status_code == 404
+        assert blocked_audio.status_code == 403
         blocked_undo = client.delete(
             f"/api/admin/speakers/relabels/{sample['id']}/correction"
         )
-        assert blocked_undo.status_code == 404
+        assert blocked_undo.status_code == 403
 
         client.post("/api/auth/logout")
         relogin = client.post(
