@@ -53,6 +53,16 @@ def test_existing_oldest_user_becomes_initial_admin(tmp_path):
     first_id = uuid.uuid4().hex
     second_id = uuid.uuid4().hex
     with sqlite3.connect(database) as connection:
+        # The original baseline migration calls current Base.metadata.create_all,
+        # so a historical test database can inherit future model columns.
+        # Remove the v0.11 field to reproduce the actual released v0.10.5 schema.
+        existing_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(users)")
+        }
+        if "is_admin" in existing_columns:
+            connection.execute("DROP INDEX IF EXISTS ix_users_is_admin")
+            connection.execute("ALTER TABLE users DROP COLUMN is_admin")
+
         connection.execute(
             """
             INSERT INTO users
