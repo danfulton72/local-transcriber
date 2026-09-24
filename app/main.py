@@ -31,6 +31,7 @@ from .models import (
     SpeakerAnalysis,
     SpeakerDetection,
     SpeakerProfile,
+    SpeakerRelabelSample,
     SpeakerTurn,
     TranscriptRevision,
     TranscriptionChunk,
@@ -44,6 +45,7 @@ from .schemas import (
     RecordingFinish,
     RecordingOut,
     RecordingUpdate,
+    SpeakerIdentityUpdate,
     SpeakerTurnUpdate,
     SpeechRequest,
 )
@@ -415,6 +417,8 @@ async def recording_speaker_turns(
                 "display_name": (
                     "Unknown"
                     if turn.identity_override_unknown
+                    else turn.identity_override_name
+                    if turn.identity_override_name
                     else profiles_by_id[turn.identity_override_profile_id].name
                     if turn.identity_override_profile_id in profiles_by_id
                     else by_id[turn.identity_override_detection_id].display_name
@@ -430,6 +434,7 @@ async def recording_speaker_turns(
                 ),
                 "identity_corrected": bool(
                     turn.identity_override_unknown
+                    or turn.identity_override_name
                     or turn.identity_override_profile_id
                     or turn.identity_override_detection_id
                 ),
