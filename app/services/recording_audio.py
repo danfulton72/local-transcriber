@@ -1,3 +1,4 @@
+import io
 import tempfile
 import wave
 from pathlib import Path
@@ -89,3 +90,64 @@ async def build_combined_wav(
     except Exception:
         output_path.unlink(missing_ok=True)
         raise
+
+
+
+def extract_wav_clip(
+    path: Path,
+    start_seconds: float,
+    end_seconds: float,
+    *,
+    max_seconds: float = 8.0,
+    edge_trim_seconds: float = 0.12,
+) -> tuple[bytes, float, float]:
+    """Return an in-memory PCM WAV excerpt without modifying the source file."""
+    if end_seconds <= start_seconds:
+        raise ValueError("Speaker sample has no usable duration.")
+
+    try:
+        source = wave.open(str(path), "rb")
+    except (wave.Error, EOFError) as exc:
+        raise ValueError("The saved recording is not a valid PCM WAV file.") from exc
+
+    with source:
+        frame_rate = source.getframerate()
+        if frame_rate <= 0:
+            raise ValueError("The saved recording has an invalid sample rate.")
+
+        recording_seconds = source.getnframes() / frame_rate
+        start = max(0.0, min(float(start_seconds), recording_seconds))
+        end = max(start, min(float(end_seconds), recording_seconds))
+
+        # Pull slightly inward from diarization boundaries where practical to
+        # reduce the chance of including a neighbouring speaker.
+        if end - start > (edge_trim_seconds * 2 + 0.5):
+            start += edge_trim_seconds
+            end -= edge_trim_seconds
+
+        duration = end - start
+        if duration > max_seconds:
+            midpoint = start + duration / 2
+            half = max_seconds / 2
+            start = midpoint - half
+            end = midpoint + half
+
+        start_frame = max(0, int(start * frame_rate))
+        end_frame = min(source.getnframes(), int(end * frame_rate))
+        if end_frame <= start_frame:
+            raise ValueError("Speaker sample is too short to play.")
+
+        source.setpos(start_frame)
+        frames = source.readframes(end_frame - start_frame)
+
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as output:
+            output.setnchannels(source.getnchannels())
+            output.setsampwidth(source.getsampwidth())
+            output.setframerate(frame_rate)
+            output.setcomptype(source.getcomptype(), source.getcompname())
+            output.writeframes(frames)
+
+    actual_start = start_frame / frame_rate
+    actual_end = end_frame / frame_rate
+    return buffer.getvalue(), actual_start, actual_end
