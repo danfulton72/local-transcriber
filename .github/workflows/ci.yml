@@ -28,6 +28,19 @@ jobs:
       - run: node tests/test_audio_utils.js
       - run: node --check app/static/sw.js
       - run: python -m json.tool app/static/manifest.webmanifest > /dev/null
-      - run: python -m compileall -q app migrations speaker_service
+      - run: python -m compileall -q app migrations speaker_service deploy/ai-stack
       - run: cp .env.example .env && docker compose config -q
+      - name: Validate AI-stack integration overlay
+        run: |
+          mkdir -p /tmp/ai/local-transcriber/runtime /tmp/ai/local-transcriber/recordings /tmp/models/talk-to-type/pyannote
+          cp .env.example /tmp/ai/local-transcriber/app.env
+          AI_HOME=/tmp/ai \
+          MODELS_DIR=/tmp/models \
+          LOCAL_TRANSCRIBER_DIR="$PWD" \
+          T4_UUID=GPU-test \
+          LLAMA_SWAP_KEY=sk-local \
+          docker compose \
+            -f tests/fixtures/ai-stack-base.yml \
+            -f deploy/ai-stack/compose.override.yml \
+            config -q
       - run: docker build -t local-transcriber-ci .
