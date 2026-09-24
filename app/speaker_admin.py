@@ -235,6 +235,8 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
                 "display_name": (
                     "Unknown"
                     if turn.identity_override_unknown
+                    else turn.identity_override_name
+                    if turn.identity_override_name
                     else profiles_by_id[turn.identity_override_profile_id].name
                     if turn.identity_override_profile_id in profiles_by_id
                     else by_id[turn.identity_override_detection_id].display_name
@@ -258,9 +260,11 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
                 ),
                 "identity_corrected": bool(
                     turn.identity_override_unknown
+                    or turn.identity_override_name
                     or turn.identity_override_profile_id
                     or turn.identity_override_detection_id
                 ),
+                "identity_override_name": turn.identity_override_name,
                 "identity_override_profile_id": (
                     str(turn.identity_override_profile_id)
                     if turn.identity_override_profile_id else None
@@ -661,6 +665,7 @@ async def correct_turn_identity(
             item.identity_override_profile_id = None
             item.identity_override_detection_id = None
             item.identity_override_unknown = False
+            item.identity_override_name = None
             item.identity_corrected_by_user_id = None
             item.identity_corrected_at = None
             if existing:
@@ -670,6 +675,7 @@ async def correct_turn_identity(
         item.identity_override_profile_id = target_profile.id if target_profile else None
         item.identity_override_detection_id = target_detection.id if target_detection else None
         item.identity_override_unknown = bool(payload.unknown)
+        item.identity_override_name = None
         item.identity_corrected_by_user_id = user_id
         item.identity_corrected_at = now
 
@@ -951,7 +957,9 @@ async def list_relabel_samples(
             "end_seconds": round(turn.end_seconds, 2),
             "preview_seconds": round(min(seconds, 8.0), 2),
             "can_preview": seconds > 0.0,
-            "training_ready": bool(row.corrected_profile_id and seconds > 0.0),
+            "training_ready": bool(
+                seconds > 0.0 and row.corrected_display_name.casefold() != "unknown"
+            ),
             "created_at": row.created_at.isoformat(),
             "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
         })
@@ -1043,6 +1051,7 @@ async def undo_relabel_correction(
     turn.identity_override_profile_id = None
     turn.identity_override_detection_id = None
     turn.identity_override_unknown = False
+    turn.identity_override_name = None
     turn.identity_corrected_by_user_id = None
     turn.identity_corrected_at = None
     await db.delete(sample)
