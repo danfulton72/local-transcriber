@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .auth import current_user_id, require_admin
+from .auth import actor_user_id, require_admin
 from .config import settings
 from .db import SessionLocal, get_db
 from .models import (
@@ -638,7 +638,7 @@ async def correct_turn_identity(
         ).scalars().all()
 
     now = datetime.now(timezone.utc)
-    user_id = current_user_id()
+    user_id = actor_user_id()
     for item in turns:
         item_source = await db.get(SpeakerDetection, item.detection_id)
         if not item_source:

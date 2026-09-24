@@ -176,6 +176,10 @@ The app has database-backed user accounts. Each logged-in user has their own:
 
 Remembered speaker voiceprints are intentionally shared across users. Admins can access retained recordings and source samples across user accounts inside **Tools → Speakers** to run and review voice matching; non-admin users remain restricted to their own My Words recordings.
 
+Admins can also temporarily **act as** an active non-admin user. Use the **View as** selector in the header or **Manage as user** in **Tools → Users**. While active, the persistent banner shows whose data is in scope: **My words** and **Progress** use that user's recordings, and saved recordings can be opened, heard, retitled, transcript-corrected, and speaker-corrected. The signed-in admin remains the security actor and is recorded as the correction author. New/continued recording and moving recordings to the bin are blocked until **Return to my account** is selected.
+
+The selected acting-as user is stored only on the admin's login session. Promoting or deactivating the target clears any sessions currently acting as that user.
+
 Passwords are stored only as salted PBKDF2-SHA256 hashes. Login sessions use an HTTP-only SameSite cookie; the database stores only a SHA-256 hash of each random session token.
 
 ### First upgrade to multi-user

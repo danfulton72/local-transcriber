@@ -7,14 +7,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
-from .auth import current_user_id, hash_password, normalize_username, require_admin
+from .auth import (
+    actor_user_id,
+    hash_password,
+    normalize_username,
+    require_admin,
+    session_from_request,
+    user_payload,
+)
 from .config import settings
 from .db import get_db
 from .models import (
@@ -123,13 +130,13 @@ async def admin_status(
 
     recordings_count = await db.scalar(
         select(func.count()).select_from(Recording).where(
-            Recording.user_id == current_user_id(),
+            Recording.user_id == actor_user_id(),
             Recording.deleted_at.is_(None),
         )
     )
     deleted_count = await db.scalar(
         select(func.count()).select_from(Recording).where(
-            Recording.user_id == current_user_id(),
+            Recording.user_id == actor_user_id(),
             Recording.deleted_at.is_not(None),
         )
     )
@@ -183,11 +190,74 @@ async def list_users(
             "is_active": user.is_active,
             "is_admin": user.is_admin,
             "recordings": int(counts.get(user.id, 0)),
-            "is_current": user.id == current_user_id(),
+            "is_current": user.id == actor_user_id(),
             "created_at": user.created_at.isoformat(),
         }
         for user in users
     ]
+
+
+@router.post("/act-as/{user_id}")
+async def act_as_user(
+    user_id: uuid.UUID,
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    target = await db.get(User, user_id)
+    if not target or not target.is_active:
+        raise HTTPException(status_code=404, detail="Active user not found")
+    if target.is_admin:
+        raise HTTPException(status_code=400, detail="Administrators can only act as non-admin users.")
+    if target.id == admin.id:
+        raise HTTPException(status_code=400, detail="Use Return to my account instead.")
+
+    session = await session_from_request(request, db)
+    if not session or session.user_id != admin.id:
+        raise HTTPException(status_code=401, detail="Login required")
+
+    session.acting_as_user_id = target.id
+    db.add(
+        UsageEvent(
+            recording_id=None,
+            event_type="admin_act_as",
+            event_data={
+                "action": "start",
+                "actor_user_id": str(admin.id),
+                "target_user_id": str(target.id),
+            },
+        )
+    )
+    await db.commit()
+    return {"user": user_payload(admin), "acting_as": user_payload(target)}
+
+
+@router.delete("/act-as")
+async def stop_acting_as(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    session = await session_from_request(request, db)
+    if not session or session.user_id != admin.id:
+        raise HTTPException(status_code=401, detail="Login required")
+
+    previous = session.acting_as_user_id
+    session.acting_as_user_id = None
+    if previous:
+        db.add(
+            UsageEvent(
+                recording_id=None,
+                event_type="admin_act_as",
+                event_data={
+                    "action": "stop",
+                    "actor_user_id": str(admin.id),
+                    "target_user_id": str(previous),
+                },
+            )
+        )
+    await db.commit()
+    return {"user": user_payload(admin), "acting_as": None}
 
 
 @router.post("/users", status_code=201)
@@ -238,9 +308,9 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if payload.is_active is False and user.id == current_user_id():
+    if payload.is_active is False and user.id == actor_user_id():
         raise HTTPException(status_code=400, detail="You cannot deactivate the account you are currently using.")
-    if payload.is_admin is False and user.id == current_user_id():
+    if payload.is_admin is False and user.id == actor_user_id():
         raise HTTPException(status_code=400, detail="You cannot remove your own admin access.")
 
     removing_last_admin = (
@@ -273,6 +343,13 @@ async def update_user(
         user.is_admin = payload.is_admin
         invalidate_sessions = True
 
+    if (payload.is_active is False) or (payload.is_admin is True):
+        await db.execute(
+            update(UserSession)
+            .where(UserSession.acting_as_user_id == user.id)
+            .values(acting_as_user_id=None)
+        )
+
     user.updated_at = datetime.now(timezone.utc)
     if invalidate_sessions:
         await db.execute(delete(UserSession).where(UserSession.user_id == user.id))
@@ -291,7 +368,7 @@ async def update_user(
         "is_active": user.is_active,
         "is_admin": user.is_admin,
         "recordings": int(recordings or 0),
-        "is_current": user.id == current_user_id(),
+        "is_current": user.id == actor_user_id(),
     }
 
 
@@ -334,7 +411,7 @@ async def recycle_bin(
         await db.execute(
             select(Recording)
             .where(
-                Recording.user_id == current_user_id(),
+                Recording.user_id == actor_user_id(),
                 Recording.deleted_at.is_not(None),
             )
             .order_by(Recording.deleted_at.desc())
@@ -352,7 +429,7 @@ async def restore_from_bin(
         await db.execute(
             select(Recording).where(
                 Recording.id == recording_id,
-                Recording.user_id == current_user_id(),
+                Recording.user_id == actor_user_id(),
                 Recording.deleted_at.is_not(None),
             )
         )

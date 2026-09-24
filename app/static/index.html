@@ -31,6 +31,10 @@
       <div><h1>Talk to Type</h1><span class="brand-subtitle">Your words, written down.</span></div>
     </div>
     <div class="topbar-actions">
+      <label id="actAsControl" class="act-as-control admin-only" hidden>
+        <span>View as</span>
+        <select id="actAsSelect" aria-label="View app as another user"><option value="">My account</option></select>
+      </label>
       <div id="healthBadge" class="health checking" aria-live="polite">Checking…</div>
       <button id="menuButton" class="menu-button" type="button" aria-label="Open menu" aria-controls="appDrawer" aria-expanded="false">☰</button>
     </div>
@@ -42,6 +46,14 @@
     <button class="tab admin-only" data-page="progress" hidden><span aria-hidden="true">📈</span><span>Progress</span></button>
     <button class="tab admin-only" data-page="tools" hidden><span aria-hidden="true">🛠</span><span>Tools</span></button>
   </nav>
+
+  <section id="actAsBanner" class="act-as-banner hidden" role="status">
+    <div>
+      <strong>Acting as <span id="actAsName"></span></strong>
+      <span id="actAsDetail">You can review and correct this user's saved work. New recording is disabled.</span>
+    </div>
+    <button id="stopActAsButton" type="button">Return to my account</button>
+  </section>
 
   <div id="drawerBackdrop" class="drawer-backdrop hidden" aria-hidden="true"></div>
   <aside id="appDrawer" class="app-drawer" role="dialog" aria-modal="true" aria-hidden="true" aria-label="Settings and support">

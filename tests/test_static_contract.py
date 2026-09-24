@@ -66,3 +66,24 @@ def test_admin_speaker_tools_show_recording_owners():
     assert "analysis.recording_owner" in javascript
     assert "sample.source_recording_owner" in javascript
     assert "sample.recording_owner" in javascript
+
+
+
+def test_admin_act_as_controls_are_explicit_and_persistent():
+    html = (STATIC / "index.html").read_text()
+    javascript = (STATIC / "app.js").read_text()
+
+    for control_id in (
+        "actAsControl",
+        "actAsSelect",
+        "actAsBanner",
+        "actAsName",
+        "stopActAsButton",
+    ):
+        assert f'id="{control_id}"' in html
+
+    assert "/api/admin/act-as/" in javascript
+    assert "Return to my account" in html
+    assert "Manage as user" in javascript
+    assert "Recording disabled" in javascript
+    assert "isActingAs()" in javascript
