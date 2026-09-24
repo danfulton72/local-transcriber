@@ -20,9 +20,35 @@ HF_TOKEN = os.getenv("HF_TOKEN", "").strip() or None
 HF_HOME = os.getenv("HF_HOME", "/models")
 GATEWAY_BASE_URL = os.getenv("GATEWAY_BASE_URL", "http://host.docker.internal:8555/v1").rstrip("/")
 DEVICE = os.getenv("SPEAKER_DEVICE", "cpu").strip().lower()
+BUSY_FILE_RAW = os.getenv("SPEAKER_BUSY_FILE", "").strip()
+BUSY_FILE = Path(BUSY_FILE_RAW) if BUSY_FILE_RAW else None
 
 _pipeline = None
 _pipeline_lock = asyncio.Lock()
+_analysis_run_lock = asyncio.Lock()
+
+
+def _set_busy_file(active: bool) -> None:
+    if BUSY_FILE is None:
+        return
+    try:
+        BUSY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if active:
+            BUSY_FILE.write_text(
+                f"{os.getpid()} {time.time():.6f}\n",
+                encoding="utf-8",
+            )
+        else:
+            BUSY_FILE.unlink(missing_ok=True)
+    except OSError:
+        # The in-process lock remains authoritative for the service. The file
+        # is only an inter-container coordination hint for llama-swap.
+        pass
+
+
+@app.on_event("startup")
+async def clear_stale_busy_file() -> None:
+    _set_busy_file(False)
 
 
 def _torch_runtime() -> dict:
@@ -293,6 +319,8 @@ async def health() -> dict:
         "device": DEVICE,
         "local_model": local_model,
         "device_error": device_error,
+        "busy": _analysis_run_lock.locked(),
+        "busy_file": str(BUSY_FILE) if BUSY_FILE else None,
         **runtime,
     }
 
@@ -310,11 +338,19 @@ async def analyze(
     if not raw:
         raise HTTPException(status_code=400, detail="Audio file is empty")
 
+    if _analysis_run_lock.locked():
+        raise HTTPException(
+            status_code=409,
+            detail="Speaker analysis is already running. Wait for it to finish and try again.",
+        )
+
     temp = tempfile.NamedTemporaryFile(prefix="speaker-analysis-", suffix=".wav", delete=False)
     path = Path(temp.name)
     temp.write(raw)
     temp.close()
 
+    await _analysis_run_lock.acquire()
+    _set_busy_file(True)
     started = time.perf_counter()
     try:
         try:
@@ -373,3 +409,6 @@ async def analyze(
         raise HTTPException(status_code=500, detail=_public_error(exc)) from exc
     finally:
         path.unlink(missing_ok=True)
+        _set_busy_file(False)
+        if _analysis_run_lock.locked():
+            _analysis_run_lock.release()
