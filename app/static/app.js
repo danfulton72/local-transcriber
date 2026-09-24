@@ -1995,11 +1995,10 @@
   }
 
   async function loadSpeakerStatusAndRecordings() {
-    const headers = {};
     try {
       const [status, recordings] = await Promise.all([
-        api('/api/admin/speakers/status', { headers, cache: 'no-store' }),
-        api('/api/admin/speakers/recordings', { headers, cache: 'no-store' }),
+        api('/api/admin/speakers/status', { cache: 'no-store' }),
+        api('/api/admin/speakers/recordings', { cache: 'no-store' }),
       ]);
 
       const service = status.service || {};
@@ -2800,7 +2799,7 @@
     const originalText = els.downloadBackupButton.textContent;
     els.downloadBackupButton.textContent = 'Preparing backup…';
     try {
-      const response = await fetch('/api/admin/backup', { headers: {} });
+      const response = await fetch('/api/admin/backup');
       if (!response.ok) {
         const type = response.headers.get('content-type') || '';
         const payload = type.includes('application/json') ? await response.json() : await response.text();
