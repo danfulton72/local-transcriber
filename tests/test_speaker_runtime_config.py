@@ -5,8 +5,9 @@ def test_speaker_image_keeps_pascal_compatible_cuda_build():
     dockerfile = Path("speaker_service/Dockerfile").read_text()
     assert "pytorch/pytorch:2.8.0-cuda12.6-cudnn9-runtime" in dockerfile
     assert "cuda12.8" not in dockerfile
-    assert "cuda-nvrtc-12-6" in dockerfile
+    assert "nvidia-cuda-nvrtc-cu12==12.6.77" in dockerfile
     assert 'find_library("nvrtc")' in dockerfile
+    assert "nvidia-nvrtc.conf" in dockerfile
     assert 'torch.__version__.split("+", 1)[0] == "2.8.0"' in dockerfile
 
     constraints = Path("speaker_service/constraints.txt").read_text()
