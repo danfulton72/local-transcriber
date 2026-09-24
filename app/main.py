@@ -1,4 +1,3 @@
-import secrets
 import tempfile
 import time
 import uuid
@@ -8,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, select, text
@@ -19,6 +18,7 @@ from .auth import (
     current_user_id,
     ensure_default_user,
     reset_current_user_id,
+    require_admin,
     router as auth_router,
     set_current_user_id,
     user_from_request,
@@ -36,6 +36,7 @@ from .models import (
     TranscriptRevision,
     TranscriptionChunk,
     UsageEvent,
+    User,
     utcnow,
 )
 from .schemas import (
@@ -251,11 +252,12 @@ async def list_recordings(
     deleted: bool = False,
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[RecordingOut]:
     if deleted:
-        check_parent_pin(x_parent_pin)
+        user = await db.get(User, current_user_id())
+        if not user or not user.is_admin:
+            raise HTTPException(status_code=403, detail="Admin access required")
     query = select(Recording).where(Recording.user_id == current_user_id())
     query = query.where(Recording.deleted_at.is_not(None) if deleted else Recording.deleted_at.is_(None))
     if not deleted:
@@ -666,10 +668,9 @@ async def delete_recording(recording_id: uuid.UUID, db: AsyncSession = Depends(g
 @app.post("/api/recordings/{recording_id}/restore", response_model=RecordingOut)
 async def restore_recording(
     recording_id: uuid.UUID,
-    x_parent_pin: str | None = Header(default=None),
+    _admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> RecordingOut:
-    check_parent_pin(x_parent_pin)
     recording = await find_recording(recording_id, db, include_deleted=True)
     recording.deleted_at = None
     await db.commit()
@@ -1066,10 +1067,9 @@ async def create_event(payload: EventCreate, db: AsyncSession = Depends(get_db))
 @app.get("/api/progress")
 async def progress(
     days: int = Query(default=30, ge=7, le=365),
-    x_parent_pin: str | None = Header(default=None),
+    _admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    check_parent_pin(x_parent_pin)
     since = datetime.now(timezone.utc) - timedelta(days=days)
     records = (
         await db.execute(
