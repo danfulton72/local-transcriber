@@ -258,6 +258,15 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
                     or turn.identity_override_profile_id
                     or turn.identity_override_detection_id
                 ),
+                "identity_override_profile_id": (
+                    str(turn.identity_override_profile_id)
+                    if turn.identity_override_profile_id else None
+                ),
+                "identity_override_detection_id": (
+                    str(turn.identity_override_detection_id)
+                    if turn.identity_override_detection_id else None
+                ),
+                "identity_override_unknown": bool(turn.identity_override_unknown),
                 "start_seconds": round(turn.start_seconds, 2),
                 "end_seconds": round(turn.end_seconds, 2),
                 "text": turn.edited_text if turn.edited_text is not None else turn.text,
