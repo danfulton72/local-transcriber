@@ -2127,3 +2127,34 @@ body.reading-focus .playback-bar{
     min-height:112px;
   }
 }
+
+
+/* Speaker identification preview */
+.speaker-preview-button{
+  width:100%;
+  min-height:42px;
+  border-color:#b9d8cf;
+  background:#eef8f4;
+  color:#17614f;
+  font-weight:750;
+}
+.speaker-preview-button:hover:not(:disabled){
+  background:#e1f3ec;
+  border-color:#91c4b5;
+}
+.speaker-preview-button[aria-pressed="true"]{
+  background:#d9eee6;
+  border-color:#6aa994;
+  color:#104f40;
+}
+.speaker-label-actions{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);
+  gap:8px;
+}
+.speaker-label-actions>button{
+  width:100%;
+}
+@media(max-width:520px){
+  .speaker-label-actions{grid-template-columns:1fr}
+}
