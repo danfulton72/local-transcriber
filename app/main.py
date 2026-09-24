@@ -221,6 +221,16 @@ async def voices() -> dict:
         raise HTTPException(status_code=502, detail=f"Speech gateway unavailable: {exc}") from exc
 
 
+@app.get("/api/speaker-profiles")
+async def speaker_profile_names(db: AsyncSession = Depends(get_db)) -> list[dict]:
+    profiles = (
+        await db.execute(
+            select(SpeakerProfile).order_by(func.lower(SpeakerProfile.name), SpeakerProfile.id)
+        )
+    ).scalars().all()
+    return [{"id": str(profile.id), "name": profile.name} for profile in profiles]
+
+
 @app.post("/api/recordings", response_model=RecordingOut)
 async def create_recording(payload: RecordingCreate, db: AsyncSession = Depends(get_db)) -> RecordingOut:
     recording = Recording(
@@ -461,11 +471,19 @@ async def update_recording_speaker_identity(
         raise HTTPException(status_code=404, detail="Speaker turn not found")
 
     clean_name = (payload.name or "").strip()
-    selected = sum(bool(value) for value in (clean_name, payload.unknown, payload.clear))
-    if selected != 1 or payload.target_profile_id or payload.target_detection_id:
+    selected = sum(
+        bool(value)
+        for value in (
+            clean_name,
+            payload.target_profile_id,
+            payload.unknown,
+            payload.clear,
+        )
+    )
+    if selected != 1 or payload.target_detection_id:
         raise HTTPException(
             status_code=400,
-            detail="Choose a speaker name, Unknown, or reset to the detected identity.",
+            detail="Choose a remembered speaker, a new speaker name, Unknown, or reset to the detected identity.",
         )
 
     source_detection = await db.get(SpeakerDetection, turn.detection_id)
@@ -484,7 +502,12 @@ async def update_recording_speaker_identity(
         ).scalars().all()
 
     target_profile = None
-    if clean_name:
+    if payload.target_profile_id:
+        target_profile = await db.get(SpeakerProfile, payload.target_profile_id)
+        if not target_profile:
+            raise HTTPException(status_code=404, detail="Remembered speaker not found.")
+        clean_name = target_profile.name
+    elif clean_name:
         target_profile = (
             await db.execute(
                 select(SpeakerProfile).where(
@@ -507,6 +530,9 @@ async def update_recording_speaker_identity(
         ).scalar_one_or_none()
 
         reset_to_detected = payload.clear or (
+            target_profile is not None
+            and item_detection.profile_id == target_profile.id
+        ) or (
             clean_name and clean_name.casefold() == item_detection.display_name.casefold()
         )
         if reset_to_detected:
