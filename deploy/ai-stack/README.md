@@ -84,7 +84,6 @@ Edit the fresh environment before starting:
 At minimum check:
 
     DATABASE_URL
-    PARENT_PIN
     DEFAULT_USERNAME
     DEFAULT_PASSWORD
     DEFAULT_DISPLAY_NAME

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
@@ -88,6 +88,7 @@ def user_payload(user: User) -> dict:
         "id": str(user.id),
         "username": user.username,
         "display_name": user.display_name,
+        "is_admin": bool(user.is_admin),
     }
 
 
@@ -106,9 +107,14 @@ async def ensure_default_user(db: AsyncSession) -> User:
             display_name=(settings.default_display_name.strip() or username),
             password_hash=hash_password(password),
             is_active=True,
+            is_admin=True,
         )
         db.add(user)
         await db.flush()
+
+    admin_count = await db.scalar(select(func.count()).select_from(User).where(User.is_admin.is_(True)))
+    if not admin_count:
+        user.is_admin = True
 
     orphaned = (
         await db.execute(select(Recording).where(Recording.user_id.is_(None)))
@@ -170,6 +176,12 @@ def current_user_id() -> uuid.UUID:
 async def require_user(user: User | None = Depends(optional_user)) -> User:
     if not user:
         raise HTTPException(status_code=401, detail="Login required")
+    return user
+
+
+async def require_admin(user: User = Depends(require_user)) -> User:
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
 

@@ -4,13 +4,12 @@ import uuid
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .admin import require_parent_pin
-from .auth import current_user_id
+from .auth import current_user_id, require_admin
 from .config import settings
 from .db import SessionLocal, get_db
 from .models import (
@@ -27,7 +26,7 @@ from .services.recording_audio import build_combined_wav, extract_wav_clip
 from .services.speaker_service import speaker_service
 
 
-router = APIRouter(prefix="/api/admin/speakers", tags=["speaker-analysis"])
+router = APIRouter(prefix="/api/admin/speakers", tags=["speaker-analysis"], dependencies=[Depends(require_admin)])
 
 MIN_SAMPLE_SPEECH_SECONDS = 3.0
 MAX_PROFILE_SAMPLES = 8
@@ -395,10 +394,8 @@ async def process_analysis(analysis_id: uuid.UUID, num_speakers: int | None) -> 
 
 @router.get("/status")
 async def speaker_status(
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     profiles = await db.scalar(select(func.count()).select_from(SpeakerProfile))
     try:
         service = await speaker_service.health()
@@ -417,10 +414,8 @@ async def speaker_status(
 @router.get("/recordings")
 async def speaker_recordings(
     limit: int = Query(default=50, ge=1, le=200),
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    require_parent_pin(x_parent_pin)
     rows = (
         await db.execute(
             select(Recording)
@@ -451,10 +446,8 @@ async def start_speaker_analysis(
     recording_id: uuid.UUID,
     payload: AnalysisRequest,
     background_tasks: BackgroundTasks,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     recording = await db.get(Recording, recording_id)
     if (
         not recording
@@ -477,10 +470,8 @@ async def start_speaker_analysis(
 @router.get("/analyses/{analysis_id}")
 async def get_speaker_analysis(
     analysis_id: uuid.UUID,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     analysis = await owned_analysis(analysis_id, db)
     return await _analysis_payload(analysis, db)
 
@@ -489,10 +480,8 @@ async def get_speaker_analysis(
 async def speaker_sample_audio(
     analysis_id: uuid.UUID,
     speaker_key: str,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    require_parent_pin(x_parent_pin)
     analysis = await owned_analysis(analysis_id, db)
     detection = (
         await db.execute(
@@ -557,10 +546,8 @@ async def label_detection(
     analysis_id: uuid.UUID,
     speaker_key: str,
     payload: DetectionLabelUpdate,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     await owned_analysis(analysis_id, db)
     detection = (
         await db.execute(
@@ -589,10 +576,8 @@ async def correct_turn_identity(
     analysis_id: uuid.UUID,
     turn_id: uuid.UUID,
     payload: TurnIdentityUpdate,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     analysis = await owned_analysis(analysis_id, db)
     turn = await db.get(SpeakerTurn, turn_id)
     if not turn or turn.analysis_id != analysis.id:
@@ -709,10 +694,8 @@ async def remember_speaker(
     analysis_id: uuid.UUID,
     speaker_key: str,
     payload: RememberSpeakerRequest,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     await owned_analysis(analysis_id, db)
     detection = (
         await db.execute(
@@ -824,10 +807,8 @@ async def remember_speaker(
 
 @router.get("/profiles")
 async def list_speaker_profiles(
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    require_parent_pin(x_parent_pin)
     profiles = (await db.execute(select(SpeakerProfile).order_by(SpeakerProfile.name.asc()))).scalars().all()
     samples = (
         await db.execute(
@@ -909,10 +890,8 @@ async def list_speaker_profiles(
 
 @router.get("/relabels")
 async def list_relabel_samples(
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    require_parent_pin(x_parent_pin)
     rows = (
         await db.execute(
             select(SpeakerRelabelSample).order_by(SpeakerRelabelSample.created_at.desc())
@@ -985,10 +964,8 @@ async def owned_relabel_sample(
 @router.get("/relabels/{sample_id}/sample-audio")
 async def relabel_sample_audio(
     sample_id: uuid.UUID,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    require_parent_pin(x_parent_pin)
     sample, recording, turn = await owned_relabel_sample(sample_id, db)
     if turn.end_seconds <= turn.start_seconds:
         raise HTTPException(status_code=404, detail="No playable speech is available for this sample.")
@@ -1025,10 +1002,8 @@ async def relabel_sample_audio(
 async def review_relabel_sample(
     sample_id: uuid.UUID,
     payload: RelabelStatusUpdate,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     sample, _, _ = await owned_relabel_sample(sample_id, db)
     sample.status = payload.status
     sample.reviewed_at = None if payload.status == "pending" else datetime.now(timezone.utc)
@@ -1043,10 +1018,8 @@ async def review_relabel_sample(
 @router.delete("/relabels/{sample_id}/correction", status_code=204)
 async def undo_relabel_correction(
     sample_id: uuid.UUID,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    require_parent_pin(x_parent_pin)
     sample, _, turn = await owned_relabel_sample(sample_id, db)
     turn.identity_override_profile_id = None
     turn.identity_override_detection_id = None
@@ -1062,10 +1035,8 @@ async def undo_relabel_correction(
 async def rename_speaker_profile(
     profile_id: uuid.UUID,
     payload: RenameProfileRequest,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     profile = await db.get(SpeakerProfile, profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Remembered speaker not found")
@@ -1084,10 +1055,8 @@ async def rename_speaker_profile(
 async def remembered_speaker_sample_audio(
     profile_id: uuid.UUID,
     sample_id: uuid.UUID,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    require_parent_pin(x_parent_pin)
     profile = await db.get(SpeakerProfile, profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Remembered speaker not found")
@@ -1149,10 +1118,8 @@ async def remembered_speaker_sample_audio(
 async def remove_speaker_sample(
     profile_id: uuid.UUID,
     sample_id: uuid.UUID,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    require_parent_pin(x_parent_pin)
     profile = await db.get(SpeakerProfile, profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Remembered speaker not found")
@@ -1181,10 +1148,8 @@ async def remove_speaker_sample(
 @router.delete("/profiles/{profile_id}", status_code=204)
 async def forget_speaker_profile(
     profile_id: uuid.UUID,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    require_parent_pin(x_parent_pin)
     profile = await db.get(SpeakerProfile, profile_id)
     if not profile:
         raise HTTPException(status_code=404, detail="Remembered speaker not found")

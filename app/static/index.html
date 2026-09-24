@@ -39,7 +39,8 @@
   <nav class="tabs" aria-label="Main pages">
     <button class="tab active" data-page="talk"><span aria-hidden="true">🎙</span><span>Talk</span></button>
     <button class="tab" data-page="history"><span aria-hidden="true">📚</span><span>My words</span></button>
-    <button class="tab" data-page="progress"><span aria-hidden="true">📈</span><span>Progress</span></button>
+    <button class="tab admin-only" data-page="progress" hidden><span aria-hidden="true">📈</span><span>Progress</span></button>
+    <button class="tab admin-only" data-page="tools" hidden><span aria-hidden="true">🛠</span><span>Tools</span></button>
   </nav>
 
   <div id="drawerBackdrop" class="drawer-backdrop hidden" aria-hidden="true"></div>
@@ -72,7 +73,8 @@
         <label class="drawer-action file-action">📄 Import audio file<input id="fileInput" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.webm"></label>
         <button id="installAppButton" class="drawer-action" type="button">📲 <span><strong>Install app</strong><small id="installHint">Add Talk to Type to this device.</small></span></button>
         <button class="drawer-action drawer-page-link" type="button" data-drawer-page="history">📚 <span><strong>My words</strong><small>Open saved work</small></span></button>
-        <button class="drawer-action drawer-page-link parent-entry" type="button" data-drawer-page="progress">👥 <span><strong>Parent tools</strong><small>Progress, users, speakers and storage</small></span></button>
+        <button class="drawer-action drawer-page-link admin-only" type="button" data-drawer-page="progress" hidden>📈 <span><strong>Progress</strong><small>Usage and correction trends</small></span></button>
+        <button class="drawer-action drawer-page-link admin-only" type="button" data-drawer-page="tools" hidden>🛠 <span><strong>Tools</strong><small>Users, speakers, storage and backup</small></span></button>
       </section>
     </div>
 
@@ -104,7 +106,7 @@
           </div>
         </div>
 
-        <div id="transcriptView" class="transcript empty" aria-live="polite"><p>Your words will appear here.</p></div>
+        <div id="transcriptView" class="transcript empty conversation-scroll" aria-live="polite"><p>Your words will appear here.</p></div>
 
         <div id="editorWrap" class="editor hidden">
           <p class="editor-help">Edit one sentence at a time. Changes are saved automatically while you work.</p>
@@ -158,140 +160,151 @@
     <section id="page-history" class="page">
       <div class="section-heading"><div><p class="eyebrow">Saved locally</p><h2>My words</h2></div><button id="refreshHistoryButton" type="button">Refresh</button></div>
       <div class="history-tools"><input id="historySearch" type="search" placeholder="Search my words…" aria-label="Search recordings"><label class="check"><input id="historyFavourites" type="checkbox"> Favourites only</label></div>
-      <div id="historyList" class="history-list"><p class="muted">Loading…</p></div>
+      <div id="historyList" class="history-list conversation-scroll"><p class="muted">Loading…</p></div>
     </section>
-    <section id="page-progress" class="page">
-      <div class="section-heading"><div><p class="eyebrow">Grown-up view</p><h2>Progress</h2></div><select id="progressDays" aria-label="Progress time range"><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last year</option></select></div>
-      <div id="pinPanel" class="pin-panel"><label>Parent PIN (only if configured)<input id="parentPin" type="password" inputmode="numeric" autocomplete="off"></label><button id="loadProgressButton" class="primary" type="button">Show progress</button></div>
-      <p class="privacy-note">This page uses only saved recordings, explicit transcript edits, and actions like read-aloud/copy. It does not track attention, mouse movement, mood, or reading ability.</p>
+    <section id="page-progress" class="page admin-page">
+      <div class="section-heading">
+        <div><p class="eyebrow">Admin view</p><h2>Progress</h2><p class="muted">Usage, dictation and correction trends for this account.</p></div>
+        <select id="progressDays" aria-label="Progress time range"><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last year</option></select>
+      </div>
+      <p class="privacy-note">This page uses saved recordings, explicit transcript edits, and actions like read-aloud/copy. It does not track attention, mouse movement, mood, or reading ability.</p>
       <div id="progressContent" class="hidden">
         <div id="metricGrid" class="metrics"></div>
-        <div class="progress-grid"><section class="panel"><h3>Frequently corrected words</h3><div id="correctionsList"></div></section><section class="panel"><h3>Speaking over time</h3><div id="dailyChart" class="daily-chart"></div></section></div>
+        <div class="progress-grid">
+          <section class="panel"><h3>Frequently corrected words</h3><div id="correctionsList"></div></section>
+          <section class="panel"><h3>Speaking over time</h3><div id="dailyChart" class="daily-chart"></div></section>
+        </div>
         <section class="panel"><h3>Longest piece</h3><div id="longestPiece"></div></section>
-
-        <div class="parent-tools-heading">
-          <p class="eyebrow">Parent tools</p>
-          <h2>Users</h2>
-        </div>
-        <section class="panel user-admin-panel">
-          <div class="section-heading compact-heading">
-            <div>
-              <h3>App profiles</h3>
-              <p class="muted">Each user has separate recordings and progress. Remembered speaker voiceprints are shared.</p>
-            </div>
-            <button id="refreshUsersButton" type="button">Refresh</button>
-          </div>
-          <form id="createUserForm" class="user-create-grid">
-            <label class="admin-label">Username<input id="newUsername" type="text" autocomplete="off" required></label>
-            <label class="admin-label">Display name<input id="newUserDisplayName" type="text" autocomplete="off" required></label>
-            <label class="admin-label">Password<input id="newUserPassword" type="password" autocomplete="new-password" minlength="8" required></label>
-            <button id="createUserButton" class="primary" type="submit">Add user</button>
-          </form>
-          <p id="userAdminMessage" class="muted small-note" aria-live="polite"></p>
-          <div id="userList" class="user-list"></div>
-        </section>
-
-        <div class="parent-tools-heading">
-          <p class="eyebrow">Parent tools</p>
-          <h2>Conversation speakers</h2>
-        </div>
-        <div class="speaker-admin-grid">
-          <section class="panel speaker-panel">
-            <div class="section-heading compact-heading">
-              <div>
-                <h3>Who said what?</h3>
-                <p class="muted">Run this after a recording to label turns as Person 1, Person 2, and so on.</p>
-              </div>
-              <span id="speakerServiceStatus" class="pill">Checking…</span>
-            </div>
-            <div class="speaker-analysis-controls">
-              <label class="admin-label">Recording
-                <select id="speakerRecordingSelect"><option value="">Choose a recording…</option></select>
-              </label>
-              <label class="admin-label">Expected speakers
-                <select id="speakerCountSelect">
-                  <option value="">Auto detect</option>
-                  <option value="2">2 people</option>
-                  <option value="3">3 people</option>
-                  <option value="4">4 people</option>
-                  <option value="5">5 people</option>
-                  <option value="6">6 people</option>
-                </select>
-              </label>
-              <button id="runSpeakerAnalysisButton" class="primary" type="button">Analyse conversation</button>
-            </div>
-            <p class="muted small-note">Analysis is parent-triggered and runs after recording. Live transcription is unchanged.</p>
-            <p id="speakerAnalysisMessage" class="muted small-note" aria-live="polite"></p>
-            <div id="speakerAnalysisResult" class="speaker-analysis-result"></div>
-          </section>
-
-          <section class="panel">
-            <div class="section-heading compact-heading">
-              <div>
-                <h3>Remembered speakers</h3>
-                <p class="muted">Each remembered person can keep several confirmed voice samples. Matching uses the strongest samples rather than one running average.</p>
-              </div>
-              <button id="refreshSpeakerProfilesButton" type="button">Refresh</button>
-            </div>
-            <div id="speakerProfilesList" class="speaker-profiles-list"><p class="muted">No remembered speakers loaded yet.</p></div>
-            <p class="muted small-note">A voiceprint is biometric data. Review/remove individual samples here, or forget the whole voiceprint at any time.</p>
-          </section>
-        </div>
-
-        <section class="panel relabel-panel">
-          <div class="section-heading compact-heading">
-            <div>
-              <h3>Relabelled voice samples</h3>
-              <p class="muted">Manual speaker corrections are kept here as a separate review set for future retraining. They do not alter remembered voiceprints automatically.</p>
-            </div>
-            <button id="refreshRelabelSamplesButton" type="button">Refresh</button>
-          </div>
-          <div id="relabelSamplesList" class="relabel-samples-list"><p class="muted">No relabelled samples loaded yet.</p></div>
-        </section>
-
-        <div class="parent-tools-heading">
-          <p class="eyebrow">Parent tools</p>
-          <h2>Storage &amp; safety</h2>
-        </div>
-        <div class="admin-grid">
-          <section class="panel">
-            <h3>Voice recording retention</h3>
-            <p class="muted">Transcripts and history are kept. This setting controls only saved voice audio and near-live audio chunks.</p>
-            <label class="admin-label">Keep voice recordings
-              <select id="retentionDays">
-                <option value="0">Forever</option>
-                <option value="30">30 days</option>
-                <option value="90">90 days</option>
-                <option value="365">1 year</option>
-              </select>
-            </label>
-            <label class="check admin-check"><input id="deleteAudioImmediately" type="checkbox"> Delete voice audio after transcription</label>
-            <div class="button-row">
-              <button id="saveRetentionButton" class="primary" type="button">Save retention</button>
-              <button id="applyRetentionButton" type="button">Apply cleanup now</button>
-            </div>
-            <p id="retentionMessage" class="muted small-note"></p>
-          </section>
-
-          <section class="panel">
-            <h3>Backup &amp; status</h3>
-            <div id="systemStatus" class="status-list"><p class="muted">Load progress to check status.</p></div>
-            <div class="button-row">
-              <button id="downloadBackupButton" class="primary" type="button">⬇ Download backup ZIP</button>
-              <button id="refreshAdminButton" type="button">Refresh status</button>
-            </div>
-            <p class="muted small-note">The ZIP contains transcripts, history/settings metadata and the voice files currently retained by the app.</p>
-          </section>
-        </div>
-
-        <section class="panel recycle-panel">
-          <div class="section-heading compact-heading">
-            <div><h3>Recycle bin</h3><p class="muted">Deleted work stays here until you restore it or permanently remove it.</p></div>
-            <button id="refreshRecycleButton" type="button">Refresh</button>
-          </div>
-          <div id="recycleList" class="history-list"><p class="muted">Load progress to see deleted recordings.</p></div>
+        <section class="panel">
+          <div class="section-heading compact-heading"><div><h3>Recent conversations</h3><p class="muted">Recent saved work for this account.</p></div></div>
+          <div id="progressRecentList" class="history-list conversation-scroll"><p class="muted">Loading…</p></div>
         </section>
       </div>
+    </section>
+
+    <section id="page-tools" class="page admin-page">
+      <div class="section-heading">
+        <div><p class="eyebrow">Admin only</p><h2>Tools</h2><p class="muted">Manage users, speaker recognition, storage and backups.</p></div>
+      </div>
+
+      <section class="panel user-admin-panel">
+        <div class="section-heading compact-heading">
+          <div>
+            <h3>Users</h3>
+            <p class="muted">Each user has separate recordings. Admin users can access Progress and Tools.</p>
+          </div>
+          <button id="refreshUsersButton" type="button">Refresh</button>
+        </div>
+        <form id="createUserForm" class="user-create-grid">
+          <label class="admin-label">Username<input id="newUsername" type="text" autocomplete="off" required></label>
+          <label class="admin-label">Display name<input id="newUserDisplayName" type="text" autocomplete="off" required></label>
+          <label class="admin-label">Password<input id="newUserPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+          <label class="check admin-check"><input id="newUserIsAdmin" type="checkbox"> Admin access</label>
+          <button id="createUserButton" class="primary" type="submit">Add user</button>
+        </form>
+        <p id="userAdminMessage" class="muted small-note" aria-live="polite"></p>
+        <div id="userList" class="user-list conversation-scroll"></div>
+      </section>
+
+      <div class="tools-section-heading">
+        <p class="eyebrow">Speaker recognition</p>
+        <h2>Speakers</h2>
+      </div>
+      <div class="speaker-admin-grid">
+        <section class="panel speaker-panel">
+          <div class="section-heading compact-heading">
+            <div>
+              <h3>Conversation speakers</h3>
+              <p class="muted">Choose a saved conversation, analyse it, then review and correct who said what.</p>
+            </div>
+            <span id="speakerServiceStatus" class="pill">Checking…</span>
+          </div>
+          <div class="speaker-analysis-controls">
+            <label class="admin-label">Conversation
+              <select id="speakerRecordingSelect"><option value="">Choose a recording…</option></select>
+            </label>
+            <label class="admin-label">Expected speakers
+              <select id="speakerCountSelect">
+                <option value="">Auto detect</option>
+                <option value="2">2 people</option>
+                <option value="3">3 people</option>
+                <option value="4">4 people</option>
+                <option value="5">5 people</option>
+                <option value="6">6 people</option>
+              </select>
+            </label>
+            <button id="runSpeakerAnalysisButton" class="primary" type="button">Analyse conversation</button>
+          </div>
+          <p id="speakerAnalysisMessage" class="muted small-note" aria-live="polite"></p>
+          <div id="speakerAnalysisResult" class="speaker-analysis-result conversation-scroll"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-heading compact-heading">
+            <div>
+              <h3>Remembered speakers</h3>
+              <p class="muted">Review saved voiceprints and the confirmed samples used for future matching.</p>
+            </div>
+            <button id="refreshSpeakerProfilesButton" type="button">Refresh</button>
+          </div>
+          <div id="speakerProfilesList" class="speaker-profiles-list conversation-scroll"><p class="muted">No remembered speakers loaded yet.</p></div>
+          <p class="muted small-note">Voiceprints are shared across app users, but source recording audio remains private to its owner.</p>
+        </section>
+      </div>
+
+      <section class="panel relabel-panel">
+        <div class="section-heading compact-heading">
+          <div>
+            <h3>Relabelled voice samples</h3>
+            <p class="muted">Manual corrections form a separate review set for future retraining and do not alter remembered voiceprints automatically.</p>
+          </div>
+          <button id="refreshRelabelSamplesButton" type="button">Refresh</button>
+        </div>
+        <div id="relabelSamplesList" class="relabel-samples-list conversation-scroll"><p class="muted">No relabelled samples loaded yet.</p></div>
+      </section>
+
+      <div class="tools-section-heading">
+        <p class="eyebrow">System</p>
+        <h2>Storage &amp; safety</h2>
+      </div>
+      <div class="admin-grid">
+        <section class="panel">
+          <h3>Voice recording retention</h3>
+          <p class="muted">Transcripts and history are kept. This setting controls only saved voice audio and near-live audio chunks.</p>
+          <label class="admin-label">Keep voice recordings
+            <select id="retentionDays">
+              <option value="0">Forever</option>
+              <option value="30">30 days</option>
+              <option value="90">90 days</option>
+              <option value="365">1 year</option>
+            </select>
+          </label>
+          <label class="check admin-check"><input id="deleteAudioImmediately" type="checkbox"> Delete voice audio after transcription</label>
+          <div class="button-row">
+            <button id="saveRetentionButton" class="primary" type="button">Save retention</button>
+            <button id="applyRetentionButton" type="button">Apply cleanup now</button>
+          </div>
+          <p id="retentionMessage" class="muted small-note"></p>
+        </section>
+
+        <section class="panel">
+          <h3>Backup &amp; status</h3>
+          <div id="systemStatus" class="status-list"><p class="muted">Loading status…</p></div>
+          <div class="button-row">
+            <button id="downloadBackupButton" class="primary" type="button">⬇ Download backup ZIP</button>
+            <button id="refreshAdminButton" type="button">Refresh status</button>
+          </div>
+          <p class="muted small-note">The ZIP contains transcripts, history/settings metadata and the voice files currently retained by the app.</p>
+        </section>
+      </div>
+
+      <section class="panel recycle-panel">
+        <div class="section-heading compact-heading">
+          <div><h3>Recycle bin</h3><p class="muted">Deleted work stays here until you restore it or permanently remove it.</p></div>
+          <button id="refreshRecycleButton" type="button">Refresh</button>
+        </div>
+        <div id="recycleList" class="history-list conversation-scroll"><p class="muted">Loading…</p></div>
+      </section>
     </section>
   </main>
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
