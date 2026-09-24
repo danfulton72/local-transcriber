@@ -481,19 +481,17 @@
     }
   }
 
-  function beginSpeakerIdentityEdit(turnId) {
+  async function beginSpeakerIdentityEdit(turnId) {
     if (!turnId || state.recording || state.transcribing) return;
+    await loadKnownSpeakerProfiles();
     state.editingSpeakerIdentityTurnId = turnId;
     pausePlaybackFollowing();
     renderTranscript();
     requestAnimationFrame(() => {
-      const input = els.transcriptView.querySelector(
-        '.transcript-speaker-turn[data-turn-id="' + turnId + '"] .speaker-name-input'
+      const select = els.transcriptView.querySelector(
+        '.transcript-speaker-turn[data-turn-id="' + turnId + '"] .speaker-name-select'
       );
-      if (input) {
-        input.focus();
-        input.select();
-      }
+      select?.focus();
     });
   }
 
@@ -561,11 +559,64 @@
           const nameWrap = document.createElement('div');
           nameWrap.className = 'transcript-speaker-name-wrap';
           if (turn.id === state.editingSpeakerIdentityTurnId) {
+            const currentProfile = state.knownSpeakerProfiles.find(
+              (profile) => profile.name.toLocaleLowerCase() === String(turn.display_name || '').toLocaleLowerCase()
+            );
+
+            const nameSelect = document.createElement('select');
+            nameSelect.className = 'speaker-name-select';
+            nameSelect.setAttribute('aria-label', 'Choose a remembered speaker');
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = state.knownSpeakerProfiles.length
+              ? 'Choose a remembered voice…'
+              : 'No remembered voices yet';
+            nameSelect.appendChild(placeholder);
+
+            for (const profile of state.knownSpeakerProfiles) {
+              const option = document.createElement('option');
+              option.value = 'profile:' + profile.id;
+              option.textContent = profile.name;
+              nameSelect.appendChild(option);
+            }
+
+            const newNameOption = document.createElement('option');
+            newNameOption.value = 'new';
+            newNameOption.textContent = '＋ New name…';
+            nameSelect.appendChild(newNameOption);
+
             const nameInput = document.createElement('input');
-            nameInput.className = 'speaker-name-input';
-            nameInput.value = turn.display_name || '';
+            nameInput.className = 'speaker-name-input hidden';
             nameInput.maxLength = 120;
-            nameInput.setAttribute('aria-label', 'Correct speaker name');
+            nameInput.placeholder = 'Type a new speaker name';
+            nameInput.setAttribute('aria-label', 'New speaker name');
+
+            if (currentProfile) {
+              nameSelect.value = 'profile:' + currentProfile.id;
+            }
+
+            const selectionPayload = (scope) => {
+              if (nameSelect.value.startsWith('profile:')) {
+                return { target_profile_id: nameSelect.value.slice(8), scope };
+              }
+              if (nameSelect.value === 'new') {
+                const name = nameInput.value.trim();
+                if (name) return { name, scope };
+              }
+              setError('Choose a remembered voice or select New name and enter a name.');
+              return null;
+            };
+
+            const syncNewName = () => {
+              const manual = nameSelect.value === 'new';
+              nameInput.classList.toggle('hidden', !manual);
+              if (manual) {
+                requestAnimationFrame(() => nameInput.focus());
+              } else {
+                nameInput.value = '';
+              }
+            };
+            nameSelect.addEventListener('change', syncNewName);
 
             const nameActions = document.createElement('div');
             nameActions.className = 'speaker-name-edit-actions';
@@ -573,19 +624,19 @@
             const saveTurn = document.createElement('button');
             saveTurn.type = 'button';
             saveTurn.textContent = 'This turn';
-            saveTurn.title = 'Use this name for only this spoken turn';
+            saveTurn.title = 'Use this speaker for only this spoken turn';
             saveTurn.addEventListener('click', () => {
-              const name = nameInput.value.trim();
-              if (name) saveSpeakerIdentity(turn.id, { name, scope: 'turn' });
+              const payload = selectionPayload('turn');
+              if (payload) saveSpeakerIdentity(turn.id, payload);
             });
 
             const saveAll = document.createElement('button');
             saveAll.type = 'button';
             saveAll.textContent = 'All matching turns';
-            saveAll.title = 'Use this name for every turn from the same originally detected speaker';
+            saveAll.title = 'Use this speaker for every turn from the same originally detected speaker';
             saveAll.addEventListener('click', () => {
-              const name = nameInput.value.trim();
-              if (name) saveSpeakerIdentity(turn.id, { name, scope: 'detection' });
+              const payload = selectionPayload('detection');
+              if (payload) saveSpeakerIdentity(turn.id, payload);
             });
 
             const unknown = document.createElement('button');
@@ -614,16 +665,22 @@
             nameInput.addEventListener('keydown', (event) => {
               if (event.key === 'Enter') {
                 event.preventDefault();
-                const name = nameInput.value.trim();
-                if (name) saveSpeakerIdentity(turn.id, { name, scope: 'turn' });
+                const payload = selectionPayload('turn');
+                if (payload) saveSpeakerIdentity(turn.id, payload);
               } else if (event.key === 'Escape') {
+                state.editingSpeakerIdentityTurnId = null;
+                renderTranscript();
+              }
+            });
+            nameSelect.addEventListener('keydown', (event) => {
+              if (event.key === 'Escape') {
                 state.editingSpeakerIdentityTurnId = null;
                 renderTranscript();
               }
             });
 
             nameActions.append(saveTurn, saveAll, unknown, reset, cancel);
-            nameWrap.append(nameInput, nameActions);
+            nameWrap.append(nameSelect, nameInput, nameActions);
           } else {
             const name = document.createElement('button');
             name.type = 'button';
