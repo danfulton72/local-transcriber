@@ -1,4 +1,4 @@
-services:
+# Standalone/development Compose. The R720 production deployment uses\n# deploy/ai-stack/compose.override.yml inside the existing ai-stack project.\n\nservices:
   local-transcriber:
     build: .
     container_name: local-transcriber
