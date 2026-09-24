@@ -1,5 +1,4 @@
 import json
-import secrets
 import shutil
 import tempfile
 import uuid
@@ -8,14 +7,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
-from .auth import current_user_id, hash_password, normalize_username
+from .auth import current_user_id, hash_password, normalize_username, require_admin
 from .config import settings
 from .db import get_db
 from .models import (
@@ -38,7 +37,7 @@ from .services.progress import word_count
 from .services.retention import cleanup_expired_audio, get_retention_policy, set_retention_policy
 
 
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
 
 def require_parent_pin(x_parent_pin: str | None) -> None:
@@ -54,12 +53,14 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=2, max_length=80)
     display_name: str = Field(min_length=1, max_length=120)
     password: str = Field(min_length=8, max_length=200)
+    is_admin: bool = False
 
 
 class UserUpdate(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=120)
     password: str | None = Field(default=None, min_length=8, max_length=200)
     is_active: bool | None = None
+    is_admin: bool | None = None
 
 
 class RetentionUpdate(BaseModel):
@@ -112,10 +113,8 @@ def _serialize_row(row, fields: list[str]) -> dict:
 
 @router.get("/status")
 async def admin_status(
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
 
     database_ok = True
     try:
@@ -173,10 +172,8 @@ async def admin_status(
 
 @router.get("/users")
 async def list_users(
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    require_parent_pin(x_parent_pin)
     users = (await db.execute(select(User).order_by(User.username.asc()))).scalars().all()
     counts = dict(
         (
@@ -193,6 +190,7 @@ async def list_users(
             "username": user.username,
             "display_name": user.display_name,
             "is_active": user.is_active,
+            "is_admin": user.is_admin,
             "recordings": int(counts.get(user.id, 0)),
             "is_current": user.id == current_user_id(),
             "created_at": user.created_at.isoformat(),
@@ -204,10 +202,8 @@ async def list_users(
 @router.post("/users", status_code=201)
 async def create_user(
     payload: UserCreate,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     try:
         username = normalize_username(payload.username)
         password_hash = hash_password(payload.password)
@@ -225,6 +221,7 @@ async def create_user(
         display_name=payload.display_name.strip(),
         password_hash=password_hash,
         is_active=True,
+        is_admin=payload.is_admin,
     )
     db.add(user)
     await db.commit()
@@ -234,6 +231,7 @@ async def create_user(
         "username": user.username,
         "display_name": user.display_name,
         "is_active": user.is_active,
+        "is_admin": user.is_admin,
         "recordings": 0,
         "is_current": False,
     }
@@ -243,16 +241,23 @@ async def create_user(
 async def update_user(
     user_id: uuid.UUID,
     payload: UserUpdate,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     if payload.is_active is False and user.id == current_user_id():
         raise HTTPException(status_code=400, detail="You cannot deactivate the account you are currently using.")
+    if payload.is_admin is False and user.id == current_user_id():
+        raise HTTPException(status_code=400, detail="You cannot remove your own admin access.")
+
+    if payload.is_admin is False and user.is_admin:
+        admin_count = await db.scalar(
+            select(func.count()).select_from(User).where(User.is_admin.is_(True))
+        )
+        if int(admin_count or 0) <= 1:
+            raise HTTPException(status_code=400, detail="At least one active administrator is required.")
 
     invalidate_sessions = False
     if payload.display_name is not None:
@@ -265,6 +270,9 @@ async def update_user(
         invalidate_sessions = True
     if payload.is_active is not None:
         user.is_active = payload.is_active
+        invalidate_sessions = True
+    if payload.is_admin is not None:
+        user.is_admin = payload.is_admin
         invalidate_sessions = True
 
     user.updated_at = datetime.now(timezone.utc)
@@ -283,6 +291,7 @@ async def update_user(
         "username": user.username,
         "display_name": user.display_name,
         "is_active": user.is_active,
+        "is_admin": user.is_admin,
         "recordings": int(recordings or 0),
         "is_current": user.id == current_user_id(),
     }
@@ -290,20 +299,16 @@ async def update_user(
 
 @router.get("/retention")
 async def get_retention(
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     return await get_retention_policy(db)
 
 
 @router.patch("/retention")
 async def update_retention(
     payload: RetentionUpdate,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     if payload.delete_audio_after_transcription and payload.audio_retention_days:
         raise HTTPException(
             status_code=400,
@@ -318,19 +323,15 @@ async def update_retention(
 
 @router.post("/retention/apply")
 async def apply_retention(
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     return await cleanup_expired_audio(db)
 
 
 @router.get("/recycle-bin")
 async def recycle_bin(
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    require_parent_pin(x_parent_pin)
     records = (
         await db.execute(
             select(Recording)
@@ -347,10 +348,8 @@ async def recycle_bin(
 @router.post("/recycle-bin/{recording_id}/restore")
 async def restore_from_bin(
     recording_id: uuid.UUID,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    require_parent_pin(x_parent_pin)
     recording = (
         await db.execute(
             select(Recording).where(
@@ -371,10 +370,8 @@ async def restore_from_bin(
 @router.delete("/recycle-bin/{recording_id}", status_code=204)
 async def permanently_delete(
     recording_id: uuid.UUID,
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    require_parent_pin(x_parent_pin)
     recording = (
         await db.execute(
             select(Recording).where(
@@ -400,10 +397,8 @@ async def permanently_delete(
 
 @router.get("/backup")
 async def download_backup(
-    x_parent_pin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> FileResponse:
-    require_parent_pin(x_parent_pin)
 
     users = (await db.execute(select(User).order_by(User.created_at))).scalars().all()
     recordings = (await db.execute(select(Recording).order_by(Recording.created_at))).scalars().all()
