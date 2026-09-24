@@ -36,7 +36,16 @@ from .models import (
     UsageEvent,
     utcnow,
 )
-from .schemas import EventCreate, RecordingCreate, RecordingDraftUpdate, RecordingFinish, RecordingOut, RecordingUpdate, SpeechRequest
+from .schemas import (
+    EventCreate,
+    RecordingCreate,
+    RecordingDraftUpdate,
+    RecordingFinish,
+    RecordingOut,
+    RecordingUpdate,
+    SpeakerTurnUpdate,
+    SpeechRequest,
+)
 from .services.gateway import gateway
 from .services.progress import correction_pairs, top_corrections, word_count
 from .services.storage import save_bytes
@@ -350,17 +359,15 @@ async def get_recording(recording_id: uuid.UUID, db: AsyncSession = Depends(get_
     return recording_out(await find_recording(recording_id, db))
 
 
-@app.get("/api/recordings/{recording_id}/speaker-turns")
-async def recording_speaker_turns(
+async def latest_completed_speaker_analysis(
     recording_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    recording = await find_recording(recording_id, db)
-    analysis = (
+    db: AsyncSession,
+) -> SpeakerAnalysis | None:
+    return (
         await db.execute(
             select(SpeakerAnalysis)
             .where(
-                SpeakerAnalysis.recording_id == recording.id,
+                SpeakerAnalysis.recording_id == recording_id,
                 SpeakerAnalysis.status == "completed",
             )
             .order_by(
@@ -370,6 +377,15 @@ async def recording_speaker_turns(
             .limit(1)
         )
     ).scalar_one_or_none()
+
+
+@app.get("/api/recordings/{recording_id}/speaker-turns")
+async def recording_speaker_turns(
+    recording_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    recording = await find_recording(recording_id, db)
+    analysis = await latest_completed_speaker_analysis(recording.id, db)
     if not analysis:
         return {"analysis_id": None, "speaker_count": 0, "turns": []}
 
@@ -392,6 +408,7 @@ async def recording_speaker_turns(
         "speaker_count": analysis.speaker_count or len(detections),
         "turns": [
             {
+                "id": str(turn.id),
                 "display_name": (
                     by_id[turn.detection_id].display_name
                     if turn.detection_id in by_id
@@ -399,11 +416,85 @@ async def recording_speaker_turns(
                 ),
                 "start_seconds": round(turn.start_seconds, 2),
                 "end_seconds": round(turn.end_seconds, 2),
-                "text": turn.text,
+                "text": turn.edited_text if turn.edited_text is not None else turn.text,
+                "original_text": turn.text,
+                "edited": turn.edited_text is not None,
+                "updated_at": turn.updated_at.isoformat() if turn.updated_at else None,
             }
             for turn in turns
-            if turn.text
+            if (turn.edited_text if turn.edited_text is not None else turn.text)
         ],
+    }
+
+
+@app.patch("/api/recordings/{recording_id}/speaker-turns/{turn_id}")
+async def update_recording_speaker_turn(
+    recording_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    payload: SpeakerTurnUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    recording = await find_recording(recording_id, db)
+    analysis = await latest_completed_speaker_analysis(recording.id, db)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="No completed speaker analysis is available for this recording.")
+
+    turn = await db.get(SpeakerTurn, turn_id)
+    if not turn or turn.analysis_id != analysis.id:
+        raise HTTPException(status_code=404, detail="Speaker turn not found")
+
+    new_turn_text = payload.text.strip()
+    current_turn_text = turn.edited_text if turn.edited_text is not None else turn.text
+    if new_turn_text != current_turn_text:
+        turn.edited_text = new_turn_text
+        turn.updated_at = utcnow()
+
+        turns = (
+            await db.execute(
+                select(SpeakerTurn)
+                .where(SpeakerTurn.analysis_id == analysis.id)
+                .order_by(SpeakerTurn.start_seconds.asc(), SpeakerTurn.id.asc())
+            )
+        ).scalars().all()
+        rebuilt = " ".join(
+            (item.edited_text if item.edited_text is not None else item.text).strip()
+            for item in turns
+            if (item.edited_text if item.edited_text is not None else item.text).strip()
+        ).strip()
+        previous = recording.transcript
+        if rebuilt != previous:
+            db.add(
+                TranscriptRevision(
+                    recording_id=recording.id,
+                    previous_text=previous,
+                    new_text=rebuilt,
+                )
+            )
+            db.add(
+                UsageEvent(
+                    recording_id=recording.id,
+                    event_type="edit",
+                    event_data={"source": "speaker_turn", "turn_id": str(turn.id)},
+                )
+            )
+            recording.transcript_edited = rebuilt
+            recording.draft_text = None
+            recording.last_activity_at = utcnow()
+            if not recording.title or recording.title == "New recording":
+                recording.title = make_title(rebuilt)
+
+        await db.commit()
+        await db.refresh(turn)
+        await db.refresh(recording)
+
+    return {
+        "id": str(turn.id),
+        "text": turn.edited_text if turn.edited_text is not None else turn.text,
+        "original_text": turn.text,
+        "edited": turn.edited_text is not None,
+        "updated_at": turn.updated_at.isoformat() if turn.updated_at else None,
+        "transcript": recording.transcript,
+        "word_count": word_count(recording.transcript),
     }
 
 
