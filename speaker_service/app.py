@@ -160,10 +160,47 @@ async def get_pipeline():
     return _pipeline
 
 
-def _run_pipeline(pipeline, path: str, num_speakers: int | None):
+def _load_pcm_waveform(path: Path) -> dict:
+    import torch
+
+    with wave.open(str(path), "rb") as source:
+        channels = source.getnchannels()
+        width = source.getsampwidth()
+        sample_rate = source.getframerate()
+        compression = source.getcomptype()
+        frames = source.readframes(source.getnframes())
+
+    if compression != "NONE":
+        raise RuntimeError("Speaker analysis requires uncompressed PCM WAV audio.")
+
+    if width == 1:
+        samples = (np.frombuffer(frames, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+    elif width == 2:
+        samples = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+    elif width == 4:
+        samples = np.frombuffer(frames, dtype="<i4").astype(np.float32) / 2147483648.0
+    else:
+        raise RuntimeError(
+            f"Unsupported PCM sample width: {width * 8}-bit. "
+            "Use 8-bit, 16-bit, or 32-bit PCM WAV audio."
+        )
+
+    if channels < 1:
+        raise RuntimeError("PCM WAV audio has no channels.")
+    if samples.size % channels:
+        raise RuntimeError("PCM WAV audio contains an incomplete sample frame.")
+
+    waveform = samples.reshape(-1, channels).T.copy()
+    return {
+        "waveform": torch.from_numpy(waveform),
+        "sample_rate": sample_rate,
+    }
+
+
+def _run_pipeline(pipeline, audio: dict, num_speakers: int | None):
     if num_speakers:
-        return pipeline(path, num_speakers=num_speakers)
-    return pipeline(path)
+        return pipeline(audio, num_speakers=num_speakers)
+    return pipeline(audio)
 
 
 def _normalise(values) -> list[float]:
@@ -287,7 +324,8 @@ async def analyze(
             raise HTTPException(status_code=400, detail="Speaker analysis requires PCM WAV audio") from exc
 
         pipeline = await get_pipeline()
-        output = await asyncio.to_thread(_run_pipeline, pipeline, str(path), num_speakers)
+        audio = await asyncio.to_thread(_load_pcm_waveform, path)
+        output = await asyncio.to_thread(_run_pipeline, pipeline, audio, num_speakers)
 
         diarization = getattr(output, "exclusive_speaker_diarization", None)
         if diarization is None:
