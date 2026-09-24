@@ -593,6 +593,10 @@
 
             if (currentProfile) {
               nameSelect.value = 'profile:' + currentProfile.id;
+            } else if (turn.identity_corrected && turn.display_name && turn.display_name !== 'Unknown') {
+              nameSelect.value = 'new';
+              nameInput.value = turn.display_name;
+              nameInput.classList.remove('hidden');
             }
 
             const selectionPayload = (scope) => {
