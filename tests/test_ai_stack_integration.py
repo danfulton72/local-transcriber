@@ -65,6 +65,7 @@ def test_ai_stack_overlay_pins_analyzer_to_t4_and_shared_model_store():
     assert "/home/dan/local-transcriber" not in overlay
     assert "app.env" not in overlay
     assert "networks: [ai]" in overlay
+    assert "container_name: local-transcriber-speaker-analyzer" not in overlay
 
 
 def test_installer_defaults_to_repo_location_inside_ai():
