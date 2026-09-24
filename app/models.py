@@ -207,4 +207,40 @@ class SpeakerTurn(Base):
     end_seconds: Mapped[float] = mapped_column(Float)
     text: Mapped[str] = mapped_column(Text, default="")
     edited_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    identity_override_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("speaker_profiles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    identity_override_detection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("speaker_detections.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    identity_override_unknown: Mapped[bool] = mapped_column(Boolean, default=False)
+    identity_corrected_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    identity_corrected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SpeakerRelabelSample(Base):
+    __tablename__ = "speaker_relabel_samples"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recording_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("recordings.id", ondelete="CASCADE"), index=True)
+    analysis_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("speaker_analyses.id", ondelete="CASCADE"), index=True)
+    turn_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("speaker_turns.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    original_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("speaker_profiles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    corrected_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("speaker_profiles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    original_display_name: Mapped[str] = mapped_column(String(120))
+    corrected_display_name: Mapped[str] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    corrected_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
