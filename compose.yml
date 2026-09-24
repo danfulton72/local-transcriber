@@ -20,7 +20,6 @@ services:
   speaker-analyzer:
     build:
       context: ./speaker_service
-    container_name: local-transcriber-speaker-analyzer
     environment:
       HF_TOKEN: ${HF_TOKEN:-}
       HF_HOME: /models

@@ -44,7 +44,6 @@ services:
   speaker-analyzer:
     build:
       context: ${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}/speaker_service
-    container_name: local-transcriber-speaker-analyzer
     env_file:
       - ${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}/.env
     environment:
