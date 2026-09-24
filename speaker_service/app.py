@@ -3,6 +3,7 @@ import io
 import os
 import tempfile
 import time
+import traceback
 import wave
 from pathlib import Path
 
@@ -24,7 +25,115 @@ _pipeline = None
 _pipeline_lock = asyncio.Lock()
 
 
+def _torch_runtime() -> dict:
+    try:
+        import torch
+    except Exception as exc:
+        return {
+            "torch_available": False,
+            "torch_error": f"{type(exc).__name__}: {exc}",
+        }
+
+    result = {
+        "torch_available": True,
+        "torch_version": str(torch.__version__),
+        "torch_cuda": str(torch.version.cuda or ""),
+        "cuda_available": bool(torch.cuda.is_available()),
+        "compiled_arches": list(torch.cuda.get_arch_list()) if torch.version.cuda else [],
+        "gpu_count": int(torch.cuda.device_count()) if torch.cuda.is_available() else 0,
+        "gpus": [],
+    }
+    if torch.cuda.is_available():
+        for index in range(torch.cuda.device_count()):
+            props = torch.cuda.get_device_properties(index)
+            capability = torch.cuda.get_device_capability(index)
+            arch = f"sm_{capability[0]}{capability[1]}"
+            result["gpus"].append({
+                "index": index,
+                "name": props.name,
+                "capability": f"{capability[0]}.{capability[1]}",
+                "arch": arch,
+                "memory_gb": round(props.total_memory / (1024 ** 3), 1),
+                "compiled_kernel": arch in result["compiled_arches"],
+            })
+    return result
+
+
+def _selected_cuda_index() -> int:
+    if not DEVICE.startswith("cuda"):
+        return -1
+    if ":" in DEVICE:
+        try:
+            return int(DEVICE.split(":", 1)[1])
+        except ValueError:
+            return 0
+    return 0
+
+
+def _validate_device_sync() -> None:
+    if DEVICE == "cpu":
+        return
+
+    import torch
+
+    if not DEVICE.startswith("cuda"):
+        raise RuntimeError(f"Unsupported SPEAKER_DEVICE '{DEVICE}'. Use cpu, cuda, or cuda:N.")
+    if not torch.cuda.is_available():
+        raise RuntimeError("SPEAKER_DEVICE requests CUDA but PyTorch cannot see an NVIDIA GPU.")
+
+    index = _selected_cuda_index()
+    if index < 0 or index >= torch.cuda.device_count():
+        raise RuntimeError(
+            f"SPEAKER_DEVICE={DEVICE} selects GPU {index}, but only "
+            f"{torch.cuda.device_count()} CUDA device(s) are visible."
+        )
+
+    capability = torch.cuda.get_device_capability(index)
+    arch = f"sm_{capability[0]}{capability[1]}"
+    compiled = list(torch.cuda.get_arch_list())
+    if compiled and arch not in compiled:
+        name = torch.cuda.get_device_name(index)
+        raise RuntimeError(
+            f"{name} uses CUDA architecture {arch}, but this PyTorch build "
+            f"contains kernels for {', '.join(compiled)}. "
+            "Use the CUDA 12.6 speaker image for Pascal GPUs such as Tesla P4."
+        )
+
+
+def _public_error(exc: Exception) -> str:
+    message = str(exc).strip()
+    lower = message.lower()
+
+    if "no kernel image is available" in lower or "not compatible with the current pytorch" in lower:
+        return (
+            "The selected GPU is not supported by this PyTorch CUDA build. "
+            "Tesla P4/Pascal requires the CUDA 12.6 speaker-analyzer image."
+        )
+    if "out of memory" in lower and "cuda" in lower:
+        return (
+            "Speaker analysis ran out of GPU memory. Try a shorter recording, "
+            "reduce the expected speaker count, or use SPEAKER_DEVICE=cpu."
+        )
+    if (
+        "401" in message
+        or "403" in message
+        or "gated repo" in lower
+        or "access to model" in lower
+        or "hugging face" in lower and ("token" in lower or "auth" in lower)
+    ):
+        return (
+            "Pyannote model access failed. Check HF_TOKEN and confirm that the "
+            "pyannote/speaker-diarization-community-1 access conditions were accepted."
+        )
+    if isinstance(exc, RuntimeError):
+        return message[:900] or "Speaker analysis runtime error."
+    return f"{type(exc).__name__}: {message[:800]}" if message else type(exc).__name__
+
+
+
+
 def _load_pipeline_sync():
+    _validate_device_sync()
     source = MODEL
     if Path(MODEL).exists():
         source = str(Path(MODEL).resolve())
@@ -128,13 +237,26 @@ async def _transcribe_turn(client: httpx.AsyncClient, wav_data: bytes, language:
 async def health() -> dict:
     local_model = Path(MODEL).exists()
     configured = local_model or bool(HF_TOKEN)
+    runtime = await asyncio.to_thread(_torch_runtime)
+
+    status = "ok" if configured else "needs_token"
+    device_error = None
+    if configured and DEVICE != "cpu":
+        try:
+            await asyncio.to_thread(_validate_device_sync)
+        except Exception as exc:
+            status = "device_error"
+            device_error = _public_error(exc)
+
     return {
-        "status": "ok" if configured else "needs_token",
+        "status": status,
         "configured": configured,
         "loaded": _pipeline is not None,
         "model": MODEL,
         "device": DEVICE,
         "local_model": local_model,
+        "device_error": device_error,
+        **runtime,
     }
 
 
@@ -206,5 +328,10 @@ async def analyze(
             "turns": turns,
             "processing_seconds": round(time.perf_counter() - started, 3),
         }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=_public_error(exc)) from exc
     finally:
         path.unlink(missing_ok=True)
