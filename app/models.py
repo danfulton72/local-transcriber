@@ -214,6 +214,7 @@ class SpeakerTurn(Base):
         ForeignKey("speaker_detections.id", ondelete="SET NULL"), nullable=True, index=True
     )
     identity_override_unknown: Mapped[bool] = mapped_column(Boolean, default=False)
+    identity_override_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     identity_corrected_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )

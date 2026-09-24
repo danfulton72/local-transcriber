@@ -1,4 +1,4 @@
-const CACHE = 'talk-to-type-v10';
+const CACHE = 'talk-to-type-v11';
 const APP_SHELL = ['/', '/styles.css', '/audio-utils.js', '/app.js', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (event) => {

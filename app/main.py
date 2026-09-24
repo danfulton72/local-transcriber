@@ -11,7 +11,7 @@ import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import or_, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
@@ -31,6 +31,7 @@ from .models import (
     SpeakerAnalysis,
     SpeakerDetection,
     SpeakerProfile,
+    SpeakerRelabelSample,
     SpeakerTurn,
     TranscriptRevision,
     TranscriptionChunk,
@@ -44,6 +45,7 @@ from .schemas import (
     RecordingFinish,
     RecordingOut,
     RecordingUpdate,
+    SpeakerIdentityUpdate,
     SpeakerTurnUpdate,
     SpeechRequest,
 )
@@ -54,7 +56,7 @@ from .services.retention import cleanup_expired_audio
 from .admin import router as admin_router
 from .speaker_admin import router as speaker_admin_router
 
-app = FastAPI(title="Local Transcriber", version="0.10.2")
+app = FastAPI(title="Local Transcriber", version="0.10.3")
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(speaker_admin_router)
@@ -415,6 +417,8 @@ async def recording_speaker_turns(
                 "display_name": (
                     "Unknown"
                     if turn.identity_override_unknown
+                    else turn.identity_override_name
+                    if turn.identity_override_name
                     else profiles_by_id[turn.identity_override_profile_id].name
                     if turn.identity_override_profile_id in profiles_by_id
                     else by_id[turn.identity_override_detection_id].display_name
@@ -430,6 +434,7 @@ async def recording_speaker_turns(
                 ),
                 "identity_corrected": bool(
                     turn.identity_override_unknown
+                    or turn.identity_override_name
                     or turn.identity_override_profile_id
                     or turn.identity_override_detection_id
                 ),
@@ -444,6 +449,116 @@ async def recording_speaker_turns(
             if (turn.edited_text if turn.edited_text is not None else turn.text)
         ],
     }
+
+
+@app.patch("/api/recordings/{recording_id}/speaker-turns/{turn_id}/identity")
+async def update_recording_speaker_identity(
+    recording_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    payload: SpeakerIdentityUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    recording = await find_recording(recording_id, db)
+    analysis = await latest_completed_speaker_analysis(recording.id, db)
+    if not analysis:
+        raise HTTPException(status_code=404, detail="No completed speaker analysis is available for this recording.")
+
+    turn = await db.get(SpeakerTurn, turn_id)
+    if not turn or turn.analysis_id != analysis.id:
+        raise HTTPException(status_code=404, detail="Speaker turn not found")
+
+    clean_name = (payload.name or "").strip()
+    selected = sum(bool(value) for value in (clean_name, payload.unknown, payload.clear))
+    if selected != 1 or payload.target_profile_id or payload.target_detection_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose a speaker name, Unknown, or reset to the detected identity.",
+        )
+
+    source_detection = await db.get(SpeakerDetection, turn.detection_id)
+    if not source_detection:
+        raise HTTPException(status_code=409, detail="The original detected speaker is no longer available.")
+
+    turns = [turn]
+    if payload.scope == "detection":
+        turns = (
+            await db.execute(
+                select(SpeakerTurn).where(
+                    SpeakerTurn.analysis_id == analysis.id,
+                    SpeakerTurn.detection_id == turn.detection_id,
+                )
+            )
+        ).scalars().all()
+
+    target_profile = None
+    if clean_name:
+        target_profile = (
+            await db.execute(
+                select(SpeakerProfile).where(
+                    func.lower(SpeakerProfile.name) == clean_name.casefold()
+                )
+            )
+        ).scalar_one_or_none()
+
+    now = utcnow()
+    user_id = current_user_id()
+    for item in turns:
+        item_detection = await db.get(SpeakerDetection, item.detection_id)
+        if not item_detection:
+            continue
+
+        existing = (
+            await db.execute(
+                select(SpeakerRelabelSample).where(SpeakerRelabelSample.turn_id == item.id)
+            )
+        ).scalar_one_or_none()
+
+        reset_to_detected = payload.clear or (
+            clean_name and clean_name.casefold() == item_detection.display_name.casefold()
+        )
+        if reset_to_detected:
+            item.identity_override_profile_id = None
+            item.identity_override_detection_id = None
+            item.identity_override_unknown = False
+            item.identity_override_name = None
+            item.identity_corrected_by_user_id = None
+            item.identity_corrected_at = None
+            if existing:
+                await db.delete(existing)
+            continue
+
+        corrected_name = "Unknown" if payload.unknown else clean_name
+        item.identity_override_profile_id = target_profile.id if target_profile else None
+        item.identity_override_detection_id = None
+        item.identity_override_unknown = bool(payload.unknown)
+        item.identity_override_name = None if target_profile or payload.unknown else corrected_name
+        item.identity_corrected_by_user_id = user_id
+        item.identity_corrected_at = now
+
+        if existing is None:
+            db.add(
+                SpeakerRelabelSample(
+                    recording_id=recording.id,
+                    analysis_id=analysis.id,
+                    turn_id=item.id,
+                    original_profile_id=item_detection.profile_id,
+                    corrected_profile_id=target_profile.id if target_profile else None,
+                    original_display_name=item_detection.display_name,
+                    corrected_display_name=corrected_name,
+                    status="pending",
+                    corrected_by_user_id=user_id,
+                    created_at=now,
+                )
+            )
+        else:
+            existing.corrected_profile_id = target_profile.id if target_profile else None
+            existing.corrected_display_name = corrected_name
+            existing.corrected_by_user_id = user_id
+            existing.status = "pending"
+            existing.reviewed_at = None
+
+    await db.commit()
+    return await recording_speaker_turns(recording_id, db)
 
 
 @app.patch("/api/recordings/{recording_id}/speaker-turns/{turn_id}")

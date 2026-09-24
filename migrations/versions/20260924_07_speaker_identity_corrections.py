@@ -42,6 +42,8 @@ def upgrade() -> None:
             batch.create_index("ix_speaker_turns_identity_override_detection_id", ["identity_override_detection_id"])
         if "identity_override_unknown" not in columns:
             batch.add_column(sa.Column("identity_override_unknown", sa.Boolean(), nullable=False, server_default=sa.false()))
+        if "identity_override_name" not in columns:
+            batch.add_column(sa.Column("identity_override_name", sa.String(length=120), nullable=True))
         if "identity_corrected_by_user_id" not in columns:
             batch.add_column(sa.Column("identity_corrected_by_user_id", sa.Uuid(), nullable=True))
             batch.create_foreign_key(
@@ -93,6 +95,8 @@ def downgrade() -> None:
             batch.drop_column("identity_corrected_at")
         if "identity_corrected_by_user_id" in columns:
             batch.drop_column("identity_corrected_by_user_id")
+        if "identity_override_name" in columns:
+            batch.drop_column("identity_override_name")
         if "identity_override_unknown" in columns:
             batch.drop_column("identity_override_unknown")
         if "identity_override_detection_id" in columns:
