@@ -2184,3 +2184,33 @@ body.reading-focus .playback-bar{
     width:100%;
   }
 }
+
+
+.speaker-turn.identity-corrected{
+  border-color:color-mix(in srgb,var(--accent) 45%,var(--border));
+}
+.speaker-identity-correction{
+  display:grid;
+  grid-template-columns:minmax(180px,1fr) auto auto;
+  gap:8px;
+  align-items:center;
+  margin-top:.65rem;
+}
+.speaker-identity-correction .small-note{grid-column:1/-1}
+.relabel-panel{margin-top:1rem}
+.relabel-samples-list{display:grid;gap:9px}
+.relabel-sample-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:12px;
+  align-items:center;
+  padding:.75rem 0;
+  border-bottom:1px solid var(--border);
+}
+.relabel-sample-row:last-child{border-bottom:0}
+.relabel-sample-info{display:grid;gap:3px}
+@media (max-width: 760px){
+  .speaker-identity-correction,
+  .relabel-sample-row{grid-template-columns:1fr}
+  .speaker-identity-correction button{width:100%}
+}
