@@ -108,3 +108,17 @@ def test_parent_speaker_cards_offer_voice_preview():
     assert "toggleSpeakerPreview" in source
     assert "Play the longest continuous section attributed to this speaker" in source
     assert ".speaker-preview-button" in styles
+
+
+
+def test_remembered_voice_samples_offer_owned_playback():
+    from pathlib import Path
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    styles = Path("app/static/styles.css").read_text(encoding="utf-8")
+
+    assert "toggleRememberedSamplePreview" in source
+    assert "'/samples/' + sample.id + '/sample-audio'" in source
+    assert "This sample came from another user; its source audio stays private." in source
+    assert "voice-sample-actions" in source
+    assert ".voice-sample-preview" in styles
