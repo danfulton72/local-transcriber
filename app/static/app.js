@@ -59,6 +59,7 @@
     speakerPolling: false,
     speakerTurns: [],
     speakerProfiles: [],
+    knownSpeakerProfiles: [],
     speakerPreviewAudio: null,
     speakerPreviewUrl: null,
     speakerPreviewKey: null,
@@ -74,6 +75,8 @@
     recordButton: $('recordButton'), recordButtonIcon: $('recordButtonIcon'), recordButtonText: $('recordButtonText'), meter: $('meter'),
     statusText: $('statusText'), statusDetail: $('statusDetail'), timer: $('timer'), pauseButton: $('pauseButton'),
     errorBox: $('errorBox'), transcriptView: $('transcriptView'), wordCount: $('wordCount'),
+    recordingTitleRow: $('recordingTitleRow'), recordingTitleInput: $('recordingTitleInput'),
+    saveRecordingTitleButton: $('saveRecordingTitleButton'), recordingTitleStatus: $('recordingTitleStatus'),
     editorWrap: $('editorWrap'), sentenceEditor: $('sentenceEditor'), editSaveStatus: $('editSaveStatus'), saveEditButton: $('saveEditButton'), cancelEditButton: $('cancelEditButton'),
     hearButton: $('hearButton'), focusButton: $('focusButton'), focusExitButton: $('focusExitButton'), useWordsButton: $('useWordsButton'),
     playRecordingButton: $('playRecordingButton'), editButton: $('editButton'), favouriteButton: $('favouriteButton'), newButton: $('newButton'), keepTalkingButton: $('keepTalkingButton'),
@@ -190,7 +193,7 @@
   }
 
   async function startAuthenticatedApp() {
-    await Promise.allSettled([checkHealth(), loadVoices()]);
+    await Promise.allSettled([checkHealth(), loadVoices(), loadKnownSpeakerProfiles()]);
     renderTranscript();
     syncRecordingUI();
     await checkRecoverable();
@@ -531,6 +534,7 @@
     const labelledTurns = !liveMode && Array.isArray(state.speakerTurns)
       ? state.speakerTurns.filter((turn) => String(turn?.text || '').trim())
       : [];
+    syncRecordingTitleUI();
     els.transcriptView.replaceChildren();
     els.transcriptView.classList.toggle('speaker-labelled', labelledTurns.length > 0);
     const count = wordCount(text);
@@ -803,6 +807,55 @@
       }
       if ([...els.voice.options].some((o) => o.value === selected)) els.voice.value = selected;
     } catch {}
+  }
+
+  async function loadKnownSpeakerProfiles() {
+    try {
+      const profiles = await api('/api/speaker-profiles', { cache: 'no-store' });
+      state.knownSpeakerProfiles = Array.isArray(profiles) ? profiles : [];
+    } catch {
+      state.knownSpeakerProfiles = [];
+    }
+    return state.knownSpeakerProfiles;
+  }
+
+  function syncRecordingTitleUI() {
+    if (!els.recordingTitleRow) return;
+    const record = state.currentRecording;
+    const visible = Boolean(record && record.status === 'ready' && !state.recording && !state.transcribing);
+    els.recordingTitleRow.classList.toggle('hidden', !visible);
+    if (!visible) {
+      if (els.recordingTitleStatus) els.recordingTitleStatus.textContent = '';
+      return;
+    }
+    if (document.activeElement !== els.recordingTitleInput) {
+      els.recordingTitleInput.value = record.title || '';
+    }
+  }
+
+  async function saveRecordingTitle() {
+    const record = state.currentRecording;
+    if (!record || record.status !== 'ready') return;
+    const title = els.recordingTitleInput.value.trim();
+    els.saveRecordingTitleButton.disabled = true;
+    els.recordingTitleStatus.textContent = 'Saving…';
+    try {
+      const updated = await api('/api/recordings/' + record.id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      if (state.currentRecording?.id !== record.id) return;
+      state.currentRecording = updated;
+      els.recordingTitleInput.value = updated.title || '';
+      els.recordingTitleStatus.textContent = 'Saved ✓';
+      showToast('Title saved');
+    } catch (error) {
+      els.recordingTitleStatus.textContent = 'Not saved';
+      setError('Could not save this title: ' + error.message);
+    } finally {
+      els.saveRecordingTitleButton.disabled = false;
+    }
   }
 
   function captureModeLabel(mode = els.captureSource?.value || 'microphone') {
