@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     default_language: str = ""
     default_voice: str = "en_GB-northern_english_male-medium"
     speaker_service_url: str = "http://speaker-analyzer:9000"
+    speaker_swap_url: str = ""
+    speaker_swap_model: str = "speaker_auto"
+    speaker_swap_key: str = ""
+    speaker_restore_previous: bool = True
     speaker_match_threshold: float = 0.78
 
 
