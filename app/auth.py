@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 COOKIE_NAME = "talk_to_type_session"
 PBKDF2_ITERATIONS = 600_000
+_actor_user_id: ContextVar[uuid.UUID | None] = ContextVar("actor_user_id", default=None)
 _current_user_id: ContextVar[uuid.UUID | None] = ContextVar("current_user_id", default=None)
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{2,80}$")
 
@@ -127,14 +128,14 @@ async def ensure_default_user(db: AsyncSession) -> User:
     return user
 
 
-async def user_from_request(request: Request, db: AsyncSession) -> User | None:
+async def session_from_request(request: Request, db: AsyncSession) -> UserSession | None:
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         return None
 
     now = datetime.now(timezone.utc)
     token_hash = session_token_hash(token)
-    session = (
+    return (
         await db.execute(
             select(UserSession).where(
                 UserSession.token_hash == token_hash,
@@ -142,13 +143,36 @@ async def user_from_request(request: Request, db: AsyncSession) -> User | None:
             )
         )
     ).scalar_one_or_none()
+
+
+async def user_from_request(request: Request, db: AsyncSession) -> User | None:
+    session = await session_from_request(request, db)
     if not session:
         return None
-
     user = await db.get(User, session.user_id)
     if not user or not user.is_active:
         return None
     return user
+
+
+async def request_identity_from_request(
+    request: Request,
+    db: AsyncSession,
+) -> tuple[User, User, UserSession] | None:
+    session = await session_from_request(request, db)
+    if not session:
+        return None
+
+    actor = await db.get(User, session.user_id)
+    if not actor or not actor.is_active:
+        return None
+
+    effective = actor
+    if actor.is_admin and session.acting_as_user_id:
+        target = await db.get(User, session.acting_as_user_id)
+        if target and target.is_active and not target.is_admin:
+            effective = target
+    return actor, effective, session
 
 
 async def optional_user(
@@ -158,12 +182,21 @@ async def optional_user(
     return await user_from_request(request, db)
 
 
-def set_current_user_id(user_id: uuid.UUID):
-    return _current_user_id.set(user_id)
+def set_request_user_ids(actor_id: uuid.UUID, effective_user_id: uuid.UUID):
+    return _actor_user_id.set(actor_id), _current_user_id.set(effective_user_id)
 
 
-def reset_current_user_id(token) -> None:
-    _current_user_id.reset(token)
+def reset_request_user_ids(tokens) -> None:
+    actor_token, effective_token = tokens
+    _actor_user_id.reset(actor_token)
+    _current_user_id.reset(effective_token)
+
+
+def actor_user_id() -> uuid.UUID:
+    user_id = _actor_user_id.get()
+    if user_id is None:
+        raise RuntimeError("No authenticated actor in request context.")
+    return user_id
 
 
 def current_user_id() -> uuid.UUID:
@@ -171,6 +204,10 @@ def current_user_id() -> uuid.UUID:
     if user_id is None:
         raise RuntimeError("No authenticated user in request context.")
     return user_id
+
+
+def is_acting_as() -> bool:
+    return actor_user_id() != current_user_id()
 
 
 async def require_user(user: User | None = Depends(optional_user)) -> User:
@@ -233,7 +270,7 @@ async def login(
         samesite="lax",
         path="/",
     )
-    return {"user": user_payload(user)}
+    return {"user": user_payload(user), "acting_as": None}
 
 
 @router.post("/logout", status_code=204)
@@ -254,5 +291,15 @@ async def logout(
 
 
 @router.get("/me")
-async def me(user: User = Depends(require_user)) -> dict:
-    return {"user": user_payload(user)}
+async def me(
+    request: Request,
+    user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    acting_as = None
+    session = await session_from_request(request, db)
+    if user.is_admin and session and session.acting_as_user_id:
+        target = await db.get(User, session.acting_as_user_id)
+        if target and target.is_active and not target.is_admin:
+            acting_as = user_payload(target)
+    return {"user": user_payload(user), "acting_as": acting_as}
