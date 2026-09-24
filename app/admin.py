@@ -266,10 +266,10 @@ async def update_user(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         invalidate_sessions = True
-    if payload.is_active is not None:
+    if payload.is_active is not None and payload.is_active != user.is_active:
         user.is_active = payload.is_active
         invalidate_sessions = True
-    if payload.is_admin is not None:
+    if payload.is_admin is not None and payload.is_admin != user.is_admin:
         user.is_admin = payload.is_admin
         invalidate_sessions = True
 
