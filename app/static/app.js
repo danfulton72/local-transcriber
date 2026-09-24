@@ -1468,8 +1468,17 @@
         els.speakerServiceStatus.textContent = 'Needs HF token';
         els.speakerServiceStatus.className = 'pill speaker-warning';
         els.speakerAnalysisMessage.textContent = 'Accept the pyannote Community-1 terms and add HF_TOKEN to .env.';
+      } else if (service.status === 'device_error') {
+        els.speakerServiceStatus.textContent = 'GPU problem';
+        els.speakerServiceStatus.className = 'pill speaker-warning';
+        els.speakerAnalysisMessage.textContent = service.device_error || 'The selected GPU is not compatible with the speaker analyzer.';
       } else {
-        els.speakerServiceStatus.textContent = service.loaded ? 'Ready' : 'Ready · model loads on first use';
+        const gpu = Array.isArray(service.gpus)
+          ? service.gpus.find((item) => String(service.device || '').endsWith(':' + item.index))
+            || service.gpus[0]
+          : null;
+        const gpuText = gpu?.name ? ' · ' + gpu.name : '';
+        els.speakerServiceStatus.textContent = (service.loaded ? 'Ready' : 'Ready · model loads on first use') + gpuText;
         els.speakerServiceStatus.className = 'pill speaker-ready';
         if (!state.speakerPolling) els.speakerAnalysisMessage.textContent = '';
       }
