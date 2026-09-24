@@ -366,3 +366,194 @@ def test_recording_owner_can_reload_resolved_speaker_turns():
         recording = client.get(f"/api/recordings/{recording_id}").json()
         assert recording["transcript_original"] == "Jack says hello. Paul answers."
         assert recording["transcript_edited"] == "Jack says hello clearly. Paul answers."
+
+
+def test_speaker_identity_corrections_create_private_retraining_samples(monkeypatch):
+    from app.main import app
+    from app import speaker_admin
+    from app.db import SessionLocal
+    from app.models import (
+        Recording,
+        SpeakerAnalysis,
+        SpeakerDetection,
+        SpeakerProfile,
+        SpeakerTurn,
+    )
+
+    monkeypatch.setattr(speaker_admin.settings, "parent_pin", "")
+    suffix = uuid.uuid4().hex[:8]
+    target_name = f"Correct Speaker {suffix}"
+
+    with TestClient(app) as client:
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "local", "password": "change-me-now"},
+        )
+        assert login.status_code == 200
+
+        created = client.post("/api/recordings", json={"language": "en"}).json()
+        recording_id = created["id"]
+        finished = client.post(
+            f"/api/recordings/{recording_id}/finish",
+            json={"transcript": "First turn. Second turn.", "duration_seconds": 6.0},
+        )
+        assert finished.status_code == 200
+        uploaded = client.post(
+            f"/api/recordings/{recording_id}/audio",
+            files={"file": ("conversation.wav", make_test_wav(6.0), "audio/wav")},
+            data={"duration_seconds": "6.0"},
+        )
+        assert uploaded.status_code == 200
+
+        async def seed():
+            async with SessionLocal() as db:
+                wrong_profile = SpeakerProfile(
+                    name=f"Wrong Speaker {suffix}",
+                    embedding=[1.0, 0.0],
+                    sample_count=1,
+                )
+                correct_profile = SpeakerProfile(
+                    name=target_name,
+                    embedding=[0.0, 1.0],
+                    sample_count=1,
+                )
+                db.add_all([wrong_profile, correct_profile])
+                await db.flush()
+
+                analysis = SpeakerAnalysis(
+                    recording_id=uuid.UUID(recording_id),
+                    status="completed",
+                    speaker_count=1,
+                )
+                db.add(analysis)
+                await db.flush()
+
+                detection = SpeakerDetection(
+                    analysis_id=analysis.id,
+                    speaker_key="SPEAKER_00",
+                    person_index=1,
+                    display_name=wrong_profile.name,
+                    embedding=[1.0, 0.0],
+                    profile_id=wrong_profile.id,
+                    match_score=0.91,
+                )
+                db.add(detection)
+                await db.flush()
+
+                first = SpeakerTurn(
+                    analysis_id=analysis.id,
+                    detection_id=detection.id,
+                    start_seconds=0.0,
+                    end_seconds=3.0,
+                    text="First turn.",
+                )
+                second = SpeakerTurn(
+                    analysis_id=analysis.id,
+                    detection_id=detection.id,
+                    start_seconds=3.0,
+                    end_seconds=6.0,
+                    text="Second turn.",
+                )
+                db.add_all([first, second])
+                await db.commit()
+                return (
+                    str(analysis.id),
+                    str(first.id),
+                    str(second.id),
+                    str(correct_profile.id),
+                    wrong_profile.name,
+                )
+
+        analysis_id, first_turn_id, second_turn_id, target_profile_id, wrong_name = asyncio.run(seed())
+
+        corrected = client.patch(
+            f"/api/admin/speakers/analyses/{analysis_id}/turns/{first_turn_id}/identity",
+            json={"target_profile_id": target_profile_id, "scope": "detection"},
+        )
+        assert corrected.status_code == 200
+        turns = corrected.json()["turns"]
+        assert [row["display_name"] for row in turns] == [target_name, target_name]
+        assert all(row["identity_corrected"] for row in turns)
+        assert all(row["detected_display_name"] == wrong_name for row in turns)
+
+        reopened = client.get(f"/api/recordings/{recording_id}/speaker-turns")
+        assert reopened.status_code == 200
+        assert [row["display_name"] for row in reopened.json()["turns"]] == [
+            target_name,
+            target_name,
+        ]
+
+        relabels = client.get("/api/admin/speakers/relabels")
+        assert relabels.status_code == 200
+        rows = [
+            row for row in relabels.json()
+            if row["analysis_id"] == analysis_id
+        ]
+        assert len(rows) == 2
+        assert all(row["original_display_name"] == wrong_name for row in rows)
+        assert all(row["corrected_display_name"] == target_name for row in rows)
+        assert all(row["training_ready"] is True for row in rows)
+
+        sample = next(row for row in rows if row["turn_id"] == first_turn_id)
+        preview = client.get(f"/api/admin/speakers/relabels/{sample['id']}/sample-audio")
+        assert preview.status_code == 200
+        assert preview.headers["content-type"].startswith("audio/wav")
+
+        approved = client.patch(
+            f"/api/admin/speakers/relabels/{sample['id']}",
+            json={"status": "approved"},
+        )
+        assert approved.status_code == 200
+        assert approved.json()["status"] == "approved"
+
+        second_username = f"relabel-private-{suffix}"
+        second_password = "relabel-private-password"
+        created_user = client.post(
+            "/api/admin/users",
+            json={
+                "username": second_username,
+                "display_name": "Relabel privacy user",
+                "password": second_password,
+            },
+        )
+        assert created_user.status_code == 201
+        client.post("/api/auth/logout")
+        second_login = client.post(
+            "/api/auth/login",
+            json={"username": second_username, "password": second_password},
+        )
+        assert second_login.status_code == 200
+
+        private_list = client.get("/api/admin/speakers/relabels")
+        assert private_list.status_code == 200
+        assert all(row["analysis_id"] != analysis_id for row in private_list.json())
+        blocked_audio = client.get(f"/api/admin/speakers/relabels/{sample['id']}/sample-audio")
+        assert blocked_audio.status_code == 404
+        blocked_undo = client.delete(
+            f"/api/admin/speakers/relabels/{sample['id']}/correction"
+        )
+        assert blocked_undo.status_code == 404
+
+        client.post("/api/auth/logout")
+        relogin = client.post(
+            "/api/auth/login",
+            json={"username": "local", "password": "change-me-now"},
+        )
+        assert relogin.status_code == 200
+
+        reset = client.patch(
+            f"/api/admin/speakers/analyses/{analysis_id}/turns/{second_turn_id}/identity",
+            json={"clear": True, "scope": "turn"},
+        )
+        assert reset.status_code == 200
+        reset_turns = {row["id"]: row for row in reset.json()["turns"]}
+        assert reset_turns[second_turn_id]["display_name"] == wrong_name
+        assert reset_turns[second_turn_id]["identity_corrected"] is False
+        assert reset_turns[first_turn_id]["display_name"] == target_name
+
+        undo = client.delete(
+            f"/api/admin/speakers/relabels/{sample['id']}/correction"
+        )
+        assert undo.status_code == 204
+        final_turns = client.get(f"/api/recordings/{recording_id}/speaker-turns").json()["turns"]
+        assert [row["display_name"] for row in final_turns] == [wrong_name, wrong_name]

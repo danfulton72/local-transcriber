@@ -19,6 +19,7 @@ from .models import (
     SpeakerDetection,
     SpeakerProfile,
     SpeakerProfileSample,
+    SpeakerRelabelSample,
     SpeakerTurn,
 )
 from .services.progress import word_count
@@ -47,6 +48,18 @@ class RememberSpeakerRequest(BaseModel):
 
 class RenameProfileRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+
+
+class TurnIdentityUpdate(BaseModel):
+    target_profile_id: uuid.UUID | None = None
+    target_detection_id: uuid.UUID | None = None
+    unknown: bool = False
+    clear: bool = False
+    scope: str = Field(default="turn", pattern="^(turn|detection)$")
+
+
+class RelabelStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(pending|approved|excluded)$")
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -173,6 +186,8 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
         )
     ).scalars().all()
     by_id = {item.id: item for item in detections}
+    profiles = (await db.execute(select(SpeakerProfile))).scalars().all()
+    profiles_by_id = {item.id: item for item in profiles}
     speech_by_detection: dict[uuid.UUID, float] = {}
     longest_turn_by_detection: dict[uuid.UUID, float] = {}
     for turn in turns:
@@ -214,8 +229,47 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
         "turns": [
             {
                 "id": str(turn.id),
+                "detection_id": str(turn.detection_id),
                 "speaker_key": by_id[turn.detection_id].speaker_key if turn.detection_id in by_id else "",
-                "display_name": by_id[turn.detection_id].display_name if turn.detection_id in by_id else "Speaker",
+                "detected_display_name": by_id[turn.detection_id].display_name if turn.detection_id in by_id else "Speaker",
+                "display_name": (
+                    "Unknown"
+                    if turn.identity_override_unknown
+                    else profiles_by_id[turn.identity_override_profile_id].name
+                    if turn.identity_override_profile_id in profiles_by_id
+                    else by_id[turn.identity_override_detection_id].display_name
+                    if turn.identity_override_detection_id in by_id
+                    else by_id[turn.detection_id].display_name
+                    if turn.detection_id in by_id
+                    else "Speaker"
+                ),
+                "effective_profile_id": (
+                    str(turn.identity_override_profile_id)
+                    if turn.identity_override_profile_id in profiles_by_id
+                    else (
+                        str(by_id[turn.identity_override_detection_id].profile_id)
+                        if by_id[turn.identity_override_detection_id].profile_id
+                        else None
+                    )
+                    if turn.identity_override_detection_id in by_id
+                    else str(by_id[turn.detection_id].profile_id)
+                    if turn.detection_id in by_id and by_id[turn.detection_id].profile_id
+                    else None
+                ),
+                "identity_corrected": bool(
+                    turn.identity_override_unknown
+                    or turn.identity_override_profile_id
+                    or turn.identity_override_detection_id
+                ),
+                "identity_override_profile_id": (
+                    str(turn.identity_override_profile_id)
+                    if turn.identity_override_profile_id else None
+                ),
+                "identity_override_detection_id": (
+                    str(turn.identity_override_detection_id)
+                    if turn.identity_override_detection_id else None
+                ),
+                "identity_override_unknown": bool(turn.identity_override_unknown),
                 "start_seconds": round(turn.start_seconds, 2),
                 "end_seconds": round(turn.end_seconds, 2),
                 "text": turn.edited_text if turn.edited_text is not None else turn.text,
@@ -526,6 +580,124 @@ async def label_detection(
     return {"speaker_key": detection.speaker_key, "display_name": detection.display_name}
 
 
+@router.patch("/analyses/{analysis_id}/turns/{turn_id}/identity")
+async def correct_turn_identity(
+    analysis_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    payload: TurnIdentityUpdate,
+    x_parent_pin: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    require_parent_pin(x_parent_pin)
+    analysis = await owned_analysis(analysis_id, db)
+    turn = await db.get(SpeakerTurn, turn_id)
+    if not turn or turn.analysis_id != analysis.id:
+        raise HTTPException(status_code=404, detail="Speaker turn not found")
+
+    selected = sum(bool(value) for value in (
+        payload.target_profile_id,
+        payload.target_detection_id,
+        payload.unknown,
+        payload.clear,
+    ))
+    if selected != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose exactly one corrected identity, Unknown, or reset to the detected identity.",
+        )
+
+    source_detection = await db.get(SpeakerDetection, turn.detection_id)
+    if not source_detection:
+        raise HTTPException(status_code=409, detail="The original detected speaker is no longer available.")
+
+    target_profile = None
+    target_detection = None
+    corrected_name = source_detection.display_name
+    corrected_profile_id = source_detection.profile_id
+
+    if payload.target_profile_id:
+        target_profile = await db.get(SpeakerProfile, payload.target_profile_id)
+        if not target_profile:
+            raise HTTPException(status_code=404, detail="Remembered speaker not found")
+        corrected_name = target_profile.name
+        corrected_profile_id = target_profile.id
+    elif payload.target_detection_id:
+        target_detection = await db.get(SpeakerDetection, payload.target_detection_id)
+        if not target_detection or target_detection.analysis_id != analysis.id:
+            raise HTTPException(status_code=404, detail="Detected speaker not found")
+        corrected_name = target_detection.display_name
+        corrected_profile_id = target_detection.profile_id
+    elif payload.unknown:
+        corrected_name = "Unknown"
+        corrected_profile_id = None
+
+    turns = [turn]
+    if payload.scope == "detection":
+        turns = (
+            await db.execute(
+                select(SpeakerTurn).where(
+                    SpeakerTurn.analysis_id == analysis.id,
+                    SpeakerTurn.detection_id == turn.detection_id,
+                )
+            )
+        ).scalars().all()
+
+    now = datetime.now(timezone.utc)
+    user_id = current_user_id()
+    for item in turns:
+        item_source = await db.get(SpeakerDetection, item.detection_id)
+        if not item_source:
+            continue
+
+        existing = (
+            await db.execute(
+                select(SpeakerRelabelSample).where(SpeakerRelabelSample.turn_id == item.id)
+            )
+        ).scalar_one_or_none()
+
+        if payload.clear or (
+            target_detection is not None and target_detection.id == item.detection_id
+        ):
+            item.identity_override_profile_id = None
+            item.identity_override_detection_id = None
+            item.identity_override_unknown = False
+            item.identity_corrected_by_user_id = None
+            item.identity_corrected_at = None
+            if existing:
+                await db.delete(existing)
+            continue
+
+        item.identity_override_profile_id = target_profile.id if target_profile else None
+        item.identity_override_detection_id = target_detection.id if target_detection else None
+        item.identity_override_unknown = bool(payload.unknown)
+        item.identity_corrected_by_user_id = user_id
+        item.identity_corrected_at = now
+
+        if existing is None:
+            existing = SpeakerRelabelSample(
+                recording_id=analysis.recording_id,
+                analysis_id=analysis.id,
+                turn_id=item.id,
+                original_profile_id=item_source.profile_id,
+                original_display_name=item_source.display_name,
+                corrected_display_name=corrected_name,
+                corrected_profile_id=corrected_profile_id,
+                corrected_by_user_id=user_id,
+                status="pending",
+                created_at=now,
+            )
+            db.add(existing)
+        else:
+            existing.corrected_profile_id = corrected_profile_id
+            existing.corrected_display_name = corrected_name
+            existing.corrected_by_user_id = user_id
+            existing.status = "pending"
+            existing.reviewed_at = None
+
+    await db.commit()
+    return await _analysis_payload(analysis, db)
+
+
 @router.post("/analyses/{analysis_id}/detections/{speaker_key}/remember")
 async def remember_speaker(
     analysis_id: uuid.UUID,
@@ -727,6 +899,154 @@ async def list_speaker_profiles(
         })
     await db.commit()
     return result
+
+
+@router.get("/relabels")
+async def list_relabel_samples(
+    x_parent_pin: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    require_parent_pin(x_parent_pin)
+    rows = (
+        await db.execute(
+            select(SpeakerRelabelSample).order_by(SpeakerRelabelSample.created_at.desc())
+        )
+    ).scalars().all()
+    recording_ids = {row.recording_id for row in rows}
+    recordings = (
+        await db.execute(
+            select(Recording).where(
+                Recording.id.in_(recording_ids),
+                Recording.user_id == current_user_id(),
+            )
+        )
+    ).scalars().all() if recording_ids else []
+    recordings_by_id = {row.id: row for row in recordings}
+    turns = (
+        await db.execute(
+            select(SpeakerTurn).where(SpeakerTurn.id.in_({row.turn_id for row in rows}))
+        )
+    ).scalars().all() if rows else []
+    turns_by_id = {row.id: row for row in turns}
+
+    result = []
+    for row in rows:
+        recording = recordings_by_id.get(row.recording_id)
+        turn = turns_by_id.get(row.turn_id)
+        if not recording or not turn:
+            continue
+        seconds = max(0.0, turn.end_seconds - turn.start_seconds)
+        result.append({
+            "id": str(row.id),
+            "recording_id": str(row.recording_id),
+            "recording_title": recording.title or "Recording",
+            "analysis_id": str(row.analysis_id),
+            "turn_id": str(row.turn_id),
+            "original_profile_id": str(row.original_profile_id) if row.original_profile_id else None,
+            "corrected_profile_id": str(row.corrected_profile_id) if row.corrected_profile_id else None,
+            "original_display_name": row.original_display_name,
+            "corrected_display_name": row.corrected_display_name,
+            "status": row.status,
+            "start_seconds": round(turn.start_seconds, 2),
+            "end_seconds": round(turn.end_seconds, 2),
+            "preview_seconds": round(min(seconds, 8.0), 2),
+            "can_preview": seconds > 0.0,
+            "training_ready": bool(row.corrected_profile_id and seconds > 0.0),
+            "created_at": row.created_at.isoformat(),
+            "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
+        })
+    return result
+
+
+async def owned_relabel_sample(
+    sample_id: uuid.UUID,
+    db: AsyncSession,
+) -> tuple[SpeakerRelabelSample, Recording, SpeakerTurn]:
+    sample = await db.get(SpeakerRelabelSample, sample_id)
+    if not sample:
+        raise HTTPException(status_code=404, detail="Relabelled voice sample not found")
+    recording = await db.get(Recording, sample.recording_id)
+    if not recording or recording.user_id != current_user_id():
+        raise HTTPException(status_code=404, detail="Relabelled voice sample not found")
+    turn = await db.get(SpeakerTurn, sample.turn_id)
+    if not turn:
+        raise HTTPException(status_code=404, detail="Source speaker turn not found")
+    return sample, recording, turn
+
+
+@router.get("/relabels/{sample_id}/sample-audio")
+async def relabel_sample_audio(
+    sample_id: uuid.UUID,
+    x_parent_pin: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    require_parent_pin(x_parent_pin)
+    sample, recording, turn = await owned_relabel_sample(sample_id, db)
+    if turn.end_seconds <= turn.start_seconds:
+        raise HTTPException(status_code=404, detail="No playable speech is available for this sample.")
+
+    combined_path = None
+    delete_combined = False
+    try:
+        combined_path, delete_combined, _, _ = await build_combined_wav(recording, db)
+        clip, clip_start, clip_end = extract_wav_clip(
+            combined_path,
+            turn.start_seconds,
+            turn.end_seconds,
+            max_seconds=8.0,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        if delete_combined and combined_path is not None:
+            combined_path.unlink(missing_ok=True)
+
+    return Response(
+        content=clip,
+        media_type="audio/wav",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Relabel-Sample": str(sample.id),
+            "X-Clip-Start": f"{clip_start:.3f}",
+            "X-Clip-End": f"{clip_end:.3f}",
+        },
+    )
+
+
+@router.patch("/relabels/{sample_id}")
+async def review_relabel_sample(
+    sample_id: uuid.UUID,
+    payload: RelabelStatusUpdate,
+    x_parent_pin: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    require_parent_pin(x_parent_pin)
+    sample, _, _ = await owned_relabel_sample(sample_id, db)
+    sample.status = payload.status
+    sample.reviewed_at = None if payload.status == "pending" else datetime.now(timezone.utc)
+    await db.commit()
+    return {
+        "id": str(sample.id),
+        "status": sample.status,
+        "reviewed_at": sample.reviewed_at.isoformat() if sample.reviewed_at else None,
+    }
+
+
+@router.delete("/relabels/{sample_id}/correction", status_code=204)
+async def undo_relabel_correction(
+    sample_id: uuid.UUID,
+    x_parent_pin: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    require_parent_pin(x_parent_pin)
+    sample, _, turn = await owned_relabel_sample(sample_id, db)
+    turn.identity_override_profile_id = None
+    turn.identity_override_detection_id = None
+    turn.identity_override_unknown = False
+    turn.identity_corrected_by_user_id = None
+    turn.identity_corrected_at = None
+    await db.delete(sample)
+    await db.commit()
 
 
 @router.patch("/profiles/{profile_id}")

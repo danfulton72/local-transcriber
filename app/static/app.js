@@ -57,6 +57,7 @@
     currentSpeakerAnalysisId: null,
     speakerPolling: false,
     speakerTurns: [],
+    speakerProfiles: [],
     speakerPreviewAudio: null,
     speakerPreviewUrl: null,
     speakerPreviewKey: null,
@@ -94,6 +95,7 @@
     speakerCountSelect: $('speakerCountSelect'), runSpeakerAnalysisButton: $('runSpeakerAnalysisButton'),
     speakerAnalysisMessage: $('speakerAnalysisMessage'), speakerAnalysisResult: $('speakerAnalysisResult'),
     speakerProfilesList: $('speakerProfilesList'), refreshSpeakerProfilesButton: $('refreshSpeakerProfilesButton'),
+    relabelSamplesList: $('relabelSamplesList'), refreshRelabelSamplesButton: $('refreshRelabelSamplesButton'),
     userList: $('userList'), refreshUsersButton: $('refreshUsersButton'), createUserForm: $('createUserForm'),
     newUsername: $('newUsername'), newUserDisplayName: $('newUserDisplayName'), newUserPassword: $('newUserPassword'),
     createUserButton: $('createUserButton'), userAdminMessage: $('userAdminMessage'),
@@ -1812,7 +1814,7 @@
   }
 
   async function loadSpeakerTools() {
-    await Promise.allSettled([loadSpeakerStatusAndRecordings(), loadSpeakerProfiles()]);
+    await Promise.allSettled([loadSpeakerStatusAndRecordings(), loadSpeakerProfiles(), loadRelabelSamples()]);
     if (state.currentSpeakerAnalysisId && !state.speakerPolling) {
       pollSpeakerAnalysis(state.currentSpeakerAnalysisId, true);
     }
@@ -1876,6 +1878,7 @@
   async function loadSpeakerProfiles() {
     try {
       const profiles = await api('/api/admin/speakers/profiles', { headers: parentHeaders(), cache: 'no-store' });
+      state.speakerProfiles = profiles;
       renderSpeakerProfiles(profiles);
     } catch (error) {
       els.speakerProfilesList.replaceChildren();
@@ -2043,6 +2046,180 @@
 
       row.append(input, meta, save, forget, samples);
       els.speakerProfilesList.appendChild(row);
+    }
+  }
+
+  function identityPayload(value, scope) {
+    const payload = { scope };
+    if (value === 'clear') payload.clear = true;
+    else if (value === 'unknown') payload.unknown = true;
+    else if (value.startsWith('profile:')) payload.target_profile_id = value.slice(8);
+    else if (value.startsWith('detection:')) payload.target_detection_id = value.slice(10);
+    return payload;
+  }
+
+  async function applyTurnIdentityCorrection(analysis, turn, value, scope) {
+    try {
+      const updated = await api(
+        '/api/admin/speakers/analyses/' + analysis.id + '/turns/' + turn.id + '/identity',
+        {
+          method: 'PATCH',
+          headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify(identityPayload(value, scope)),
+        },
+      );
+      renderSpeakerAnalysis(updated);
+      await loadRelabelSamples();
+      showToast(scope === 'detection' ? 'Speaker identity corrected for matching turns' : 'Speaker identity corrected');
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
+
+  async function toggleRelabelSamplePreview(sample, button) {
+    const previewKey = 'relabel:' + sample.id;
+    if (
+      state.speakerPreviewKey === previewKey &&
+      state.speakerPreviewAudio &&
+      !state.speakerPreviewAudio.paused
+    ) {
+      stopSpeakerPreview();
+      return;
+    }
+
+    stopSpeakerPreview();
+    button.disabled = true;
+    button.textContent = 'Loading sample…';
+    try {
+      const response = await fetch(
+        '/api/admin/speakers/relabels/' + sample.id + '/sample-audio',
+        { headers: parentHeaders(), cache: 'no-store' },
+      );
+      if (!response.ok) {
+        let detail = 'Could not load this relabelled voice sample.';
+        try {
+          const payload = await response.json();
+          detail = payload.detail || detail;
+        } catch {}
+        throw new Error(detail);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      state.speakerPreviewAudio = audio;
+      state.speakerPreviewUrl = url;
+      state.speakerPreviewKey = previewKey;
+      state.speakerPreviewButton = button;
+      button.disabled = false;
+      button.textContent = '■ Stop sample';
+      button.setAttribute('aria-pressed', 'true');
+      audio.addEventListener('ended', () => {
+        if (state.speakerPreviewKey === previewKey) stopSpeakerPreview();
+      }, { once: true });
+      audio.addEventListener('error', () => {
+        if (state.speakerPreviewKey === previewKey) {
+          stopSpeakerPreview();
+          showToast('Could not play this relabelled voice sample');
+        }
+      }, { once: true });
+      await audio.play();
+    } catch (error) {
+      stopSpeakerPreview();
+      showToast(error.message);
+    }
+  }
+
+  async function loadRelabelSamples() {
+    if (!els.relabelSamplesList) return;
+    try {
+      const samples = await api('/api/admin/speakers/relabels', { headers: parentHeaders(), cache: 'no-store' });
+      renderRelabelSamples(samples);
+    } catch (error) {
+      els.relabelSamplesList.replaceChildren();
+      const p = document.createElement('p'); p.className = 'error'; p.textContent = error.message;
+      els.relabelSamplesList.appendChild(p);
+    }
+  }
+
+  function renderRelabelSamples(samples) {
+    stopSpeakerPreview();
+    els.relabelSamplesList.replaceChildren();
+    if (!samples.length) {
+      const p = document.createElement('p'); p.className = 'muted';
+      p.textContent = 'No manually relabelled voice samples yet.';
+      els.relabelSamplesList.appendChild(p);
+      return;
+    }
+
+    for (const sample of samples) {
+      const row = document.createElement('div'); row.className = 'relabel-sample-row';
+      const info = document.createElement('div'); info.className = 'relabel-sample-info';
+      const title = document.createElement('strong');
+      title.textContent = sample.original_display_name + ' → ' + sample.corrected_display_name;
+      const detail = document.createElement('span'); detail.className = 'muted';
+      detail.textContent =
+        (sample.recording_title || 'Recording') + ' · ' +
+        formatTime(sample.start_seconds) + ' · ' +
+        friendlyDate(sample.created_at);
+      const status = document.createElement('span');
+      status.className = 'speaker-match ' + (sample.status === 'approved' ? 'matched' : '');
+      status.textContent = sample.status === 'approved'
+        ? 'Approved for training'
+        : sample.status === 'excluded'
+          ? 'Excluded'
+          : 'Needs review';
+      info.append(title, detail, status);
+
+      const actions = document.createElement('div'); actions.className = 'voice-sample-actions';
+      const hear = document.createElement('button'); hear.type = 'button'; hear.className = 'speaker-preview-button';
+      hear.dataset.idleLabel = '▶ Hear · ' + Number(sample.preview_seconds || 0).toFixed(1) + 's';
+      hear.textContent = hear.dataset.idleLabel;
+      hear.disabled = !sample.can_preview;
+      hear.setAttribute('aria-pressed', 'false');
+      hear.addEventListener('click', () => toggleRelabelSamplePreview(sample, hear));
+
+      const approve = document.createElement('button'); approve.type = 'button'; approve.className = 'primary';
+      approve.textContent = 'Approve for training';
+      approve.disabled = !sample.training_ready || sample.status === 'approved';
+      approve.title = sample.training_ready
+        ? 'Mark this corrected sample as ready for a future retraining pass'
+        : 'Assign this turn to a remembered speaker before approving it for training.';
+      approve.addEventListener('click', async () => {
+        await api('/api/admin/speakers/relabels/' + sample.id, {
+          method: 'PATCH',
+          headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'approved' }),
+        });
+        await loadRelabelSamples();
+      });
+
+      const exclude = document.createElement('button'); exclude.type = 'button';
+      exclude.textContent = sample.status === 'excluded' ? 'Excluded' : 'Exclude';
+      exclude.disabled = sample.status === 'excluded';
+      exclude.addEventListener('click', async () => {
+        await api('/api/admin/speakers/relabels/' + sample.id, {
+          method: 'PATCH',
+          headers: { ...parentHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'excluded' }),
+        });
+        await loadRelabelSamples();
+      });
+
+      const undo = document.createElement('button'); undo.type = 'button'; undo.className = 'danger';
+      undo.textContent = 'Undo correction';
+      undo.addEventListener('click', async () => {
+        if (!confirm('Undo this speaker correction and restore the original detected identity?')) return;
+        await api('/api/admin/speakers/relabels/' + sample.id + '/correction', {
+          method: 'DELETE',
+          headers: parentHeaders(),
+        });
+        await loadRelabelSamples();
+        if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
+      });
+
+      actions.append(hear, approve, exclude, undo);
+      row.append(info, actions);
+      els.relabelSamplesList.appendChild(row);
     }
   }
 
@@ -2272,12 +2449,59 @@
     for (const turn of analysis.turns) {
       if (!turn.text) continue;
       const row = document.createElement('div'); row.className = 'speaker-turn';
+      if (turn.identity_corrected) row.classList.add('identity-corrected');
       const meta = document.createElement('div'); meta.className = 'speaker-turn-meta';
       const who = document.createElement('strong'); who.textContent = turn.display_name;
       const when = document.createElement('span'); when.className = 'muted'; when.textContent = formatTime(turn.start_seconds);
       meta.append(who, when);
       const text = document.createElement('p'); text.textContent = turn.text;
-      row.append(meta, text); conversation.appendChild(row);
+
+      const correction = document.createElement('div'); correction.className = 'speaker-identity-correction';
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', 'Correct speaker identity');
+      const detectedOption = document.createElement('option');
+      detectedOption.value = 'clear';
+      detectedOption.textContent = 'Detected: ' + (turn.detected_display_name || 'Speaker');
+      select.appendChild(detectedOption);
+      const unknownOption = document.createElement('option');
+      unknownOption.value = 'unknown'; unknownOption.textContent = 'Unknown speaker';
+      select.appendChild(unknownOption);
+
+      for (const detection of analysis.detections) {
+        if (detection.id === turn.detection_id) continue;
+        const option = document.createElement('option');
+        option.value = 'detection:' + detection.id;
+        option.textContent = 'Detected speaker: ' + detection.display_name;
+        select.appendChild(option);
+      }
+      for (const profile of state.speakerProfiles || []) {
+        const option = document.createElement('option');
+        option.value = 'profile:' + profile.id;
+        option.textContent = 'Remembered: ' + profile.name;
+        select.appendChild(option);
+      }
+
+      if (turn.identity_override_unknown) select.value = 'unknown';
+      else if (turn.identity_override_profile_id) select.value = 'profile:' + turn.identity_override_profile_id;
+      else if (turn.identity_override_detection_id) select.value = 'detection:' + turn.identity_override_detection_id;
+      else select.value = 'clear';
+
+      const applyTurn = document.createElement('button'); applyTurn.type = 'button';
+      applyTurn.textContent = 'Apply to this turn';
+      applyTurn.addEventListener('click', () => applyTurnIdentityCorrection(analysis, turn, select.value, 'turn'));
+
+      const applySpeaker = document.createElement('button'); applySpeaker.type = 'button';
+      applySpeaker.textContent = 'Apply to all ' + (turn.detected_display_name || 'matching turns');
+      applySpeaker.title = 'Apply this correction to every turn from the same original diarized speaker';
+      applySpeaker.addEventListener('click', () => applyTurnIdentityCorrection(analysis, turn, select.value, 'detection'));
+
+      const correctedNote = document.createElement('span'); correctedNote.className = 'muted small-note';
+      correctedNote.textContent = turn.identity_corrected
+        ? 'Manually corrected; original detection retained.'
+        : 'Original detected identity.';
+
+      correction.append(select, applyTurn, applySpeaker, correctedNote);
+      row.append(meta, text, correction); conversation.appendChild(row);
     }
     if (!conversation.children.length) {
       const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'No spoken turns were transcribed.';
@@ -2504,6 +2728,7 @@
   els.progressDays.addEventListener('change', () => { if (!els.progressContent.classList.contains('hidden')) loadProgress(); });
   els.runSpeakerAnalysisButton.addEventListener('click', runSpeakerAnalysis);
   els.refreshSpeakerProfilesButton.addEventListener('click', loadSpeakerProfiles);
+  els.refreshRelabelSamplesButton?.addEventListener('click', loadRelabelSamples);
   els.refreshUsersButton.addEventListener('click', loadUsers);
   els.createUserForm.addEventListener('submit', createUser);
   els.saveRetentionButton.addEventListener('click', saveRetention);
