@@ -181,3 +181,84 @@ def test_remembered_speaker_collects_multiple_samples_and_rejects_short_speech(m
         refreshed = client.get("/api/admin/speakers/profiles").json()
         profile_row = next(row for row in refreshed if row["name"] == "Test Speaker")
         assert profile_row["sample_count"] == 1
+
+
+
+def test_recording_owner_can_reload_resolved_speaker_turns():
+    from app.main import app
+    from app.db import SessionLocal
+    from app.models import SpeakerAnalysis, SpeakerDetection, SpeakerTurn
+
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={"username": "local", "password": "change-me-now"})
+        assert login.status_code == 200
+
+        created = client.post("/api/recordings", json={"language": "en"}).json()
+        recording_id = created["id"]
+        finished = client.post(
+            f"/api/recordings/{recording_id}/finish",
+            json={
+                "transcript": "Jack says hello. Paul answers.",
+                "duration_seconds": 4.0,
+            },
+        )
+        assert finished.status_code == 200
+
+        async def seed_analysis():
+            async with SessionLocal() as db:
+                analysis = SpeakerAnalysis(
+                    recording_id=uuid.UUID(recording_id),
+                    status="completed",
+                    speaker_count=2,
+                )
+                db.add(analysis)
+                await db.flush()
+
+                jack = SpeakerDetection(
+                    analysis_id=analysis.id,
+                    speaker_key="SPEAKER_00",
+                    person_index=1,
+                    display_name="Jack Clancy",
+                    embedding=[1.0, 0.0],
+                )
+                paul = SpeakerDetection(
+                    analysis_id=analysis.id,
+                    speaker_key="SPEAKER_01",
+                    person_index=2,
+                    display_name="Paul Elswood",
+                    embedding=[0.0, 1.0],
+                )
+                db.add_all([jack, paul])
+                await db.flush()
+                db.add_all([
+                    SpeakerTurn(
+                        analysis_id=analysis.id,
+                        detection_id=jack.id,
+                        start_seconds=0.0,
+                        end_seconds=2.0,
+                        text="Jack says hello.",
+                    ),
+                    SpeakerTurn(
+                        analysis_id=analysis.id,
+                        detection_id=paul.id,
+                        start_seconds=2.0,
+                        end_seconds=4.0,
+                        text="Paul answers.",
+                    ),
+                ])
+                await db.commit()
+
+        asyncio.run(seed_analysis())
+
+        response = client.get(f"/api/recordings/{recording_id}/speaker-turns")
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["speaker_count"] == 2
+        assert [turn["display_name"] for turn in payload["turns"]] == [
+            "Jack Clancy",
+            "Paul Elswood",
+        ]
+        assert [turn["text"] for turn in payload["turns"]] == [
+            "Jack says hello.",
+            "Paul answers.",
+        ]
