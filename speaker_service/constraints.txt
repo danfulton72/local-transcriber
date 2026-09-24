@@ -1,0 +1,7 @@
+# Keep the speaker analyzer on the CUDA 12.6-compatible PyTorch stack
+# provided by the base image. pyannote.audio 4.x allows newer torch versions,
+# which can otherwise make pip replace the preinstalled CUDA build.
+pyannote.audio==4.0.7
+torch==2.8.0
+torchaudio==2.8.0
+torchcodec==0.7.0
