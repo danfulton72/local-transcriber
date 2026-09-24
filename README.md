@@ -107,6 +107,28 @@ Downloaded model files are cached under `./speaker-model-cache`, so subsequent a
 
 The speaker analyzer uses the NVIDIA GPU by default (`SPEAKER_DEVICE=cuda`). It is parent-triggered after recording, so it does not alter the child-facing live transcription path.
 
+
+### Tesla P4 / Pascal speaker analyzer
+
+The speaker analyzer image uses **PyTorch 2.8 + CUDA 12.6** deliberately. PyTorch's CUDA 12.8 binaries dropped Pascal kernels, so a Tesla P4 (`sm_61`) can start the container but fail when diarization executes. Keep the speaker service on the CUDA 12.6 image when using a P4.
+
+After deployment, check the runtime seen by the analyzer:
+
+```bash
+curl http://localhost:8090/api/admin/speakers/status \
+  -H "X-Parent-Pin: YOUR_PARENT_PIN"
+```
+
+Or from the Docker host, without app authentication:
+
+```bash
+docker compose exec speaker-analyzer python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.get_device_name(0)); print(torch.cuda.get_device_capability(0)); print(torch.cuda.get_arch_list())"
+```
+
+For a P4 you want the selected GPU to report capability `(6, 1)` and the compiled architecture list to include `sm_61`.
+
+The analyzer also loads the app's PCM WAV directly into an in-memory PyTorch waveform before calling pyannote. This avoids depending on torchcodec/FFmpeg for the actual diarization input path.
+
 ### Workflow
 
 Open **Progress**, enter the parent PIN, then use **Conversation speakers**:
