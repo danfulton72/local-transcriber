@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "local-transcriber"
-version = "0.11.2"
+version = "0.12.0"
 description = "Local-first kid-friendly transcription app with history and progress tracking"
 requires-python = ">=3.12"
 dependencies = [
