@@ -57,6 +57,10 @@
     currentSpeakerAnalysisId: null,
     speakerPolling: false,
     speakerTurns: [],
+    speakerPreviewAudio: null,
+    speakerPreviewUrl: null,
+    speakerPreviewKey: null,
+    speakerPreviewButton: null,
     authUser: null,
   };
 
@@ -1558,6 +1562,7 @@
   }
 
   function switchPage(name) {
+    if (name !== 'progress') stopSpeakerPreview();
     closeDrawer();
     document.querySelectorAll('.page').forEach((page) => page.classList.toggle('active', page.id === 'page-' + name));
     document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.page === name));
@@ -2025,7 +2030,83 @@
     } catch {}
   }
 
+  function stopSpeakerPreview() {
+    if (state.speakerPreviewAudio) {
+      try { state.speakerPreviewAudio.pause(); } catch {}
+    }
+    if (state.speakerPreviewUrl) URL.revokeObjectURL(state.speakerPreviewUrl);
+    if (state.speakerPreviewButton) {
+      state.speakerPreviewButton.textContent = state.speakerPreviewButton.dataset.idleLabel || '▶ Hear sample';
+      state.speakerPreviewButton.setAttribute('aria-pressed', 'false');
+      state.speakerPreviewButton.disabled = false;
+    }
+    state.speakerPreviewAudio = null;
+    state.speakerPreviewUrl = null;
+    state.speakerPreviewKey = null;
+    state.speakerPreviewButton = null;
+  }
+
+  async function toggleSpeakerPreview(analysis, detection, button) {
+    const previewKey = analysis.id + ':' + detection.speaker_key;
+    if (
+      state.speakerPreviewKey === previewKey &&
+      state.speakerPreviewAudio &&
+      !state.speakerPreviewAudio.paused
+    ) {
+      stopSpeakerPreview();
+      return;
+    }
+
+    stopSpeakerPreview();
+    button.disabled = true;
+    button.textContent = 'Loading sample…';
+
+    try {
+      const response = await fetch(
+        '/api/admin/speakers/analyses/' + analysis.id +
+        '/detections/' + encodeURIComponent(detection.speaker_key) + '/sample-audio',
+        { headers: parentHeaders(), cache: 'no-store' },
+      );
+      if (!response.ok) {
+        let detail = 'Could not load this voice sample.';
+        try {
+          const payload = await response.json();
+          detail = payload.detail || detail;
+        } catch {}
+        throw new Error(detail);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      state.speakerPreviewAudio = audio;
+      state.speakerPreviewUrl = url;
+      state.speakerPreviewKey = previewKey;
+      state.speakerPreviewButton = button;
+
+      button.disabled = false;
+      button.textContent = '■ Stop sample';
+      button.setAttribute('aria-pressed', 'true');
+
+      audio.addEventListener('ended', () => {
+        if (state.speakerPreviewKey === previewKey) stopSpeakerPreview();
+      }, { once: true });
+      audio.addEventListener('error', () => {
+        if (state.speakerPreviewKey === previewKey) {
+          stopSpeakerPreview();
+          showToast('Could not play this voice sample');
+        }
+      }, { once: true });
+
+      await audio.play();
+    } catch (error) {
+      stopSpeakerPreview();
+      showToast(error.message);
+    }
+  }
+
   function renderSpeakerAnalysis(analysis) {
+    stopSpeakerPreview();
     els.speakerAnalysisMessage.textContent =
       analysis.speaker_count + ' speaker' + (analysis.speaker_count === 1 ? '' : 's') +
       ' found · processed in ' + analysis.processing_seconds + 's';
@@ -2045,7 +2126,23 @@
       top.append(title, badge);
 
       const input = document.createElement('input'); input.value = detection.display_name; input.setAttribute('aria-label', 'Speaker label');
-      const actions = document.createElement('div'); actions.className = 'button-row';
+
+      const preview = document.createElement('button');
+      preview.type = 'button';
+      preview.className = 'speaker-preview-button';
+      const previewSeconds = Number(detection.preview_seconds || 0);
+      preview.dataset.idleLabel = previewSeconds
+        ? ('▶ Hear sample · ' + previewSeconds.toFixed(1) + 's')
+        : '▶ Hear sample';
+      preview.textContent = preview.dataset.idleLabel;
+      preview.disabled = !detection.can_preview;
+      preview.title = detection.can_preview
+        ? 'Play the longest continuous section attributed to this speaker'
+        : 'No playable attributed speech is available for this speaker.';
+      preview.setAttribute('aria-pressed', 'false');
+      preview.addEventListener('click', () => toggleSpeakerPreview(analysis, detection, preview));
+
+      const actions = document.createElement('div'); actions.className = 'button-row speaker-label-actions';
       const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Save tag';
       save.addEventListener('click', async () => {
         const name = input.value.trim();
@@ -2084,7 +2181,7 @@
         }
       });
       actions.append(save, remember);
-      card.append(top, input, speechInfo, actions);
+      card.append(top, input, speechInfo, preview, actions);
       speakerGrid.appendChild(card);
     }
 
