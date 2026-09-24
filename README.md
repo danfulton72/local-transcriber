@@ -46,7 +46,7 @@ A local-first, kid-friendly speech-to-text app for turning spoken ideas into edi
   - matching uses the strongest 1–3 samples rather than one running average, which is more tolerant of room/microphone variation and one poor sample
   - samples under 3 seconds of attributed speech are rejected
   - review/remove individual voice samples, rename the person, or forget the whole voiceprint at any time
-  - recognised speakers are suggested by name only in the parent area
+  - recognised speakers are reviewed/managed in the parent area; after a parent completes an analysis, reopening that saved conversation in **Your words** shows the resolved speaker names beside their turns
 - Parent storage tools:
   - recycle bin with restore and permanent delete
   - voice-audio retention (forever / 30 / 90 / 365 days)
@@ -100,6 +100,10 @@ The app never silently intercepts device audio. Browser screen/audio capture req
 Stopping sharing from the browser's sharing controls automatically finishes and saves the current Talk to Type recording. The captured WAV is stored and handled exactly like microphone recordings, so parent-run speaker diarization can also be used afterwards.
 
 This is primarily a desktop-browser feature. Chrome/Edge generally provide the most useful tab/system-audio choices; phones/tablets and other browsers may provide limited or no shared audio.
+
+### Responsive workspace
+
+On desktop, Talk to Type uses the full available workspace beside the left navigation rail instead of imposing a narrow fixed content column. **Talk**, **My words**, **Progress** and parent tools all expand with the viewport, while phone layouts keep the compact bottom navigation and touch-friendly spacing.
 
 ## Parent-only conversation speakers
 
