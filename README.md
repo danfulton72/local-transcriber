@@ -36,8 +36,7 @@ A local-first, kid-friendly speech-to-text app for turning spoken ideas into edi
   - frequently corrected word pairs based only on explicit edits
   - longest saved piece
   - words dictated over time
-- Optional parent PIN for the Progress API/page
-- Parent-only **Conversation speakers** tools:
+- Admin-only **Tools → Speakers**:
   - post-process a saved conversation into Person 1 / Person 2 / Person 3 turns
   - optionally set the expected number of speakers
   - rename detected people for that analysis
@@ -47,7 +46,7 @@ A local-first, kid-friendly speech-to-text app for turning spoken ideas into edi
   - samples under 3 seconds of attributed speech are rejected
   - review/remove individual voice samples, rename the person, or forget the whole voiceprint at any time
   - recognised speakers are reviewed/managed in the parent area; after a parent completes an analysis, reopening that saved conversation in **Your words** shows the resolved speaker names beside their turns
-- Parent storage tools:
+- Admin-only storage tools:
   - recycle bin with restore and permanent delete
   - voice-audio retention (forever / 30 / 90 / 365 days)
   - optional delete-audio-after-transcription mode
@@ -119,11 +118,11 @@ Each speaker turn can be edited directly in **Your words** while audio continues
 
 ### Responsive workspace
 
-On desktop, Talk to Type uses the full available workspace beside the left navigation rail instead of imposing a narrow fixed content column. **Talk**, **My words**, **Progress** and parent tools all expand with the viewport, while phone layouts keep the compact bottom navigation and touch-friendly spacing.
+On desktop, Talk to Type uses the full available workspace beside the left navigation rail instead of imposing a narrow fixed content column. Admins see **Talk**, **My words**, **Progress** and **Tools** in the left rail. Non-admin users see only **Talk** and **My words**. Conversation-heavy panels use bounded internal scrolling so long transcripts and lists do not make pages grow indefinitely.
 
-## Parent-only conversation speakers
+## Admin-only conversation speakers
 
-Speaker diarization and voice recognition are deliberately kept behind the parent PIN.
+Speaker diarization, voice recognition, user management, storage controls and Progress are protected by the signed-in user's admin permission.
 
 ### One-time pyannote model access
 
@@ -136,18 +135,18 @@ The open-source `pyannote/speaker-diarization-community-1` model is gated on Hug
 
 In the recommended AI-stack deployment, downloaded model files are cached under `/databases/aimodels/talk-to-type/pyannote`, alongside the rest of the AI model store. The standalone Compose deployment still uses `./speaker-model-cache`.
 
-The speaker analyzer uses the NVIDIA GPU by default (`SPEAKER_DEVICE=cuda`). It is parent-triggered after recording, so it does not alter the child-facing live transcription path.
+The speaker analyzer uses the NVIDIA GPU by default (`SPEAKER_DEVICE=cuda`). It is admin-triggered after recording, so it does not alter the normal live transcription path.
 
 
 ### GPU selection
 
-The recommended AI-stack deployment borrows the existing **Tesla T4** through `llama-swap-t4`. The analyzer container is pinned to `${T4_UUID}`; the large T4 llama-server processes are evicted for the duration of parent-triggered speaker analysis, while the separate live Whisper workload remains untouched.
+The recommended AI-stack deployment borrows the existing **Tesla T4** through `llama-swap-t4`. The analyzer container is pinned to `${T4_UUID}`; the large T4 llama-server processes are evicted for the duration of admin-triggered speaker analysis, while the separate live Whisper workload remains untouched.
 
 The CUDA 12.6 speaker image is retained because it works on the T4 and also leaves a Tesla P4/Pascal fallback available if you later choose to dedicate that card instead.
 
 ### Workflow
 
-Open **Progress**, enter the parent PIN, then use **Conversation speakers**:
+Open **Tools** as an admin, then use the **Speakers** section:
 
 1. Choose a saved recording.
 2. Optionally specify the expected number of speakers.
@@ -159,7 +158,7 @@ Open **Progress**, enter the parent PIN, then use **Conversation speakers**:
 
 Each remembered person keeps a small bank of up to 8 normalized speaker embeddings. The matcher scores a new voice against the strongest few samples rather than relying on one running average. Samples with less than 3 seconds of attributed speech are not accepted, and the same detected speaker cannot be added twice from one analysis. Existing single-embedding profiles are migrated into the bank as their first sample.
 
-Remembered voiceprints are numeric speaker embeddings stored in your PostgreSQL database. The app does not expose them to the child-facing Talk or My words pages. Recognition is a similarity match, not proof of identity, so parent review remains authoritative.
+Remembered voiceprints are numeric speaker embeddings stored in your PostgreSQL database. The app does not expose voiceprint-management controls to non-admin users. Recognition is a similarity match, not proof of identity, so admin review remains authoritative.
 
 ## Users and sign-in
 
@@ -168,11 +167,10 @@ The app has database-backed user accounts. Each logged-in user has their own:
 - recordings and stored audio
 - interrupted-draft recovery
 - My words history and favourites
-- progress statistics and correction history
-- recycle bin
-- parent-run conversation analyses for their recordings
+- recordings and My words history
+- transcript and speaker-label corrections in their own saved conversations
 
-Remembered speaker voiceprints are intentionally shared across users, so a voice remembered while reviewing one user's conversation can be recognised in another user's parent-run conversation analysis.
+Remembered speaker voiceprints are intentionally shared across users, so an admin can reuse a remembered voice across conversations while source recording audio remains private to its owner.
 
 Passwords are stored only as salted PBKDF2-SHA256 hashes. Login sessions use an HTTP-only SameSite cookie; the database stores only a SHA-256 hash of each random session token.
 
@@ -188,7 +186,7 @@ AUTH_SESSION_DAYS=30
 AUTH_COOKIE_SECURE=true
 ```
 
-On that first startup, the default account is created if it does not already exist and all recordings created before user support are assigned to it. The environment password is a bootstrap value: changing `DEFAULT_PASSWORD` later does not silently overwrite the password already stored for that user. Use **Progress → Users** with the parent PIN to reset passwords after bootstrap.
+On that first startup, the default account is created if it does not already exist and all recordings created before user support are assigned to it. The environment password is a bootstrap value: changing `DEFAULT_PASSWORD` later does not silently overwrite the password already stored for that user. Use **Tools → Users** as an admin to reset passwords or grant/revoke admin access after bootstrap.
 
 The application has fallback bootstrap values so an upgrade cannot permanently lock itself out, but you should set your own credentials before first startup.
 
@@ -276,8 +274,6 @@ DATABASE_URL=postgresql+asyncpg://transcriber:YOUR_PASSWORD@192.168.1.32:5432/tr
 GATEWAY_BASE_URL=http://host.docker.internal:8555/v1
 RECORDINGS_DIR=/data/recordings
 
-# Optional but recommended for the grown-up Progress page
-PARENT_PIN=1234
 
 # First account / legacy recording owner
 DEFAULT_USERNAME=local
@@ -289,7 +285,7 @@ AUTH_COOKIE_SECURE=true
 DEFAULT_LANGUAGE=
 DEFAULT_VOICE=en_GB-northern_english_male-medium
 
-# Parent-only speaker diarization / remembered speakers
+# Admin-only speaker diarization / remembered speakers
 SPEAKER_SERVICE_URL=http://speaker-analyzer:9000
 SPEAKER_MATCH_THRESHOLD=0.78
 HF_TOKEN=YOUR_HUGGINGFACE_TOKEN
@@ -369,12 +365,13 @@ Then hard-refresh the browser. If you previously installed the PWA, its service 
 
 Open **Grown-up settings → Install on this device**. On browsers with a native install prompt it will open directly. On iPhone/iPad, use **Share → Add to Home Screen**.
 
-### Parent storage tools
+### Admin tools
 
-Open **Progress**, enter the parent PIN, and press **Show progress**. Progress and the recycle bin apply only to the currently logged-in user. The lower part of the page contains:
+Admin accounts see separate **Progress** and **Tools** pages. Progress contains analytics for the signed-in admin account. Tools contains:
 
-- **Users** — add accounts, change display names, reset passwords, and deactivate/reactivate accounts. A password reset revokes that user's existing sessions.
+- **Users** — add accounts, change display names, reset passwords, grant/revoke admin access, and deactivate/reactivate accounts. A password or permission change revokes that user's existing sessions.
 
+- **Speakers** — analyse saved conversations, manage remembered voices, and review relabelled samples.
 - **Voice recording retention** — controls stored audio only; transcripts/history remain.
 - **Backup & status** — checks PostgreSQL, the speech gateway and local audio storage, and can download an application backup ZIP.
 - **Recycle bin** — restore soft-deleted work or permanently remove it.
