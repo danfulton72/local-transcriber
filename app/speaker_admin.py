@@ -246,9 +246,12 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
                 "effective_profile_id": (
                     str(turn.identity_override_profile_id)
                     if turn.identity_override_profile_id in profiles_by_id
-                    else str(by_id[turn.identity_override_detection_id].profile_id)
+                    else (
+                        str(by_id[turn.identity_override_detection_id].profile_id)
+                        if by_id[turn.identity_override_detection_id].profile_id
+                        else None
+                    )
                     if turn.identity_override_detection_id in by_id
-                    and by_id[turn.identity_override_detection_id].profile_id
                     else str(by_id[turn.detection_id].profile_id)
                     if turn.detection_id in by_id and by_id[turn.detection_id].profile_id
                     else None
