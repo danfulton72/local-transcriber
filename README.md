@@ -101,6 +101,12 @@ Stopping sharing from the browser's sharing controls automatically finishes and 
 
 This is primarily a desktop-browser feature. Chrome/Edge generally provide the most useful tab/system-audio choices; phones/tablets and other browsers may provide limited or no shared audio.
 
+### Hear a speaker before tagging
+
+In **Progress → Conversation speakers**, every detected speaker with attributed speech now has a **Hear sample** button. It plays up to 8 seconds from that speaker's longest continuous diarized turn, trimmed slightly inside the turn boundaries to reduce neighbouring-speaker bleed.
+
+The preview is generated on demand from the existing saved recording. It is parent-only, is never added as another stored audio file, and is intended to help the operator recognise the person before saving a tag or adding a remembered voice sample.
+
 ### Listen, follow and edit
 
 For saved conversations with speaker analysis, **My voice** now opens an interactive playback bar with pause/resume, ±5 second seeking, playback speed, elapsed/total time, and **Follow audio**.
