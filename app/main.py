@@ -59,7 +59,7 @@ from .services.retention import cleanup_expired_audio
 from .admin import router as admin_router
 from .speaker_admin import router as speaker_admin_router
 
-app = FastAPI(title="Local Transcriber", version="0.11.2")
+app = FastAPI(title="Local Transcriber", version="0.12.0")
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(speaker_admin_router)
