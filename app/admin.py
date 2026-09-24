@@ -496,7 +496,7 @@ async def download_backup(
         "speaker_turns": [
             _serialize_row(row, [
                 "id", "analysis_id", "detection_id", "start_seconds",
-                "end_seconds", "text",
+                "end_seconds", "text", "edited_text", "updated_at",
             ])
             for row in speaker_turns
         ],
