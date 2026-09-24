@@ -40,6 +40,13 @@
     draftSaveTimer: null,
     currentAudio: null,
     currentAudioUrl: null,
+    currentAudioKind: null,
+    playbackRecordingId: null,
+    playbackDuration: 0,
+    playbackFollow: true,
+    playbackActiveTurnId: null,
+    editingSpeakerTurnId: null,
+    speakerTurnSaveTimer: null,
     playbackToken: 0,
     searchTimer: null,
     autoFollow: true,
@@ -63,7 +70,9 @@
     editorWrap: $('editorWrap'), sentenceEditor: $('sentenceEditor'), editSaveStatus: $('editSaveStatus'), saveEditButton: $('saveEditButton'), cancelEditButton: $('cancelEditButton'),
     hearButton: $('hearButton'), focusButton: $('focusButton'), focusExitButton: $('focusExitButton'), useWordsButton: $('useWordsButton'),
     playRecordingButton: $('playRecordingButton'), editButton: $('editButton'), favouriteButton: $('favouriteButton'), newButton: $('newButton'), keepTalkingButton: $('keepTalkingButton'),
-    followWordsButton: $('followWordsButton'),
+    playbackBar: $('playbackBar'), playbackBackButton: $('playbackBackButton'), playbackToggleButton: $('playbackToggleButton'),
+    playbackForwardButton: $('playbackForwardButton'), playbackTime: $('playbackTime'), playbackRate: $('playbackRate'),
+    playbackFollowButton: $('playbackFollowButton'), followWordsButton: $('followWordsButton'),
     recoveryBanner: $('recoveryBanner'), recoveryDetail: $('recoveryDetail'), recoverButton: $('recoverButton'), dismissRecoveryButton: $('dismissRecoveryButton'),
     toast: $('toast'),
     language: $('language'), chunkSeconds: $('chunkSeconds'), captureSource: $('captureSource'), captureSourceHint: $('captureSourceHint'),
@@ -280,6 +289,173 @@
     requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
   }
 
+  function speakerTranscriptText() {
+    return (state.speakerTurns || [])
+      .map((turn) => String(turn?.text || '').trim())
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+  }
+
+  function updatePlaybackFollowButton() {
+    const show = state.currentAudioKind === 'recording' && !state.playbackFollow;
+    els.playbackFollowButton?.classList.toggle('hidden', !show);
+  }
+
+  function syncPlaybackUI() {
+    const audio = state.currentAudioKind === 'recording' ? state.currentAudio : null;
+    const sameRecording = Boolean(
+      audio && state.currentRecording && state.playbackRecordingId === state.currentRecording.id
+    );
+    const playing = Boolean(sameRecording && !audio.paused && !audio.ended);
+    const ended = Boolean(sameRecording && audio.ended);
+    const current = sameRecording ? Number(audio.currentTime || 0) : 0;
+    const duration = sameRecording
+      ? Number((Number.isFinite(audio.duration) ? audio.duration : 0) || state.playbackDuration || 0)
+      : Number(state.playbackDuration || 0);
+
+    els.playbackBar?.classList.toggle('hidden', !sameRecording);
+    if (els.playbackToggleButton) {
+      els.playbackToggleButton.textContent = playing ? '❚❚' : '▶';
+      els.playbackToggleButton.setAttribute('aria-label', playing ? 'Pause saved voice' : 'Play saved voice');
+    }
+    if (els.playbackTime) {
+      els.playbackTime.textContent = formatTime(current) + ' / ' + formatTime(duration);
+    }
+    if (els.playRecordingButton) {
+      if (!state.currentRecording?.has_audio) {
+        els.playRecordingButton.textContent = '▶ My voice';
+      } else if (playing) {
+        els.playRecordingButton.textContent = '❚❚ Pause voice';
+      } else if (ended) {
+        els.playRecordingButton.textContent = '↻ Replay voice';
+      } else if (sameRecording) {
+        els.playRecordingButton.textContent = '▶ Resume voice';
+      } else {
+        els.playRecordingButton.textContent = '▶ My voice';
+      }
+    }
+    updatePlaybackFollowButton();
+  }
+
+  function setActivePlaybackTurn(turnId, { follow = true } = {}) {
+    if (state.playbackActiveTurnId === turnId) return;
+    state.playbackActiveTurnId = turnId || null;
+    document.querySelectorAll('.transcript-speaker-turn.playback-current').forEach((node) => {
+      node.classList.remove('playback-current');
+    });
+    if (!turnId) return;
+    const target = els.transcriptView.querySelector('[data-turn-id="' + turnId + '"]');
+    if (!target) return;
+    target.classList.add('playback-current');
+    if (follow && state.playbackFollow && !state.editingSpeakerTurnId) {
+      state.programmaticScrollAt = Date.now();
+      requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+    }
+  }
+
+  function updatePlaybackFromAudio() {
+    const audio = state.currentAudioKind === 'recording' ? state.currentAudio : null;
+    if (!audio) return;
+    syncPlaybackUI();
+    const time = Number(audio.currentTime || 0);
+    const turns = Array.isArray(state.speakerTurns) ? state.speakerTurns : [];
+    const active = turns.find((turn) => {
+      const start = Number(turn.start_seconds || 0);
+      const end = Number(turn.end_seconds || start);
+      return time >= start && time < Math.max(end, start + 0.05);
+    }) || [...turns].reverse().find((turn) => time >= Number(turn.start_seconds || 0));
+    setActivePlaybackTurn(active?.id || null);
+  }
+
+  function pausePlaybackFollowing() {
+    if (state.currentAudioKind !== 'recording') return;
+    state.playbackFollow = false;
+    updatePlaybackFollowButton();
+  }
+
+  async function saveSpeakerTurn(turnId, text, statusNode = null) {
+    if (!state.currentRecording?.id || !turnId) return;
+    const clean = String(text ?? '').trim();
+    if (statusNode) statusNode.textContent = 'Saving…';
+    try {
+      const result = await api(
+        '/api/recordings/' + state.currentRecording.id + '/speaker-turns/' + turnId,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: clean }),
+        },
+      );
+      const turn = state.speakerTurns.find((item) => item.id === turnId);
+      if (turn) {
+        turn.text = result.text;
+        turn.edited = result.edited;
+        turn.updated_at = result.updated_at;
+      }
+      state.transcript = result.transcript;
+      state.currentRecording = {
+        ...state.currentRecording,
+        transcript: result.transcript,
+        transcript_edited: result.transcript,
+        word_count: result.word_count,
+      };
+      els.wordCount.textContent = result.word_count + ' word' + (result.word_count === 1 ? '' : 's');
+      if (statusNode) statusNode.textContent = 'Saved ✓';
+    } catch (error) {
+      if (statusNode) statusNode.textContent = 'Not saved';
+      setError('Could not save this correction: ' + error.message);
+    }
+  }
+
+  function scheduleSpeakerTurnSave(turnId, textarea, statusNode, immediate = false) {
+    const turn = state.speakerTurns.find((item) => item.id === turnId);
+    if (!turn) return;
+    turn.text = textarea.value;
+    state.transcript = speakerTranscriptText();
+    const count = wordCount(state.transcript);
+    els.wordCount.textContent = count + ' word' + (count === 1 ? '' : 's');
+    if (statusNode) statusNode.textContent = immediate ? 'Saving…' : 'Saving soon…';
+    clearTimeout(state.speakerTurnSaveTimer);
+    if (immediate) {
+      saveSpeakerTurn(turnId, textarea.value, statusNode);
+    } else {
+      state.speakerTurnSaveTimer = setTimeout(
+        () => saveSpeakerTurn(turnId, textarea.value, statusNode),
+        650,
+      );
+    }
+  }
+
+  function beginSpeakerTurnEdit(turnId) {
+    if (!turnId || state.recording || state.transcribing) return;
+    state.editingSpeakerTurnId = turnId;
+    pausePlaybackFollowing();
+    renderTranscript();
+    requestAnimationFrame(() => {
+      const textarea = els.transcriptView.querySelector(
+        '.transcript-speaker-turn[data-turn-id="' + turnId + '"] textarea'
+      );
+      if (textarea) {
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      }
+    });
+  }
+
+  function finishSpeakerTurnEdit(turnId) {
+    if (state.editingSpeakerTurnId !== turnId) return;
+    clearTimeout(state.speakerTurnSaveTimer);
+    const block = els.transcriptView.querySelector(
+      '.transcript-speaker-turn[data-turn-id="' + turnId + '"]'
+    );
+    const textarea = block?.querySelector('textarea');
+    const status = block?.querySelector('.turn-edit-status');
+    if (textarea) scheduleSpeakerTurnSave(turnId, textarea, status, true);
+    state.editingSpeakerTurnId = null;
+    renderTranscript();
+  }
+
   function renderTranscript() {
     const text = state.transcript.trim();
     const liveMode = state.recording || state.transcribing;
@@ -304,25 +480,67 @@
         for (const turn of labelledTurns) {
           const block = document.createElement('section');
           block.className = 'transcript-speaker-turn';
+          block.dataset.turnId = turn.id;
+          if (turn.id === state.playbackActiveTurnId) block.classList.add('playback-current');
+          if (turn.id === state.editingSpeakerTurnId) block.classList.add('editing');
 
           const meta = document.createElement('div');
           meta.className = 'transcript-speaker-meta';
           const name = document.createElement('strong');
           name.textContent = turn.display_name || 'Speaker';
-          const time = document.createElement('span');
-          time.textContent = formatTime(turn.start_seconds || 0);
-          meta.append(name, time);
+
+          const metaActions = document.createElement('div');
+          metaActions.className = 'transcript-turn-actions';
+          const seek = document.createElement('button');
+          seek.type = 'button';
+          seek.className = 'turn-seek-button';
+          seek.textContent = '▶ ' + formatTime(turn.start_seconds || 0);
+          seek.title = 'Play from ' + formatTime(turn.start_seconds || 0);
+          seek.addEventListener('click', () => playRecording(Number(turn.start_seconds || 0)));
+
+          const read = document.createElement('button');
+          read.type = 'button';
+          read.className = 'turn-read-button';
+          read.textContent = '🔊';
+          read.title = 'Hear this turn read aloud';
+          read.setAttribute('aria-label', 'Hear ' + (turn.display_name || 'speaker') + ' read aloud');
+          read.addEventListener('click', () => speakText(turn.text));
+          metaActions.append(seek, read);
+          meta.append(name, metaActions);
 
           const body = document.createElement('div');
           body.className = 'transcript-speaker-text';
-          for (const sentence of splitSentences(turn.text)) {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'sentence';
-            button.textContent = sentence + ' ';
-            button.title = 'Tap to hear ' + (turn.display_name || 'this speaker');
-            button.addEventListener('click', () => speakText(sentence));
-            body.appendChild(button);
+          if (turn.id === state.editingSpeakerTurnId) {
+            const textarea = document.createElement('textarea');
+            textarea.className = 'turn-inline-editor';
+            textarea.value = turn.text;
+            textarea.setAttribute('aria-label', 'Edit words spoken by ' + (turn.display_name || 'speaker'));
+            textarea.addEventListener('focus', pausePlaybackFollowing);
+
+            const footer = document.createElement('div');
+            footer.className = 'turn-edit-footer';
+            const status = document.createElement('span');
+            status.className = 'turn-edit-status';
+            status.textContent = turn.edited ? 'Saved ✓' : 'Original words';
+            const done = document.createElement('button');
+            done.type = 'button';
+            done.className = 'turn-edit-done';
+            done.textContent = 'Done';
+            done.addEventListener('mousedown', (event) => event.preventDefault());
+            done.addEventListener('click', () => finishSpeakerTurnEdit(turn.id));
+
+            textarea.addEventListener('input', () => scheduleSpeakerTurnSave(turn.id, textarea, status));
+            textarea.addEventListener('blur', () => scheduleSpeakerTurnSave(turn.id, textarea, status, true));
+            footer.append(status, done);
+            body.append(textarea, footer);
+          } else {
+            const edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'transcript-turn-edit';
+            edit.textContent = turn.text;
+            edit.title = 'Edit these words while listening';
+            edit.addEventListener('click', () => beginSpeakerTurnEdit(turn.id));
+            body.appendChild(edit);
           }
 
           block.append(meta, body);
@@ -360,11 +578,14 @@
     els.favouriteButton.textContent = state.currentRecording?.is_favourite ? '★ Favourite' : '☆ Favourite';
     updateFollowButton();
     maybeAutoFollow();
+    syncPlaybackUI();
   }
 
   function setTranscript(text, speakerTurns = []) {
     state.transcript = String(text || '').trim();
     state.speakerTurns = Array.isArray(speakerTurns) ? speakerTurns : [];
+    state.editingSpeakerTurnId = null;
+    state.playbackActiveTurnId = null;
     if (!state.recording) {
       state.confirmedTranscript = state.transcript;
       state.livePending = '';
@@ -1039,11 +1260,29 @@
     setTranscript(original);
   }
 
+  function clearPlaybackHighlight() {
+    state.playbackActiveTurnId = null;
+    document.querySelectorAll('.transcript-speaker-turn.playback-current').forEach((node) => {
+      node.classList.remove('playback-current');
+    });
+  }
+
   function stopSpeech() {
     state.playbackToken += 1;
-    if (state.currentAudio) { try { state.currentAudio.pause(); } catch {} }
+    clearTimeout(state.speakerTurnSaveTimer);
+    if (state.currentAudio) {
+      try { state.currentAudio.pause(); } catch {}
+    }
     if (state.currentAudioUrl) URL.revokeObjectURL(state.currentAudioUrl);
-    state.currentAudio = null; state.currentAudioUrl = null;
+    state.currentAudio = null;
+    state.currentAudioUrl = null;
+    state.currentAudioKind = null;
+    state.playbackRecordingId = null;
+    state.playbackDuration = 0;
+    state.playbackFollow = true;
+    clearPlaybackHighlight();
+    els.playbackBar?.classList.add('hidden');
+    syncPlaybackUI();
   }
 
   async function speakText(text) {
@@ -1056,17 +1295,16 @@
       });
       if (!response.ok) throw new Error((await response.json()).detail || ('HTTP ' + response.status));
       const blob = await response.blob(); const url = URL.createObjectURL(blob); const audio = new Audio(url);
-      state.currentAudio = audio; state.currentAudioUrl = url;
+      state.currentAudio = audio; state.currentAudioUrl = url; state.currentAudioKind = 'tts';
       audio.addEventListener('ended', stopSpeech, { once: true }); await audio.play();
     } catch (error) { setError('Read-aloud failed: ' + error.message); }
   }
 
-  async function playRecording() {
-    if (!state.currentRecording?.has_audio) return;
+  async function prepareRecordingPlayback(startAt = 0) {
+    if (!state.currentRecording?.has_audio) return null;
 
     stopSpeech();
     const token = state.playbackToken;
-    const buttonText = els.playRecordingButton.textContent;
     els.playRecordingButton.disabled = true;
     els.playRecordingButton.textContent = 'Checking voice…';
 
@@ -1085,7 +1323,7 @@
       if (!manifest.segment_count) {
         throw new Error('No saved voice audio is available for this piece.');
       }
-      if (state.playbackToken !== token) return;
+      if (state.playbackToken !== token) return null;
 
       const audio = new Audio(
         '/api/recordings/' + state.currentRecording.id +
@@ -1094,36 +1332,97 @@
       audio.preload = 'metadata';
       state.currentAudio = audio;
       state.currentAudioUrl = null;
-      els.playRecordingButton.textContent = 'Playing voice…';
+      state.currentAudioKind = 'recording';
+      state.playbackRecordingId = state.currentRecording.id;
+      state.playbackDuration = Number(manifest.duration_seconds || 0);
+      state.playbackFollow = true;
 
-      const result = await new Promise((resolve, reject) => {
-        audio.addEventListener('ended', () => resolve('ended'), { once: true });
-        audio.addEventListener('pause', () => {
-          if (!audio.ended) resolve('paused');
-        }, { once: true });
-        audio.addEventListener('error', () => {
-          reject(new Error('The complete voice recording could not be played.'));
-        }, { once: true });
-        audio.play().catch(reject);
+      const savedRate = Number(localStorage.getItem('playbackRate') || els.playbackRate?.value || 1);
+      const rate = [0.75, 1, 1.25, 1.5].includes(savedRate) ? savedRate : 1;
+      audio.playbackRate = rate;
+      if (els.playbackRate) els.playbackRate.value = String(rate);
+
+      audio.addEventListener('loadedmetadata', () => {
+        if (Number.isFinite(audio.duration) && audio.duration > 0) {
+          state.playbackDuration = audio.duration;
+        }
+        if (startAt > 0) audio.currentTime = Math.min(startAt, Math.max(0, audio.duration || startAt));
+        updatePlaybackFromAudio();
       });
-
-      if (state.playbackToken === token && result === 'ended') {
-        const duration = Number(manifest.duration_seconds || 0);
+      audio.addEventListener('timeupdate', updatePlaybackFromAudio);
+      audio.addEventListener('play', syncPlaybackUI);
+      audio.addEventListener('pause', syncPlaybackUI);
+      audio.addEventListener('ratechange', syncPlaybackUI);
+      audio.addEventListener('ended', () => {
+        updatePlaybackFromAudio();
+        syncPlaybackUI();
         showToast(
           manifest.segment_count > 1
-            ? ('Played all ' + manifest.segment_count + ' voice parts' + (duration ? ' · ' + formatTime(duration) : ''))
+            ? 'Played all ' + manifest.segment_count + ' voice parts'
             : 'Voice playback finished'
         );
-      }
+      });
+      audio.addEventListener('error', () => {
+        if (state.playbackToken === token) setError('The complete voice recording could not be played.');
+      });
+
+      els.playbackBar?.classList.remove('hidden');
+      syncPlaybackUI();
+      await audio.play();
+      return audio;
     } catch (error) {
       if (state.playbackToken === token) setError(error.message);
+      stopSpeech();
+      return null;
     } finally {
-      if (state.currentAudio && state.playbackToken === token) {
-        state.currentAudio = null;
-      }
-      els.playRecordingButton.disabled = false;
-      els.playRecordingButton.textContent = buttonText;
+      els.playRecordingButton.disabled = !state.currentRecording?.has_audio;
+      syncPlaybackUI();
     }
+  }
+
+  async function playRecording(startAt = null) {
+    if (!state.currentRecording?.has_audio) return;
+
+    const audio = (
+      state.currentAudioKind === 'recording' &&
+      state.playbackRecordingId === state.currentRecording.id
+    ) ? state.currentAudio : null;
+
+    if (!audio) {
+      await prepareRecordingPlayback(Number(startAt || 0));
+      return;
+    }
+
+    if (startAt !== null && Number.isFinite(Number(startAt))) {
+      audio.currentTime = Math.max(0, Math.min(Number(startAt), audio.duration || Number(startAt)));
+      state.playbackFollow = true;
+      updatePlaybackFollowButton();
+      updatePlaybackFromAudio();
+      if (audio.paused || audio.ended) await audio.play();
+      return;
+    }
+
+    if (audio.ended) {
+      audio.currentTime = 0;
+      state.playbackFollow = true;
+      updatePlaybackFollowButton();
+      await audio.play();
+    } else if (audio.paused) {
+      await audio.play();
+    } else {
+      audio.pause();
+    }
+    syncPlaybackUI();
+  }
+
+  function seekPlaybackBy(seconds) {
+    const audio = state.currentAudioKind === 'recording' ? state.currentAudio : null;
+    if (!audio) {
+      if (seconds >= 0) playRecording(0);
+      return;
+    }
+    audio.currentTime = Math.max(0, Math.min((audio.duration || Infinity), audio.currentTime + seconds));
+    updatePlaybackFromAudio();
   }
 
   async function toggleFavourite() {
@@ -1970,7 +2269,29 @@
   els.keepTalkingButton.addEventListener('click', () => startRecording(true));
   els.pauseButton.addEventListener('click', togglePause);
   els.hearButton.addEventListener('click', () => speakText(state.transcript));
-  els.playRecordingButton.addEventListener('click', playRecording);
+  els.playRecordingButton.addEventListener('click', () => playRecording());
+  els.playbackToggleButton?.addEventListener('click', () => playRecording());
+  els.playbackBackButton?.addEventListener('click', () => seekPlaybackBy(-5));
+  els.playbackForwardButton?.addEventListener('click', () => seekPlaybackBy(5));
+  els.playbackRate?.addEventListener('change', () => {
+    const rate = Number(els.playbackRate.value || 1);
+    localStorage.setItem('playbackRate', String(rate));
+    if (state.currentAudioKind === 'recording' && state.currentAudio) {
+      state.currentAudio.playbackRate = rate;
+    }
+  });
+  els.playbackFollowButton?.addEventListener('click', () => {
+    state.playbackFollow = true;
+    updatePlaybackFollowButton();
+    updatePlaybackFromAudio();
+    const target = state.playbackActiveTurnId
+      ? els.transcriptView.querySelector('[data-turn-id="' + state.playbackActiveTurnId + '"]')
+      : null;
+    if (target) {
+      state.programmaticScrollAt = Date.now();
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  });
   els.editButton.addEventListener('click', openEditor);
   els.saveEditButton.addEventListener('click', saveEdit);
   els.cancelEditButton.addEventListener('click', undoEdit);
@@ -2019,13 +2340,26 @@
   if (savedCaptureSource && [...els.captureSource.options].some((option) => option.value === savedCaptureSource)) {
     els.captureSource.value = savedCaptureSource;
   }
+  const savedPlaybackRate = localStorage.getItem('playbackRate');
+  if (savedPlaybackRate && els.playbackRate && [...els.playbackRate.options].some((option) => option.value === savedPlaybackRate)) {
+    els.playbackRate.value = savedPlaybackRate;
+  }
   updateCaptureSourceUI();
 
   window.addEventListener('scroll', () => {
     const current = window.scrollY;
-    if (state.recording && Date.now() - state.programmaticScrollAt > 700 && current < state.lastScrollY - 10) {
+    const manualScroll = Date.now() - state.programmaticScrollAt > 700 && Math.abs(current - state.lastScrollY) > 10;
+    if (state.recording && manualScroll && current < state.lastScrollY) {
       state.autoFollow = false;
       updateFollowButton();
+    }
+    if (
+      manualScroll &&
+      state.currentAudioKind === 'recording' &&
+      state.currentAudio &&
+      !state.currentAudio.paused
+    ) {
+      pausePlaybackFollowing();
     }
     state.lastScrollY = current;
   }, { passive: true });
