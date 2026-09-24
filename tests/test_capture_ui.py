@@ -111,7 +111,7 @@ def test_parent_speaker_cards_offer_voice_preview():
 
 
 
-def test_remembered_voice_samples_offer_owned_playback():
+def test_remembered_voice_samples_offer_admin_playback_with_owner_label():
     from pathlib import Path
 
     source = Path("app/static/app.js").read_text(encoding="utf-8")
@@ -119,6 +119,8 @@ def test_remembered_voice_samples_offer_owned_playback():
 
     assert "toggleRememberedSamplePreview" in source
     assert "'/samples/' + sample.id + '/sample-audio'" in source
-    assert "This sample came from another user; its source audio stays private." in source
+    assert "sample.source_recording_owner" in source
+    assert "' · owner ' + sample.source_recording_owner" in source
+    assert "The source audio for this sample is not available." in source
     assert "voice-sample-actions" in source
     assert ".voice-sample-preview" in styles
