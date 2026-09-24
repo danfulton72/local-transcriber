@@ -30,6 +30,7 @@ from .models import (
     RecordingAudioSegment,
     SpeakerAnalysis,
     SpeakerDetection,
+    SpeakerProfile,
     SpeakerTurn,
     TranscriptRevision,
     TranscriptionChunk,
@@ -395,6 +396,8 @@ async def recording_speaker_turns(
         )
     ).scalars().all()
     by_id = {item.id: item for item in detections}
+    profiles = (await db.execute(select(SpeakerProfile))).scalars().all()
+    profiles_by_id = {item.id: item for item in profiles}
     turns = (
         await db.execute(
             select(SpeakerTurn)
@@ -410,9 +413,25 @@ async def recording_speaker_turns(
             {
                 "id": str(turn.id),
                 "display_name": (
+                    "Unknown"
+                    if turn.identity_override_unknown
+                    else profiles_by_id[turn.identity_override_profile_id].name
+                    if turn.identity_override_profile_id in profiles_by_id
+                    else by_id[turn.identity_override_detection_id].display_name
+                    if turn.identity_override_detection_id in by_id
+                    else by_id[turn.detection_id].display_name
+                    if turn.detection_id in by_id
+                    else "Speaker"
+                ),
+                "detected_display_name": (
                     by_id[turn.detection_id].display_name
                     if turn.detection_id in by_id
                     else "Speaker"
+                ),
+                "identity_corrected": bool(
+                    turn.identity_override_unknown
+                    or turn.identity_override_profile_id
+                    or turn.identity_override_detection_id
                 ),
                 "start_seconds": round(turn.start_seconds, 2),
                 "end_seconds": round(turn.end_seconds, 2),
