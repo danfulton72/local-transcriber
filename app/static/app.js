@@ -3005,6 +3005,20 @@
   els.historySearch.addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(loadHistory, 250); });
   els.loginForm.addEventListener('submit', loginUser);
   els.logoutButton.addEventListener('click', logoutUser);
+  els.saveRecordingTitleButton.addEventListener('click', saveRecordingTitle);
+  els.recordingTitleInput.addEventListener('input', () => {
+    els.recordingTitleStatus.textContent = 'Unsaved';
+  });
+  els.recordingTitleInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveRecordingTitle();
+    } else if (event.key === 'Escape') {
+      els.recordingTitleInput.value = state.currentRecording?.title || '';
+      els.recordingTitleStatus.textContent = '';
+      els.recordingTitleInput.blur();
+    }
+  });
   els.progressDays.addEventListener('change', () => { if (isAdmin()) loadProgress(); });
   els.runSpeakerAnalysisButton.addEventListener('click', runSpeakerAnalysis);
   els.refreshSpeakerProfilesButton.addEventListener('click', loadSpeakerProfiles);
