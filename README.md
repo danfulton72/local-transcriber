@@ -101,6 +101,14 @@ Stopping sharing from the browser's sharing controls automatically finishes and 
 
 This is primarily a desktop-browser feature. Chrome/Edge generally provide the most useful tab/system-audio choices; phones/tablets and other browsers may provide limited or no shared audio.
 
+### Listen, follow and edit
+
+For saved conversations with speaker analysis, **My voice** now opens an interactive playback bar with pause/resume, ±5 second seeking, playback speed, elapsed/total time, and **Follow audio**.
+
+While the original recording plays, the current speaker turn is highlighted and automatically kept in view. Manual scrolling or clicking into an inline edit pauses automatic following; **Follow audio** jumps back to the current spoken turn and resumes following.
+
+Each speaker turn can be edited directly in **Your words** while audio continues playing. Turn edits autosave after a short pause in typing. The diarized original text is retained separately, while the corrected turn text is used to rebuild the recording's normal edited transcript for search, copy/share and later reopening. Clicking a turn timestamp starts or seeks the original recording at that point.
+
 ### Responsive workspace
 
 On desktop, Talk to Type uses the full available workspace beside the left navigation rail instead of imposing a narrow fixed content column. **Talk**, **My words**, **Progress** and parent tools all expand with the viewport, while phone layouts keep the compact bottom navigation and touch-friendly spacing.
