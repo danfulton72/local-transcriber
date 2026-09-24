@@ -47,6 +47,7 @@
     playbackActiveTurnId: null,
     editingSpeakerTurnId: null,
     speakerTurnSaveTimer: null,
+    speakerTurnSaveChain: Promise.resolve(),
     playbackToken: 0,
     searchTimer: null,
     autoFollow: true,
@@ -374,19 +375,20 @@
     updatePlaybackFollowButton();
   }
 
-  async function saveSpeakerTurn(turnId, text, statusNode = null) {
-    if (!state.currentRecording?.id || !turnId) return;
+  async function saveSpeakerTurn(recordingId, turnId, text, statusNode = null) {
+    if (!recordingId || !turnId) return;
     const clean = String(text ?? '').trim();
     if (statusNode) statusNode.textContent = 'Saving…';
     try {
       const result = await api(
-        '/api/recordings/' + state.currentRecording.id + '/speaker-turns/' + turnId,
+        '/api/recordings/' + recordingId + '/speaker-turns/' + turnId,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: clean }),
         },
       );
+      if (state.currentRecording?.id !== recordingId) return;
       const turn = state.speakerTurns.find((item) => item.id === turnId);
       if (turn) {
         turn.text = result.text;
@@ -410,20 +412,26 @@
 
   function scheduleSpeakerTurnSave(turnId, textarea, statusNode, immediate = false) {
     const turn = state.speakerTurns.find((item) => item.id === turnId);
-    if (!turn) return;
+    const recordingId = state.currentRecording?.id;
+    if (!turn || !recordingId) return;
     turn.text = textarea.value;
     state.transcript = speakerTranscriptText();
     const count = wordCount(state.transcript);
     els.wordCount.textContent = count + ' word' + (count === 1 ? '' : 's');
     if (statusNode) statusNode.textContent = immediate ? 'Saving…' : 'Saving soon…';
     clearTimeout(state.speakerTurnSaveTimer);
+
+    const enqueue = () => {
+      const value = textarea.value;
+      state.speakerTurnSaveChain = state.speakerTurnSaveChain
+        .catch(() => {})
+        .then(() => saveSpeakerTurn(recordingId, turnId, value, statusNode));
+    };
+
     if (immediate) {
-      saveSpeakerTurn(turnId, textarea.value, statusNode);
+      enqueue();
     } else {
-      state.speakerTurnSaveTimer = setTimeout(
-        () => saveSpeakerTurn(turnId, textarea.value, statusNode),
-        650,
-      );
+      state.speakerTurnSaveTimer = setTimeout(enqueue, 650);
     }
   }
 
@@ -1269,7 +1277,6 @@
 
   function stopSpeech() {
     state.playbackToken += 1;
-    clearTimeout(state.speakerTurnSaveTimer);
     if (state.currentAudio) {
       try { state.currentAudio.pause(); } catch {}
     }
