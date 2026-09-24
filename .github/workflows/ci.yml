@@ -46,4 +46,10 @@ jobs:
             -f deploy/ai-stack/compose.override.yml \
             config -q
       - run: docker build -t local-transcriber-ci .
+      - name: Validate app image migrations
+        run: |
+          docker run --rm \
+            -e DATABASE_URL=sqlite+aiosqlite:////tmp/container-migration.db \
+            local-transcriber-ci \
+            sh -lc 'python -c "import greenlet, sqlalchemy.ext.asyncio; print(greenlet.__version__)" && alembic upgrade head && alembic current'
       - run: docker build -t local-transcriber-speaker-ci speaker_service
