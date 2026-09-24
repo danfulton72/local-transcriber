@@ -1,14 +1,32 @@
 # Talk to Type inside the R720 AI stack
 
-This integration moves Talk to Type into the existing /home/dan/ai Compose project without duplicating the full AI-stack configuration in this repo.
+Talk to Type is installed as a normal directory inside the existing AI stack:
 
-## Resulting layout
+    /home/dan/ai/local-transcriber/
 
-    /home/dan/local-transcriber/                 Git working tree
-    /home/dan/ai/local-transcriber/app.env       runtime app configuration
-    /home/dan/ai/local-transcriber/recordings/   retained WAV files
-    /home/dan/ai/local-transcriber/runtime/      T4 arbitration busy-file
-    /databases/aimodels/talk-to-type/pyannote/   Hugging Face / pyannote cache
+That directory is the Git checkout and also owns the app's local runtime files.
+
+## Layout
+
+    /home/dan/ai/
+      compose.yml
+      compose.override.yml -> local-transcriber/deploy/ai-stack/compose.override.yml
+      llama-swap/
+        t4.yaml
+      local-transcriber/
+        .git/
+        app/
+        speaker_service/
+        deploy/
+        .env
+        recordings/
+        runtime/
+
+    /databases/aimodels/
+      talk-to-type/
+        pyannote/
+
+Everything specific to the app stays under /home/dan/ai/local-transcriber except the large pyannote/Hugging Face cache, which lives with the rest of the AI model store.
 
 Both Talk to Type services join the existing ai bridge network.
 
@@ -27,9 +45,69 @@ Both Talk to Type services join the existing ai bridge network.
 
 Whisper, Piper, and the Wyoming OpenAI gateway remain separate and unchanged.
 
+## Clean install
+
+No data migration is assumed.
+
+If an older standalone checkout exists, stop it first:
+
+    cd /home/dan/local-transcriber
+    docker compose down
+
+Then clone directly into the AI stack:
+
+    cd /home/dan/ai
+    git clone https://github.com/danfulton72/local-transcriber.git
+    cd local-transcriber
+
+Run the AI-stack installer:
+
+    python deploy/ai-stack/install.py
+
+The installer will:
+
+- require the checkout to be /home/dan/ai/local-transcriber;
+- create recordings/ and runtime/ inside the checkout;
+- create /databases/aimodels/talk-to-type/pyannote;
+- copy .env.example to .env if .env does not exist;
+- back up /home/dan/ai/llama-swap/t4.yaml;
+- patch the T4 matrix with the hidden speaker_auto reservation;
+- link /home/dan/ai/compose.override.yml to this checkout;
+- run docker compose config -q in /home/dan/ai.
+
+It does not copy data from an older installation.
+
+Edit the fresh environment before starting:
+
+    nano /home/dan/ai/local-transcriber/.env
+
+At minimum check:
+
+    DATABASE_URL
+    PARENT_PIN
+    DEFAULT_USERNAME
+    DEFAULT_PASSWORD
+    DEFAULT_DISPLAY_NAME
+    AUTH_COOKIE_SECURE
+    HF_TOKEN
+
+Then start through the main AI stack:
+
+    cd /home/dan/ai
+    docker compose up -d --build
+
+From then on the normal AI-stack lifecycle manages Talk to Type:
+
+    cd /home/dan/ai
+    docker compose ps
+    docker compose up -d
+    docker compose logs -f local-transcriber speaker-analyzer llama-swap-t4
+
+The old /home/dan/local-transcriber directory can be removed after you are happy with the new install.
+
 ## T4 ownership
 
-The installer extends the existing T4 matrix with a new variable and exclusive set:
+The installer extends the existing T4 matrix with:
 
     matrix:
       vars:
@@ -37,7 +115,7 @@ The installer extends the existing T4 matrix with a new variable and exclusive s
       sets:
         speaker_only: "s"
 
-It also adds a hidden model:
+and adds this hidden model:
 
     "speaker_auto":
       unlisted: true
@@ -51,94 +129,78 @@ It also adds a hidden model:
 
 Because speaker_only contains only speaker_auto, requesting /upstream/speaker_auto/analyze makes llama-swap unload the T4 Qwen/embedding processes before forwarding the analysis request.
 
-The analyzer creates /run/talk-to-type/speaker.busy for the duration of pyannote. speaker-stop.sh waits for that file to disappear before llama-swap may stop the reservation and load another T4 model. The persistent Whisper workload is not managed by llama-swap and remains loaded.
+The analyzer creates:
 
-Talk to Type snapshots /running before analysis. On normal completion it unloads speaker_auto, checks whether another request already claimed the T4, and if not wakes the models that were running before analysis. An interactive request arriving at the end of analysis therefore wins over automatic restoration.
+    /run/talk-to-type/speaker.busy
 
-## Install / migrate
+for the duration of pyannote. The same host directory is:
 
-From the Docker host:
+    /home/dan/ai/local-transcriber/runtime/
 
-    cd /home/dan/local-transcriber
-    git pull
-    python deploy/ai-stack/install.py
+speaker-stop.sh waits for the busy-file to disappear before llama-swap may stop the reservation and load another T4 model.
 
-The installer:
+The persistent Whisper process is outside this swap and remains loaded.
 
-- backs up /home/dan/ai/llama-swap/t4.yaml;
-- patches the T4 matrix and adds speaker_auto;
-- links /home/dan/ai/compose.override.yml to the integration overlay;
-- copies .env to /home/dan/ai/local-transcriber/app.env if needed;
-- copies the old recordings directory if the AI-stack destination is empty;
-- copies the old speaker-model-cache if the shared model destination is empty;
-- runs docker compose config -q in /home/dan/ai.
+Talk to Type snapshots /running before analysis. When analysis finishes it unloads speaker_auto, checks whether another request already claimed the T4, and restores the previously-running models only when the card is still free.
 
-It never deletes the old recordings or model cache.
+## Shared model storage
 
-Review the runtime environment:
+The speaker analyzer mounts:
 
-    nano /home/dan/ai/local-transcriber/app.env
+    /databases/aimodels/talk-to-type/pyannote -> /models
 
-Ensure HF_TOKEN, database credentials, parent PIN, and login bootstrap values are correct.
-
-Then stop the old standalone containers and start the integrated stack:
-
-    cd /home/dan/local-transcriber
-    docker compose down
-
-    cd /home/dan/ai
-    docker compose up -d --build
-
-From then on the normal AI-stack command manages Talk to Type too:
-
-    cd /home/dan/ai
-    docker compose up -d
-    docker compose ps
+HF_HOME points at /models, so pyannote/Hugging Face downloads live with the rest of the AI model store rather than inside the Git repository.
 
 ## Verify
 
-Check services:
+Check the three relevant services:
 
     cd /home/dan/ai
     docker compose ps local-transcriber speaker-analyzer llama-swap-t4
     curl http://localhost:8090/healthz
     curl http://127.0.0.1:9293/running
 
-Confirm the analyzer sees only the T4:
+Confirm speaker-analyzer sees only the T4:
 
     docker compose exec speaker-analyzer python -c 'import torch; print(torch.cuda.get_device_name(0)); print(torch.cuda.get_device_capability(0)); print(torch.cuda.get_arch_list())'
 
-Expected device:
+Expected:
 
     Tesla T4
     (7, 5)
 
-When a parent starts conversation analysis, /running should temporarily show speaker_auto and the large T4 Qwen model should disappear. When analysis finishes, the previous Qwen/embedding set should return unless another request has already selected a different T4 model.
-
-Useful live diagnostics:
+For the first parent-triggered speaker analysis, watch llama-swap:
 
     watch -n1 'curl -s http://127.0.0.1:9293/running'
-    docker compose logs -f llama-swap-t4 speaker-analyzer local-transcriber
-    nvidia-smi
 
-## Model and state storage
+You should see the normal T4 Qwen/embedding set disappear, speaker_auto appear during analysis, then the previous set return when analysis finishes unless another request has already selected a different T4 model.
 
-The integrated layout separates source from persistent state:
+## Updating
 
-- source checkout: /home/dan/local-transcriber
-- app config/state: /home/dan/ai/local-transcriber
-- large ML cache: /databases/aimodels/talk-to-type/pyannote
+Because the checkout now lives inside the AI stack:
 
-This keeps Hugging Face model downloads beside the rest of the AI model store rather than inside the Git checkout.
+    cd /home/dan/ai/local-transcriber
+    git pull
+
+    cd /home/dan/ai
+    docker compose up -d --build
+
+Rerun the installer after changes to the integration files or T4 arbitration:
+
+    cd /home/dan/ai/local-transcriber
+    python deploy/ai-stack/install.py
+
+It is safe to rerun.
 
 ## Rollback
 
-The installer leaves the old standalone data intact.
+The installer backs up t4.yaml before first modification.
 
-1. Stop local-transcriber and speaker-analyzer in the AI stack.
+To remove the integration:
+
+1. Stop local-transcriber and speaker-analyzer.
 2. Remove /home/dan/ai/compose.override.yml if it is the Talk to Type symlink.
 3. Restore the timestamped t4.yaml.before-talk-to-type-* backup.
 4. Restart llama-swap-t4.
-5. Start the original standalone Compose project.
 
-PostgreSQL is unchanged by moving the containers between Compose projects.
+Because this is now treated as a clean installation, no old Talk to Type data migration or rollback is assumed.
