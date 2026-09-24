@@ -59,4 +59,20 @@ def test_ai_stack_overlay_pins_analyzer_to_t4_and_shared_model_store():
     assert "${MODELS_DIR:-/databases/aimodels}/talk-to-type/pyannote:/models" in overlay
     assert "SPEAKER_SWAP_URL: http://llama-swap-t4:8080" in overlay
     assert "SPEAKER_BUSY_FILE: /run/talk-to-type/speaker.busy" in overlay
+    assert "${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}/.env" in overlay
+    assert "${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}/recordings:/data/recordings" in overlay
+    assert "${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}/runtime" in overlay
+    assert "/home/dan/local-transcriber" not in overlay
+    assert "app.env" not in overlay
     assert "networks: [ai]" in overlay
+
+
+def test_installer_defaults_to_repo_location_inside_ai():
+    source = Path("deploy/ai-stack/install.py").read_text(encoding="utf-8")
+
+    assert "/home/dan/ai/local-transcriber" in source
+    assert "copy_tree_if_target_empty" not in source
+    assert "app.env" not in source
+    assert 'repo / ".env"' in source
+    assert 'repo / "recordings"' in source
+    assert 'repo / "runtime"' in source
