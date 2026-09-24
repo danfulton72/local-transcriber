@@ -262,3 +262,23 @@ def test_recording_owner_can_reload_resolved_speaker_turns():
             "Jack says hello.",
             "Paul answers.",
         ]
+
+        first_turn = payload["turns"][0]
+        edited = client.patch(
+            f"/api/recordings/{recording_id}/speaker-turns/{first_turn['id']}",
+            json={"text": "Jack says hello clearly."},
+        )
+        assert edited.status_code == 200
+        assert edited.json()["text"] == "Jack says hello clearly."
+        assert edited.json()["original_text"] == "Jack says hello."
+        assert edited.json()["edited"] is True
+        assert edited.json()["transcript"] == "Jack says hello clearly. Paul answers."
+
+        reloaded = client.get(f"/api/recordings/{recording_id}/speaker-turns").json()
+        assert reloaded["turns"][0]["text"] == "Jack says hello clearly."
+        assert reloaded["turns"][0]["original_text"] == "Jack says hello."
+        assert reloaded["turns"][0]["edited"] is True
+
+        recording = client.get(f"/api/recordings/{recording_id}").json()
+        assert recording["transcript_original"] == "Jack says hello. Paul answers."
+        assert recording["transcript_edited"] == "Jack says hello clearly. Paul answers."
