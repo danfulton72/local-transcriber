@@ -25,7 +25,17 @@ from .auth import (
 )
 from .config import settings
 from .db import SessionLocal, get_db, init_db
-from .models import Recording, RecordingAudioSegment, TranscriptRevision, TranscriptionChunk, UsageEvent, utcnow
+from .models import (
+    Recording,
+    RecordingAudioSegment,
+    SpeakerAnalysis,
+    SpeakerDetection,
+    SpeakerTurn,
+    TranscriptRevision,
+    TranscriptionChunk,
+    UsageEvent,
+    utcnow,
+)
 from .schemas import EventCreate, RecordingCreate, RecordingDraftUpdate, RecordingFinish, RecordingOut, RecordingUpdate, SpeechRequest
 from .services.gateway import gateway
 from .services.progress import correction_pairs, top_corrections, word_count
@@ -338,6 +348,63 @@ async def abandon_recording(recording_id: uuid.UUID, db: AsyncSession = Depends(
 @app.get("/api/recordings/{recording_id}", response_model=RecordingOut)
 async def get_recording(recording_id: uuid.UUID, db: AsyncSession = Depends(get_db)) -> RecordingOut:
     return recording_out(await find_recording(recording_id, db))
+
+
+@app.get("/api/recordings/{recording_id}/speaker-turns")
+async def recording_speaker_turns(
+    recording_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    recording = await find_recording(recording_id, db)
+    analysis = (
+        await db.execute(
+            select(SpeakerAnalysis)
+            .where(
+                SpeakerAnalysis.recording_id == recording.id,
+                SpeakerAnalysis.status == "completed",
+            )
+            .order_by(
+                SpeakerAnalysis.completed_at.desc(),
+                SpeakerAnalysis.created_at.desc(),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not analysis:
+        return {"analysis_id": None, "speaker_count": 0, "turns": []}
+
+    detections = (
+        await db.execute(
+            select(SpeakerDetection).where(SpeakerDetection.analysis_id == analysis.id)
+        )
+    ).scalars().all()
+    by_id = {item.id: item for item in detections}
+    turns = (
+        await db.execute(
+            select(SpeakerTurn)
+            .where(SpeakerTurn.analysis_id == analysis.id)
+            .order_by(SpeakerTurn.start_seconds.asc(), SpeakerTurn.id.asc())
+        )
+    ).scalars().all()
+
+    return {
+        "analysis_id": str(analysis.id),
+        "speaker_count": analysis.speaker_count or len(detections),
+        "turns": [
+            {
+                "display_name": (
+                    by_id[turn.detection_id].display_name
+                    if turn.detection_id in by_id
+                    else "Speaker"
+                ),
+                "start_seconds": round(turn.start_seconds, 2),
+                "end_seconds": round(turn.end_seconds, 2),
+                "text": turn.text,
+            }
+            for turn in turns
+            if turn.text
+        ],
+    }
 
 
 @app.patch("/api/recordings/{recording_id}", response_model=RecordingOut)
