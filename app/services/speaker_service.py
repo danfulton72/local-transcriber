@@ -32,7 +32,19 @@ class SpeakerService:
             with audio_path.open("rb") as handle:
                 files = {"file": (audio_path.name, handle, "audio/wav")}
                 response = await client.post(f"{self.base_url}/analyze", data=data, files=files)
-            response.raise_for_status()
+            if response.is_error:
+                detail = None
+                try:
+                    payload = response.json()
+                    raw_detail = payload.get("detail") if isinstance(payload, dict) else None
+                    if isinstance(raw_detail, str):
+                        detail = raw_detail
+                    elif raw_detail is not None:
+                        detail = str(raw_detail)
+                except ValueError:
+                    detail = response.text.strip()
+                message = detail or f"Speaker analyzer returned HTTP {response.status_code}."
+                raise RuntimeError(message)
             return response.json()
 
 
