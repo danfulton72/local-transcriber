@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, Field
+from typing import Literal
 
 
 class RecordingCreate(BaseModel):
@@ -47,6 +48,14 @@ class RecordingOut(BaseModel):
 
 class SpeakerTurnUpdate(BaseModel):
     text: str = Field(max_length=20000)
+
+
+class SpeakerIdentityUpdate(BaseModel):
+    target_profile_id: uuid.UUID | None = None
+    target_detection_id: uuid.UUID | None = None
+    unknown: bool = False
+    clear: bool = False
+    scope: Literal["turn", "detection"] = "turn"
 
 
 class SpeechRequest(BaseModel):
