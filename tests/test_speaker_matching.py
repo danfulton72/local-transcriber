@@ -1,4 +1,6 @@
 import asyncio
+import io
+import wave
 import uuid
 from types import SimpleNamespace
 
@@ -12,6 +14,17 @@ from app.speaker_admin import (
     profile_quality,
     robust_sample_score,
 )
+
+
+def make_test_wav(seconds: float = 4.0, sample_rate: int = 8000) -> bytes:
+    frames = int(seconds * sample_rate)
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(sample_rate)
+        audio.writeframes(b"\x00\x00" * frames)
+    return buffer.getvalue()
 
 
 def profile(name: str, values: list[float]):
@@ -204,6 +217,13 @@ def test_recording_owner_can_reload_resolved_speaker_turns():
         )
         assert finished.status_code == 200
 
+        uploaded = client.post(
+            f"/api/recordings/{recording_id}/audio",
+            files={"file": ("conversation.wav", make_test_wav(), "audio/wav")},
+            data={"duration_seconds": "4.0"},
+        )
+        assert uploaded.status_code == 200
+
         async def seed_analysis():
             async with SessionLocal() as db:
                 analysis = SpeakerAnalysis(
@@ -262,6 +282,14 @@ def test_recording_owner_can_reload_resolved_speaker_turns():
             "Jack says hello.",
             "Paul answers.",
         ]
+
+        preview = client.get(
+            f"/api/admin/speakers/analyses/{payload['analysis_id']}/detections/SPEAKER_00/sample-audio"
+        )
+        assert preview.status_code == 200
+        assert preview.headers["content-type"].startswith("audio/wav")
+        assert len(preview.content) > 44
+        assert float(preview.headers["x-clip-end"]) > float(preview.headers["x-clip-start"])
 
         first_turn = payload["turns"][0]
         edited = client.patch(
