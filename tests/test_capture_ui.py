@@ -63,3 +63,34 @@ def test_saved_speaker_transcript_and_full_width_workspace_contract():
     assert "max-width:none" in styles
     assert ".transcript-speaker-turn" in styles
     assert "grid-template-columns:repeat(2,minmax(0,1fr))" in styles
+
+
+
+def test_listen_follow_edit_controls_are_served():
+    from pathlib import Path
+
+    html = Path("app/static/index.html").read_text(encoding="utf-8")
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    styles = Path("app/static/styles.css").read_text(encoding="utf-8")
+
+    for control_id in (
+        "playbackBar",
+        "playbackBackButton",
+        "playbackToggleButton",
+        "playbackForwardButton",
+        "playbackTime",
+        "playbackRate",
+        "playbackFollowButton",
+    ):
+        assert f'id="{control_id}"' in html
+
+    assert "timeupdate" in source
+    assert "setActivePlaybackTurn" in source
+    assert "speaker-turns/' + turnId" in source
+    assert "Saving soon…" in source
+    assert "Saved ✓" in source
+    assert "seekPlaybackBy(-5)" in source
+    assert "seekPlaybackBy(5)" in source
+    assert ".transcript-speaker-turn.playback-current" in styles
+    assert ".turn-inline-editor" in styles
+    assert ".playback-bar" in styles
