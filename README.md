@@ -107,6 +107,8 @@ In **Progress → Conversation speakers**, every detected speaker with attribute
 
 The preview is generated on demand from the existing saved recording. It is parent-only, is never added as another stored audio file, and is intended to help the operator recognise the person before saving a tag or adding a remembered voice sample.
 
+**Remembered speakers** also expose a **Hear** control beside each stored voice sample, using that sample's original detected turn. Voice profiles remain shared across app users, but source audio does not: a sample created from another user's recording is shown as **Shared voice sample** and cannot be played from the current account.
+
 ### Listen, follow and edit
 
 For saved conversations with speaker analysis, **My voice** now opens an interactive playback bar with pause/resume, ±5 second seeking, playback speed, elapsed/total time, and **Follow audio**.
