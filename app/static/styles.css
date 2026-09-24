@@ -2214,3 +2214,47 @@ body.reading-focus .playback-bar{
   .relabel-sample-row{grid-template-columns:1fr}
   .speaker-identity-correction button{width:100%}
 }
+
+
+.transcript-speaker-name-wrap{
+  display:grid;
+  gap:6px;
+  min-width:0;
+}
+.transcript-speaker-name-button{
+  appearance:none;
+  border:0;
+  padding:0;
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  font-weight:700;
+  text-align:left;
+  cursor:pointer;
+  text-decoration:underline dotted;
+  text-underline-offset:3px;
+}
+.transcript-speaker-name-button:hover,
+.transcript-speaker-name-button:focus-visible{
+  text-decoration-style:solid;
+}
+.transcript-speaker-name-button.corrected::after{
+  content:" ✓";
+  font-size:.78em;
+  opacity:.7;
+}
+.speaker-name-input{
+  width:min(320px,100%);
+  min-height:38px;
+  font:inherit;
+}
+.speaker-name-edit-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+}
+.speaker-name-edit-actions button{
+  min-height:34px;
+  padding:.35rem .55rem;
+  font-size:.78rem;
+}
