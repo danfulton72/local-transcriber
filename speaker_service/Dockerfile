@@ -6,20 +6,38 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ffmpeg \
-        libsndfile1 \
-        cuda-nvrtc-12-6 \
+    && apt-get install -y --no-install-recommends ffmpeg libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /service
 
 COPY requirements.txt constraints.txt /service/
-RUN pip install -c /service/constraints.txt -r /service/requirements.txt
+RUN pip install -c /service/constraints.txt -r /service/requirements.txt \
+    && pip install nvidia-cuda-nvrtc-cu12==12.6.77 \
+    && python - <<'PY'
+from pathlib import Path
+import site
+
+candidates = []
+for root in site.getsitepackages():
+    base = Path(root)
+    candidates.extend(base.glob("nvidia/cuda_nvrtc/lib"))
+    candidates.extend(base.glob("nvidia/cuda_nvrtc/lib64"))
+
+paths = [path.resolve() for path in candidates if path.is_dir()]
+if not paths:
+    raise SystemExit("Could not locate NVIDIA NVRTC wheel library directory")
+
+Path("/etc/ld.so.conf.d/nvidia-nvrtc.conf").write_text(
+    "\n".join(str(path) for path in paths) + "\n",
+    encoding="utf-8",
+)
+print("NVRTC library directories:", paths)
+PY
+RUN ldconfig
 
 # Fail the image build rather than discovering a CUDA runtime mismatch only
-# after deployment. Importing torch does not require a GPU, and NVRTC can be
-# dynamically loaded without one.
+# after deployment.
 RUN python - <<'PY'
 import ctypes
 import ctypes.util
