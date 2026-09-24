@@ -436,7 +436,7 @@ async def download_backup(
 
     exported_at = datetime.now(timezone.utc)
     manifest = {
-        "format": "local-transcriber-backup-v3",
+        "format": "local-transcriber-backup-v4",
         "exported_at": exported_at.isoformat(),
         "users": [
             _serialize_row(row, ["id", "username", "display_name", "is_active", "created_at", "updated_at"])
