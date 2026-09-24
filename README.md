@@ -172,47 +172,60 @@ On that first startup, the default account is created if it does not already exi
 
 The application has fallback bootstrap values so an upgrade cannot permanently lock itself out, but you should set your own credentials before first startup.
 
-## Recommended: integrate with the existing AI stack
+## Recommended: install directly inside the existing AI stack
 
-For the Dell R720 deployment, use the installer in `deploy/ai-stack` rather than the standalone Compose file.
+For the Dell R720 deployment, clone Talk to Type directly as:
+
+```text
+/home/dan/ai/local-transcriber
+```
+
+This keeps source code, `.env`, recordings, and runtime coordination files together in one app directory under the AI stack. The only app-owned files stored elsewhere are the large pyannote/Hugging Face cache files, which live under `/databases/aimodels/talk-to-type/pyannote` with the rest of the model store.
+
+For a clean install:
 
 ```bash
-cd /home/dan/local-transcriber
-git pull
+cd /home/dan/ai
+git clone https://github.com/danfulton72/local-transcriber.git
+cd local-transcriber
+
 python deploy/ai-stack/install.py
+nano .env
 ```
 
-The installer is conservative and idempotent. It backs up `/home/dan/ai/llama-swap/t4.yaml`, extends the existing T4 swap matrix with `speaker_auto`, links the supplied Compose override into `/home/dan/ai`, copies the existing app environment into `/home/dan/ai/local-transcriber/app.env`, and copies existing recordings/model cache only when the new destinations are empty.
+The installer backs up `/home/dan/ai/llama-swap/t4.yaml`, adds the hidden `speaker_auto` T4 reservation, creates `recordings/` and `runtime/`, creates the shared pyannote model directory, links the Compose override into `/home/dan/ai`, and validates the combined stack.
 
-After reviewing the migrated environment:
+Then start from the main AI-stack directory:
 
 ```bash
-nano /home/dan/ai/local-transcriber/app.env
+cd /home/dan/ai
+docker compose up -d --build
 ```
 
-move from the old standalone containers to the integrated stack:
+From then on:
 
 ```bash
-cd /home/dan/local-transcriber
-docker compose down
+cd /home/dan/ai/local-transcriber
+git pull
 
 cd /home/dan/ai
 docker compose up -d --build
 ```
 
-From then on, normal `docker compose` commands in `/home/dan/ai` manage Talk to Type alongside the rest of the AI services.
-
-Persistent layout:
+Directory layout:
 
 ```text
-/home/dan/local-transcriber/                 source checkout
-/home/dan/ai/local-transcriber/app.env       app configuration
-/home/dan/ai/local-transcriber/recordings/   retained audio
-/home/dan/ai/local-transcriber/runtime/      T4 arbitration state
-/databases/aimodels/talk-to-type/pyannote/   pyannote/Hugging Face cache
+/home/dan/ai/local-transcriber/
+    source code
+    .env
+    recordings/
+    runtime/
+
+/databases/aimodels/talk-to-type/pyannote/
+    pyannote / Hugging Face cache
 ```
 
-Full migration, verification and rollback instructions are in `deploy/ai-stack/README.md`.
+Full setup, verification and rollback instructions are in `deploy/ai-stack/README.md`.
 
 ## PostgreSQL
 
@@ -225,7 +238,9 @@ CREATE DATABASE transcriber OWNER transcriber;
 
 The database schema is managed with **Alembic migrations**. Migrations run automatically when the application starts, including when upgrading an existing installation.
 
-## Install
+## Standalone install
+
+The root `compose.yml` remains available for development or a standalone deployment. The R720 production layout should use the AI-stack install above.
 
 ```bash
 git clone https://github.com/danfulton72/local-transcriber.git
@@ -311,16 +326,20 @@ The Progress page is based only on data needed for the app itself plus explicit 
 
 Nothing is sent to a cloud transcription or analytics service by this application.
 
-## Updating an existing install
+## Updating the AI-stack install
 
-Before a significant upgrade, keep your normal PostgreSQL/recordings backup. Then:
+For the recommended R720 layout:
 
 ```bash
-cd ~/local-transcriber
+cd ~/ai/local-transcriber
 git pull
+
+cd ~/ai
 docker compose up -d --build
-docker compose logs --tail=100 local-transcriber
+docker compose logs --tail=100 local-transcriber speaker-analyzer
 ```
+
+Rerun `python deploy/ai-stack/install.py` from `~/ai/local-transcriber` whenever the integration/T4 arbitration files change.
 
 The container runs `alembic upgrade head` automatically during startup. Existing PostgreSQL data and the `recordings/` directory are preserved. The current schema migrations also add users/sessions and assign legacy recordings to the bootstrap account on startup without replacing existing recordings.
 
