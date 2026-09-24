@@ -51,6 +51,7 @@ class SpeakerTurnUpdate(BaseModel):
 
 
 class SpeakerIdentityUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
     target_profile_id: uuid.UUID | None = None
     target_detection_id: uuid.UUID | None = None
     unknown: bool = False
