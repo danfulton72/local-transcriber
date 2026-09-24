@@ -340,16 +340,13 @@ def test_recording_owner_can_reload_resolved_speaker_turns():
         )
         assert login_second.status_code == 200
 
-        shared_profiles = client.get("/api/admin/speakers/profiles").json()
-        shared_jack = next(row for row in shared_profiles if row["name"] == "Jack Clancy")
-        shared_sample = next(row for row in shared_jack["samples"] if row["id"] == saved_sample["id"])
-        assert shared_sample["source_recording_title"] == "Shared voice sample"
-        assert shared_sample["can_preview"] is False
+        shared_profiles = client.get("/api/admin/speakers/profiles")
+        assert shared_profiles.status_code == 403
 
         blocked_preview = client.get(
             f"/api/admin/speakers/profiles/{jack_profile['id']}/samples/{saved_sample['id']}/sample-audio"
         )
-        assert blocked_preview.status_code == 404
+        assert blocked_preview.status_code == 403
 
         client.post("/api/auth/logout")
         relogin = client.post(
@@ -391,7 +388,6 @@ def test_speaker_identity_corrections_create_private_retraining_samples(monkeypa
         SpeakerTurn,
     )
 
-    monkeypatch.setattr(speaker_admin.settings, "parent_pin", "")
     suffix = uuid.uuid4().hex[:8]
     target_name = f"Correct Speaker {suffix}"
 
