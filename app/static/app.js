@@ -2926,6 +2926,22 @@
   }
   updateCaptureSourceUI();
 
+  els.transcriptView?.addEventListener('scroll', () => {
+    const manualScroll = Date.now() - state.programmaticScrollAt > 700;
+    if (!manualScroll) return;
+    if (state.recording) {
+      state.autoFollow = false;
+      updateFollowButton();
+    }
+    if (
+      state.currentAudioKind === 'recording' &&
+      state.currentAudio &&
+      !state.currentAudio.paused
+    ) {
+      pausePlaybackFollowing();
+    }
+  }, { passive: true });
+
   window.addEventListener('scroll', () => {
     const current = window.scrollY;
     const manualScroll = Date.now() - state.programmaticScrollAt > 700 && Math.abs(current - state.lastScrollY) > 10;
