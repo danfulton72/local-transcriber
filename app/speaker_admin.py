@@ -211,7 +211,9 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
                 "display_name": by_id[turn.detection_id].display_name if turn.detection_id in by_id else "Speaker",
                 "start_seconds": round(turn.start_seconds, 2),
                 "end_seconds": round(turn.end_seconds, 2),
-                "text": turn.text,
+                "text": turn.edited_text if turn.edited_text is not None else turn.text,
+                "original_text": turn.text,
+                "edited": turn.edited_text is not None,
             }
             for turn in turns
         ],
