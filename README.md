@@ -102,9 +102,9 @@ This is primarily a desktop-browser feature. Chrome/Edge generally provide the m
 
 ### Hear a speaker before tagging
 
-In **Progress → Conversation speakers**, every detected speaker with attributed speech now has a **Hear sample** button. It plays up to 8 seconds from that speaker's longest continuous diarized turn, trimmed slightly inside the turn boundaries to reduce neighbouring-speaker bleed.
+In **Tools → Speakers**, every detected speaker with attributed speech now has a **Hear sample** button. It plays up to 8 seconds from that speaker's longest continuous diarized turn, trimmed slightly inside the turn boundaries to reduce neighbouring-speaker bleed.
 
-The preview is generated on demand from the existing saved recording. It is parent-only, is never added as another stored audio file, and is intended to help the operator recognise the person before saving a tag or adding a remembered voice sample.
+The preview is generated on demand from the existing saved recording. It is admin-only, is never added as another stored audio file, and is intended to help the operator recognise the person before saving a tag or adding a remembered voice sample.
 
 **Remembered speakers** also expose a **Hear** control beside each stored voice sample, using that sample's original detected turn. Voice profiles remain shared across app users, but source audio does not: a sample created from another user's recording is shown as **Shared voice sample** and cannot be played from the current account.
 
@@ -115,6 +115,10 @@ For saved conversations with speaker analysis, **My voice** now opens an interac
 While the original recording plays, the current speaker turn is highlighted and automatically kept in view. Manual scrolling or clicking into an inline edit pauses automatic following; **Follow audio** jumps back to the current spoken turn and resumes following.
 
 Each speaker turn can be edited directly in **Your words** while audio continues playing. Turn edits autosave after a short pause in typing. The diarized original text is retained separately, while the corrected turn text is used to rebuild the recording's normal edited transcript for search, copy/share and later reopening. Clicking a turn timestamp starts or seeks the original recording at that point.
+
+Speaker-name corrections in **My words** now start with a selector of remembered voices. Selecting **New name…** reveals a manual-name field, while **This turn**, **All matching turns**, **Unknown**, and **Reset** keep the correction scope explicit. Normal users see only remembered speaker names/IDs here; voiceprint metadata and source samples remain admin-only.
+
+Saved recordings also show an editable **Title** above the transcript. Titles can be renamed without changing the transcript or recording audio.
 
 ### Responsive workspace
 
