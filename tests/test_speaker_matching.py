@@ -255,13 +255,13 @@ def test_recording_owner_can_reload_resolved_speaker_turns():
                         analysis_id=analysis.id,
                         detection_id=jack.id,
                         start_seconds=0.0,
-                        end_seconds=2.0,
+                        end_seconds=3.2,
                         text="Jack says hello.",
                     ),
                     SpeakerTurn(
                         analysis_id=analysis.id,
                         detection_id=paul.id,
-                        start_seconds=2.0,
+                        start_seconds=3.2,
                         end_seconds=4.0,
                         text="Paul answers.",
                     ),
@@ -290,6 +290,62 @@ def test_recording_owner_can_reload_resolved_speaker_turns():
         assert preview.headers["content-type"].startswith("audio/wav")
         assert len(preview.content) > 44
         assert float(preview.headers["x-clip-end"]) > float(preview.headers["x-clip-start"])
+
+        remembered = client.post(
+            f"/api/admin/speakers/analyses/{payload['analysis_id']}/detections/SPEAKER_00/remember",
+            json={"name": "Jack Clancy"},
+        )
+        assert remembered.status_code == 200
+
+        profiles = client.get("/api/admin/speakers/profiles").json()
+        jack_profile = next(row for row in profiles if row["name"] == "Jack Clancy")
+        saved_sample = jack_profile["samples"][0]
+        assert saved_sample["can_preview"] is True
+        assert saved_sample["preview_seconds"] > 0
+
+        remembered_preview = client.get(
+            f"/api/admin/speakers/profiles/{jack_profile['id']}/samples/{saved_sample['id']}/sample-audio"
+        )
+        assert remembered_preview.status_code == 200
+        assert remembered_preview.headers["content-type"].startswith("audio/wav")
+        assert len(remembered_preview.content) > 44
+
+        second_username = "speaker-private-" + uuid.uuid4().hex[:8]
+        second_password = "speaker-private-password"
+        created_user = client.post(
+            "/api/admin/users",
+            json={
+                "username": second_username,
+                "display_name": "Second speaker user",
+                "password": second_password,
+            },
+        )
+        assert created_user.status_code == 201
+
+        client.post("/api/auth/logout")
+        login_second = client.post(
+            "/api/auth/login",
+            json={"username": second_username, "password": second_password},
+        )
+        assert login_second.status_code == 200
+
+        shared_profiles = client.get("/api/admin/speakers/profiles").json()
+        shared_jack = next(row for row in shared_profiles if row["name"] == "Jack Clancy")
+        shared_sample = next(row for row in shared_jack["samples"] if row["id"] == saved_sample["id"])
+        assert shared_sample["source_recording_title"] == "Shared voice sample"
+        assert shared_sample["can_preview"] is False
+
+        blocked_preview = client.get(
+            f"/api/admin/speakers/profiles/{jack_profile['id']}/samples/{saved_sample['id']}/sample-audio"
+        )
+        assert blocked_preview.status_code == 404
+
+        client.post("/api/auth/logout")
+        relogin = client.post(
+            "/api/auth/login",
+            json={"username": "local", "password": "change-me-now"},
+        )
+        assert relogin.status_code == 200
 
         first_turn = payload["turns"][0]
         edited = client.patch(
