@@ -85,23 +85,35 @@ def test_profile_quality_grows_with_sample_bank():
     assert profile_quality(5) == "strong"
 
 
-def test_speaker_admin_requires_parent_pin(monkeypatch):
+def test_speaker_admin_requires_admin_login():
     from app.main import app
-    from app import speaker_admin
 
-    monkeypatch.setattr(speaker_admin.settings, "parent_pin", "2468")
+    suffix = uuid.uuid4().hex[:8]
+    username = f"speaker-user-{suffix}"
+    password = "speaker-user-password"
 
     with TestClient(app) as client:
         login = client.post("/api/auth/login", json={"username": "local", "password": "change-me-now"})
         assert login.status_code == 200
-        denied = client.get("/api/admin/speakers/profiles")
-        assert denied.status_code == 401
-
-        allowed = client.get(
-            "/api/admin/speakers/profiles",
-            headers={"X-Parent-Pin": "2468"},
-        )
+        allowed = client.get("/api/admin/speakers/profiles")
         assert allowed.status_code == 200
+
+        created = client.post(
+            "/api/admin/users",
+            json={
+                "username": username,
+                "display_name": "Speaker user",
+                "password": password,
+            },
+        )
+        assert created.status_code == 201
+        assert created.json()["is_admin"] is False
+
+        client.post("/api/auth/logout")
+        login = client.post("/api/auth/login", json={"username": username, "password": password})
+        assert login.status_code == 200
+        denied = client.get("/api/admin/speakers/profiles")
+        assert denied.status_code == 403
 
 
 def test_remembered_speaker_collects_multiple_samples_and_rejects_short_speech(monkeypatch):
@@ -110,7 +122,6 @@ def test_remembered_speaker_collects_multiple_samples_and_rejects_short_speech(m
     from app.db import SessionLocal
     from app.models import Recording, SpeakerAnalysis, SpeakerDetection, SpeakerTurn, User
 
-    monkeypatch.setattr(speaker_admin.settings, "parent_pin", "")
 
     async def seed_detection(seconds: float, embedding: list[float]):
         async with SessionLocal() as db:
