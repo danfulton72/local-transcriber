@@ -602,3 +602,105 @@ def test_speaker_identity_corrections_create_private_retraining_samples(monkeypa
             if row["id"] == first_turn_id
         )
         assert unknown_turn["display_name"] == "Unknown"
+
+
+
+def test_non_admin_can_choose_remembered_speaker_by_name_only():
+    from app.main import app
+    from app.db import SessionLocal
+    from app.models import SpeakerAnalysis, SpeakerDetection, SpeakerProfile, SpeakerTurn
+
+    suffix = uuid.uuid4().hex[:8]
+    username = f"speaker-picker-{suffix}"
+    password = "speaker-picker-password"
+    known_name = f"Known Voice {suffix}"
+
+    with TestClient(app) as client:
+        admin_login = client.post(
+            "/api/auth/login",
+            json={"username": "local", "password": "change-me-now"},
+        )
+        assert admin_login.status_code == 200
+        created_user = client.post(
+            "/api/admin/users",
+            json={
+                "username": username,
+                "display_name": "Speaker picker user",
+                "password": password,
+            },
+        )
+        assert created_user.status_code == 201
+
+        client.post("/api/auth/logout")
+        user_login = client.post(
+            "/api/auth/login",
+            json={"username": username, "password": password},
+        )
+        assert user_login.status_code == 200
+        assert user_login.json()["user"]["is_admin"] is False
+
+        created = client.post("/api/recordings", json={"language": "en"}).json()
+        recording_id = created["id"]
+        finished = client.post(
+            f"/api/recordings/{recording_id}/finish",
+            json={"transcript": "A remembered speaker test.", "duration_seconds": 4.0},
+        )
+        assert finished.status_code == 200
+
+        async def seed():
+            async with SessionLocal() as db:
+                known = SpeakerProfile(
+                    name=known_name,
+                    embedding=[0.2, 0.8],
+                    sample_count=1,
+                )
+                db.add(known)
+                await db.flush()
+
+                analysis = SpeakerAnalysis(
+                    recording_id=uuid.UUID(recording_id),
+                    status="completed",
+                    speaker_count=1,
+                )
+                db.add(analysis)
+                await db.flush()
+
+                detection = SpeakerDetection(
+                    analysis_id=analysis.id,
+                    speaker_key="SPEAKER_00",
+                    person_index=1,
+                    display_name="Person 1",
+                    embedding=[1.0, 0.0],
+                )
+                db.add(detection)
+                await db.flush()
+
+                turn = SpeakerTurn(
+                    analysis_id=analysis.id,
+                    detection_id=detection.id,
+                    start_seconds=0.0,
+                    end_seconds=4.0,
+                    text="A remembered speaker test.",
+                )
+                db.add(turn)
+                await db.commit()
+                return str(known.id), str(turn.id)
+
+        profile_id, turn_id = asyncio.run(seed())
+
+        names = client.get("/api/speaker-profiles")
+        assert names.status_code == 200
+        known_row = next(row for row in names.json() if row["id"] == profile_id)
+        assert known_row == {"id": profile_id, "name": known_name}
+
+        corrected = client.patch(
+            f"/api/recordings/{recording_id}/speaker-turns/{turn_id}/identity",
+            json={"target_profile_id": profile_id, "scope": "turn"},
+        )
+        assert corrected.status_code == 200
+        corrected_turn = next(row for row in corrected.json()["turns"] if row["id"] == turn_id)
+        assert corrected_turn["display_name"] == known_name
+        assert corrected_turn["identity_corrected"] is True
+
+        admin_profiles = client.get("/api/admin/speakers/profiles")
+        assert admin_profiles.status_code == 403
