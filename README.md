@@ -58,23 +58,34 @@ The app deliberately does **not** track attention, mouse movement, mood, sentime
 
 ## Architecture
 
+The recommended deployment is now part of the existing R720 `ai-stack` Compose project:
+
 ```text
 Browser (HTTPS)
       |
       v
-Local Transcriber :8090
-  |       |       |
-  |       |       +--> recordings volume (WAV + chunk WAVs)
-  |       +----------> existing PostgreSQL server
-  +------------------> existing Wyoming OpenAI Gateway :8555
-                           |                 |
-                           v                 v
-                    Faster Whisper        Piper
+Local Transcriber :8090  ───────> existing PostgreSQL
+      |
+      +──── live speech ─────────> existing Wyoming OpenAI Gateway :8555
+      |                              |                 |
+      |                              v                 v
+      |                       Faster Whisper        Piper
+      |
+      +──── parent analysis ──────> llama-swap-t4
+                                      |
+                                 speaker_auto
+                                      |
+                                      v
+                               speaker-analyzer
+                                      |
+                                   Tesla T4
 ```
 
-Your existing Whisper, Piper and Wyoming OpenAI Gateway containers remain separate and unchanged.
+The app and analyzer share the existing `ai` bridge network. Pyannote model/cache data lives under `/databases/aimodels/talk-to-type/pyannote`, while application state and recordings live under `/home/dan/ai/local-transcriber`.
 
-The optional speaker analyzer is a separate local service. It uses pyannote Community-1 for diarization and its speaker embeddings for local voice matching. Conversation analysis is never run automatically: a parent opens **Progress → Conversation speakers** and starts it for a saved recording.
+Whisper, Piper and the Wyoming OpenAI Gateway remain separate and unchanged. Speaker analysis is still parent-triggered and post-recording only; live transcription is unchanged.
+
+When speaker analysis starts, Talk to Type asks the existing `llama-swap-t4` instance to load a hidden `speaker_auto` reservation. The T4 matrix evicts the current Qwen/embedding processes first, pyannote runs, and the app restores the previously-running T4 models afterwards unless another request has already claimed the GPU.
 
 ## Computer / shared audio capture
 
@@ -103,31 +114,16 @@ The open-source `pyannote/speaker-diarization-community-1` model is gated on Hug
 3. Put the token in `.env` as `HF_TOKEN=...`.
 4. Rebuild with `docker compose up -d --build`.
 
-Downloaded model files are cached under `./speaker-model-cache`, so subsequent analysis can use the local cache.
+In the recommended AI-stack deployment, downloaded model files are cached under `/databases/aimodels/talk-to-type/pyannote`, alongside the rest of the AI model store. The standalone Compose deployment still uses `./speaker-model-cache`.
 
 The speaker analyzer uses the NVIDIA GPU by default (`SPEAKER_DEVICE=cuda`). It is parent-triggered after recording, so it does not alter the child-facing live transcription path.
 
 
-### Tesla P4 / Pascal speaker analyzer
+### GPU selection
 
-The speaker analyzer image uses **PyTorch 2.8 + CUDA 12.6** deliberately. PyTorch's CUDA 12.8 binaries dropped Pascal kernels, so a Tesla P4 (`sm_61`) can start the container but fail when diarization executes. Keep the speaker service on the CUDA 12.6 image when using a P4.
+The recommended AI-stack deployment borrows the existing **Tesla T4** through `llama-swap-t4`. The analyzer container is pinned to `${T4_UUID}`; the large T4 llama-server processes are evicted for the duration of parent-triggered speaker analysis, while the separate live Whisper workload remains untouched.
 
-After deployment, check the runtime seen by the analyzer:
-
-```bash
-curl http://localhost:8090/api/admin/speakers/status \
-  -H "X-Parent-Pin: YOUR_PARENT_PIN"
-```
-
-Or from the Docker host, without app authentication:
-
-```bash
-docker compose exec speaker-analyzer python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.get_device_name(0)); print(torch.cuda.get_device_capability(0)); print(torch.cuda.get_arch_list())"
-```
-
-For a P4 you want the selected GPU to report capability `(6, 1)` and the compiled architecture list to include `sm_61`.
-
-The analyzer also loads the app's PCM WAV directly into an in-memory PyTorch waveform before calling pyannote. This avoids depending on torchcodec/FFmpeg for the actual diarization input path.
+The CUDA 12.6 speaker image is retained because it works on the T4 and also leaves a Tesla P4/Pascal fallback available if you later choose to dedicate that card instead.
 
 ### Workflow
 
@@ -175,6 +171,48 @@ AUTH_COOKIE_SECURE=true
 On that first startup, the default account is created if it does not already exist and all recordings created before user support are assigned to it. The environment password is a bootstrap value: changing `DEFAULT_PASSWORD` later does not silently overwrite the password already stored for that user. Use **Progress → Users** with the parent PIN to reset passwords after bootstrap.
 
 The application has fallback bootstrap values so an upgrade cannot permanently lock itself out, but you should set your own credentials before first startup.
+
+## Recommended: integrate with the existing AI stack
+
+For the Dell R720 deployment, use the installer in `deploy/ai-stack` rather than the standalone Compose file.
+
+```bash
+cd /home/dan/local-transcriber
+git pull
+python deploy/ai-stack/install.py
+```
+
+The installer is conservative and idempotent. It backs up `/home/dan/ai/llama-swap/t4.yaml`, extends the existing T4 swap matrix with `speaker_auto`, links the supplied Compose override into `/home/dan/ai`, copies the existing app environment into `/home/dan/ai/local-transcriber/app.env`, and copies existing recordings/model cache only when the new destinations are empty.
+
+After reviewing the migrated environment:
+
+```bash
+nano /home/dan/ai/local-transcriber/app.env
+```
+
+move from the old standalone containers to the integrated stack:
+
+```bash
+cd /home/dan/local-transcriber
+docker compose down
+
+cd /home/dan/ai
+docker compose up -d --build
+```
+
+From then on, normal `docker compose` commands in `/home/dan/ai` manage Talk to Type alongside the rest of the AI services.
+
+Persistent layout:
+
+```text
+/home/dan/local-transcriber/                 source checkout
+/home/dan/ai/local-transcriber/app.env       app configuration
+/home/dan/ai/local-transcriber/recordings/   retained audio
+/home/dan/ai/local-transcriber/runtime/      T4 arbitration state
+/databases/aimodels/talk-to-type/pyannote/   pyannote/Hugging Face cache
+```
+
+Full migration, verification and rollback instructions are in `deploy/ai-stack/README.md`.
 
 ## PostgreSQL
 
