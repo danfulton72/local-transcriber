@@ -46,6 +46,7 @@
     playbackFollow: true,
     playbackActiveTurnId: null,
     editingSpeakerTurnId: null,
+    editingSpeakerIdentityTurnId: null,
     speakerTurnSaveTimer: null,
     speakerTurnSaveChain: Promise.resolve(),
     playbackToken: 0,
@@ -441,6 +442,44 @@
     }
   }
 
+  async function saveSpeakerIdentity(turnId, payload) {
+    const recordingId = state.currentRecording?.id;
+    if (!recordingId || !turnId) return;
+    try {
+      const result = await api(
+        '/api/recordings/' + recordingId + '/speaker-turns/' + turnId + '/identity',
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+      );
+      if (state.currentRecording?.id !== recordingId) return;
+      state.speakerTurns = Array.isArray(result?.turns) ? result.turns : state.speakerTurns;
+      state.editingSpeakerIdentityTurnId = null;
+      renderTranscript();
+      showToast('Speaker name saved');
+    } catch (error) {
+      setError('Could not save this speaker correction: ' + error.message);
+    }
+  }
+
+  function beginSpeakerIdentityEdit(turnId) {
+    if (!turnId || state.recording || state.transcribing) return;
+    state.editingSpeakerIdentityTurnId = turnId;
+    pausePlaybackFollowing();
+    renderTranscript();
+    requestAnimationFrame(() => {
+      const input = els.transcriptView.querySelector(
+        '.transcript-speaker-turn[data-turn-id="' + turnId + '"] .speaker-name-input'
+      );
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    });
+  }
+
   function beginSpeakerTurnEdit(turnId) {
     if (!turnId || state.recording || state.transcribing) return;
     state.editingSpeakerTurnId = turnId;
@@ -500,8 +539,84 @@
 
           const meta = document.createElement('div');
           meta.className = 'transcript-speaker-meta';
-          const name = document.createElement('strong');
-          name.textContent = turn.display_name || 'Speaker';
+
+          const nameWrap = document.createElement('div');
+          nameWrap.className = 'transcript-speaker-name-wrap';
+          if (turn.id === state.editingSpeakerIdentityTurnId) {
+            const nameInput = document.createElement('input');
+            nameInput.className = 'speaker-name-input';
+            nameInput.value = turn.display_name || '';
+            nameInput.maxLength = 120;
+            nameInput.setAttribute('aria-label', 'Correct speaker name');
+
+            const nameActions = document.createElement('div');
+            nameActions.className = 'speaker-name-edit-actions';
+
+            const saveTurn = document.createElement('button');
+            saveTurn.type = 'button';
+            saveTurn.textContent = 'This turn';
+            saveTurn.title = 'Use this name for only this spoken turn';
+            saveTurn.addEventListener('click', () => {
+              const name = nameInput.value.trim();
+              if (name) saveSpeakerIdentity(turn.id, { name, scope: 'turn' });
+            });
+
+            const saveAll = document.createElement('button');
+            saveAll.type = 'button';
+            saveAll.textContent = 'All matching turns';
+            saveAll.title = 'Use this name for every turn from the same originally detected speaker';
+            saveAll.addEventListener('click', () => {
+              const name = nameInput.value.trim();
+              if (name) saveSpeakerIdentity(turn.id, { name, scope: 'detection' });
+            });
+
+            const unknown = document.createElement('button');
+            unknown.type = 'button';
+            unknown.textContent = 'Unknown';
+            unknown.addEventListener('click', () => {
+              saveSpeakerIdentity(turn.id, { unknown: true, scope: 'turn' });
+            });
+
+            const reset = document.createElement('button');
+            reset.type = 'button';
+            reset.textContent = 'Reset';
+            reset.title = 'Restore the original detected speaker identity';
+            reset.addEventListener('click', () => {
+              saveSpeakerIdentity(turn.id, { clear: true, scope: 'turn' });
+            });
+
+            const cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.textContent = 'Cancel';
+            cancel.addEventListener('click', () => {
+              state.editingSpeakerIdentityTurnId = null;
+              renderTranscript();
+            });
+
+            nameInput.addEventListener('keydown', (event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                const name = nameInput.value.trim();
+                if (name) saveSpeakerIdentity(turn.id, { name, scope: 'turn' });
+              } else if (event.key === 'Escape') {
+                state.editingSpeakerIdentityTurnId = null;
+                renderTranscript();
+              }
+            });
+
+            nameActions.append(saveTurn, saveAll, unknown, reset, cancel);
+            nameWrap.append(nameInput, nameActions);
+          } else {
+            const name = document.createElement('button');
+            name.type = 'button';
+            name.className = 'transcript-speaker-name-button';
+            name.textContent = turn.display_name || 'Speaker';
+            name.title = 'Correct this speaker name';
+            name.setAttribute('aria-label', 'Correct speaker name ' + (turn.display_name || 'Speaker'));
+            if (turn.identity_corrected) name.classList.add('corrected');
+            name.addEventListener('click', () => beginSpeakerIdentityEdit(turn.id));
+            nameWrap.appendChild(name);
+          }
 
           const metaActions = document.createElement('div');
           metaActions.className = 'transcript-turn-actions';
@@ -520,7 +635,7 @@
           read.setAttribute('aria-label', 'Hear ' + (turn.display_name || 'speaker') + ' read aloud');
           read.addEventListener('click', () => speakText(turn.text));
           metaActions.append(seek, read);
-          meta.append(name, metaActions);
+          meta.append(nameWrap, metaActions);
 
           const body = document.createElement('div');
           body.className = 'transcript-speaker-text';
@@ -599,6 +714,7 @@
     state.transcript = String(text || '').trim();
     state.speakerTurns = Array.isArray(speakerTurns) ? speakerTurns : [];
     state.editingSpeakerTurnId = null;
+    state.editingSpeakerIdentityTurnId = null;
     state.playbackActiveTurnId = null;
     if (!state.recording) {
       state.confirmedTranscript = state.transcript;
