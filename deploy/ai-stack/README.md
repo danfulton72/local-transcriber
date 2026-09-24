@@ -47,7 +47,7 @@ It also adds a hidden model:
       ttl: 0
       unloadTimeout: 7200
       concurrencyLimit: 1
-      cmdStop: sh -lc '/scripts/speaker-stop.sh "${PID}"'
+      cmdStop: sh /scripts/speaker-stop.sh "${PID}"
 
 Because speaker_only contains only speaker_auto, requesting /upstream/speaker_auto/analyze makes llama-swap unload the T4 Qwen/embedding processes before forwarding the analysis request.
 
