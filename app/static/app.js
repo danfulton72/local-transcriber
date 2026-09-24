@@ -1478,7 +1478,8 @@
             || service.gpus[0]
           : null;
         const gpuText = gpu?.name ? ' · ' + gpu.name : '';
-        els.speakerServiceStatus.textContent = (service.loaded ? 'Ready' : 'Ready · model loads on first use') + gpuText;
+        const swapText = service.arbitrated ? ' · managed by llama-swap' : '';
+        els.speakerServiceStatus.textContent = (service.loaded ? 'Ready' : 'Ready · model loads on first use') + gpuText + swapText;
         els.speakerServiceStatus.className = 'pill speaker-ready';
         if (!state.speakerPolling) els.speakerAnalysisMessage.textContent = '';
       }
