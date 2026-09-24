@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,7 @@ from .models import (
     SpeakerTurn,
 )
 from .services.progress import word_count
-from .services.recording_audio import build_combined_wav
+from .services.recording_audio import build_combined_wav, extract_wav_clip
 from .services.speaker_service import speaker_service
 
 
@@ -174,10 +174,15 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
     ).scalars().all()
     by_id = {item.id: item for item in detections}
     speech_by_detection: dict[uuid.UUID, float] = {}
+    longest_turn_by_detection: dict[uuid.UUID, float] = {}
     for turn in turns:
+        turn_seconds = max(0.0, turn.end_seconds - turn.start_seconds)
         speech_by_detection[turn.detection_id] = (
-            speech_by_detection.get(turn.detection_id, 0.0)
-            + max(0.0, turn.end_seconds - turn.start_seconds)
+            speech_by_detection.get(turn.detection_id, 0.0) + turn_seconds
+        )
+        longest_turn_by_detection[turn.detection_id] = max(
+            longest_turn_by_detection.get(turn.detection_id, 0.0),
+            turn_seconds,
         )
 
     return {
@@ -201,6 +206,8 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
                 "match_score": round(item.match_score, 3) if item.match_score is not None else None,
                 "speech_seconds": round(speech_by_detection.get(item.id, 0.0), 2),
                 "can_remember": speech_by_detection.get(item.id, 0.0) >= MIN_SAMPLE_SPEECH_SECONDS,
+                "preview_seconds": round(min(longest_turn_by_detection.get(item.id, 0.0), 8.0), 2),
+                "can_preview": longest_turn_by_detection.get(item.id, 0.0) > 0.0,
             }
             for item in detections
         ],
@@ -418,6 +425,73 @@ async def get_speaker_analysis(
     require_parent_pin(x_parent_pin)
     analysis = await owned_analysis(analysis_id, db)
     return await _analysis_payload(analysis, db)
+
+
+@router.get("/analyses/{analysis_id}/detections/{speaker_key}/sample-audio")
+async def speaker_sample_audio(
+    analysis_id: uuid.UUID,
+    speaker_key: str,
+    x_parent_pin: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    require_parent_pin(x_parent_pin)
+    analysis = await owned_analysis(analysis_id, db)
+    detection = (
+        await db.execute(
+            select(SpeakerDetection).where(
+                SpeakerDetection.analysis_id == analysis_id,
+                SpeakerDetection.speaker_key == speaker_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if not detection:
+        raise HTTPException(status_code=404, detail="Detected speaker not found")
+
+    turns = (
+        await db.execute(
+            select(SpeakerTurn).where(SpeakerTurn.detection_id == detection.id)
+        )
+    ).scalars().all()
+    if not turns:
+        raise HTTPException(status_code=404, detail="No attributed speech is available for this speaker.")
+
+    longest = max(
+        turns,
+        key=lambda turn: max(0.0, turn.end_seconds - turn.start_seconds),
+    )
+    if longest.end_seconds <= longest.start_seconds:
+        raise HTTPException(status_code=404, detail="No playable speech is available for this speaker.")
+
+    recording = await db.get(Recording, analysis.recording_id)
+    if not recording:
+        raise HTTPException(status_code=404, detail="Recording not found")
+
+    combined_path = None
+    delete_combined = False
+    try:
+        combined_path, delete_combined, _, _ = await build_combined_wav(recording, db)
+        clip, clip_start, clip_end = extract_wav_clip(
+            combined_path,
+            longest.start_seconds,
+            longest.end_seconds,
+            max_seconds=8.0,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        if delete_combined and combined_path is not None:
+            combined_path.unlink(missing_ok=True)
+
+    return Response(
+        content=clip,
+        media_type="audio/wav",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Speaker-Key": detection.speaker_key,
+            "X-Clip-Start": f"{clip_start:.3f}",
+            "X-Clip-End": f"{clip_end:.3f}",
+        },
+    )
 
 
 @router.patch("/analyses/{analysis_id}/detections/{speaker_key}")
