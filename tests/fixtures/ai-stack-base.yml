@@ -1,0 +1,11 @@
+name: ai-stack-test
+
+services:
+  llama-swap-t4:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+    networks: [ai]
+
+networks:
+  ai:
+    driver: bridge
