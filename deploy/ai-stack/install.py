@@ -133,6 +133,25 @@ def ensure_app_env(repo: Path) -> Path:
     return target
 
 
+def find_compose_file(ai_home: Path) -> Path:
+    candidates = (
+        "compose.yaml",
+        "compose.yml",
+        "docker-compose.yaml",
+        "docker-compose.yml",
+    )
+    for name in candidates:
+        path = ai_home / name
+        if path.is_file():
+            return path
+
+    checked = ", ".join(str(ai_home / name) for name in candidates)
+    fail(
+        "Could not find the AI stack Compose file. Checked: "
+        f"{checked}"
+    )
+
+
 def validate_compose(ai_home: Path) -> None:
     try:
         subprocess.run(
@@ -173,9 +192,8 @@ def main() -> None:
     if not repo.is_dir():
         fail(f"local-transcriber repo does not exist: {repo}")
 
-    base_compose = ai_home / "compose.yml"
-    if not base_compose.exists():
-        fail(f"Expected AI stack Compose file at {base_compose}")
+    base_compose = find_compose_file(ai_home)
+    print(f"AI stack Compose: {base_compose}")
 
     t4_config = ai_home / "llama-swap" / "t4.yaml"
     if not t4_config.exists():
