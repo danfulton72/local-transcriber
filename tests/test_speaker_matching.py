@@ -557,3 +557,42 @@ def test_speaker_identity_corrections_create_private_retraining_samples(monkeypa
         assert undo.status_code == 204
         final_turns = client.get(f"/api/recordings/{recording_id}/speaker-turns").json()["turns"]
         assert [row["display_name"] for row in final_turns] == [wrong_name, wrong_name]
+
+        inline = client.patch(
+            f"/api/recordings/{recording_id}/speaker-turns/{first_turn_id}/identity",
+            json={"name": "Corrected from My words", "scope": "turn"},
+        )
+        assert inline.status_code == 200
+        inline_turns = {row["id"]: row for row in inline.json()["turns"]}
+        assert inline_turns[first_turn_id]["display_name"] == "Corrected from My words"
+        assert inline_turns[first_turn_id]["identity_corrected"] is True
+        assert inline_turns[second_turn_id]["display_name"] == wrong_name
+
+        inline_relabels = client.get("/api/admin/speakers/relabels").json()
+        inline_sample = next(
+            row for row in inline_relabels
+            if row["turn_id"] == first_turn_id
+        )
+        assert inline_sample["corrected_display_name"] == "Corrected from My words"
+        assert inline_sample["training_ready"] is True
+
+        inline_all = client.patch(
+            f"/api/recordings/{recording_id}/speaker-turns/{first_turn_id}/identity",
+            json={"name": target_name, "scope": "detection"},
+        )
+        assert inline_all.status_code == 200
+        assert [row["display_name"] for row in inline_all.json()["turns"]] == [
+            target_name,
+            target_name,
+        ]
+
+        inline_unknown = client.patch(
+            f"/api/recordings/{recording_id}/speaker-turns/{first_turn_id}/identity",
+            json={"unknown": True, "scope": "turn"},
+        )
+        assert inline_unknown.status_code == 200
+        unknown_turn = next(
+            row for row in inline_unknown.json()["turns"]
+            if row["id"] == first_turn_id
+        )
+        assert unknown_turn["display_name"] == "Unknown"
