@@ -46,3 +46,4 @@ jobs:
             -f deploy/ai-stack/compose.override.yml \
             config -q
       - run: docker build -t local-transcriber-ci .
+      - run: docker build -t local-transcriber-speaker-ci speaker_service
