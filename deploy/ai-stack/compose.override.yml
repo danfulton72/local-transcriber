@@ -10,19 +10,19 @@ services:
   llama-swap-t4:
     volumes:
       - type: bind
-        source: ${AI_HOME:-/home/dan/ai}/local-transcriber/runtime
+        source: ${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}/runtime
         target: /run/talk-to-type
       - type: bind
-        source: ${LOCAL_TRANSCRIBER_DIR:-/home/dan/local-transcriber}/deploy/ai-stack/speaker-stop.sh
+        source: ${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}/deploy/ai-stack/speaker-stop.sh
         target: /scripts/speaker-stop.sh
         read_only: true
 
   local-transcriber:
     build:
-      context: ${LOCAL_TRANSCRIBER_DIR:-/home/dan/local-transcriber}
+      context: ${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}
     container_name: local-transcriber
     env_file:
-      - ${AI_HOME:-/home/dan/ai}/local-transcriber/app.env
+      - ${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}/.env
     environment:
       SPEAKER_SERVICE_URL: http://speaker-analyzer:9000
       SPEAKER_SWAP_URL: http://llama-swap-t4:8080
@@ -32,7 +32,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ${AI_HOME:-/home/dan/ai}/local-transcriber/recordings:/data/recordings
+      - ${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}/recordings:/data/recordings
     ports:
       - "8090:8080"
     depends_on:
@@ -43,10 +43,10 @@ services:
 
   speaker-analyzer:
     build:
-      context: ${LOCAL_TRANSCRIBER_DIR:-/home/dan/local-transcriber}/speaker_service
+      context: ${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}/speaker_service
     container_name: local-transcriber-speaker-analyzer
     env_file:
-      - ${AI_HOME:-/home/dan/ai}/local-transcriber/app.env
+      - ${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}/.env
     environment:
       HF_HOME: /models
       GATEWAY_BASE_URL: http://host.docker.internal:8555/v1
@@ -59,7 +59,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ${MODELS_DIR:-/databases/aimodels}/talk-to-type/pyannote:/models
-      - ${AI_HOME:-/home/dan/ai}/local-transcriber/runtime:/run/talk-to-type
+      - ${LOCAL_TRANSCRIBER_DIR:-/home/dan/ai/local-transcriber}/runtime:/run/talk-to-type
     deploy:
       resources:
         reservations:
