@@ -666,6 +666,26 @@ async def list_speaker_profiles(
         )
     ).scalars().all() if recording_ids else []
     recording_titles = {recording.id: recording.title or "Recording" for recording in recordings}
+    owned_recording_ids = set(recording_titles)
+
+    detection_ids = {
+        sample.source_detection_id
+        for sample in samples
+        if sample.source_detection_id
+        and sample.source_recording_id in owned_recording_ids
+    }
+    sample_turns = (
+        await db.execute(
+            select(SpeakerTurn).where(SpeakerTurn.detection_id.in_(detection_ids))
+        )
+    ).scalars().all() if detection_ids else []
+    longest_turn_seconds: dict[uuid.UUID, float] = {}
+    for turn in sample_turns:
+        seconds = max(0.0, turn.end_seconds - turn.start_seconds)
+        longest_turn_seconds[turn.detection_id] = max(
+            longest_turn_seconds.get(turn.detection_id, 0.0),
+            seconds,
+        )
 
     by_profile: dict[uuid.UUID, list[SpeakerProfileSample]] = {}
     for sample in samples:
@@ -691,6 +711,15 @@ async def list_speaker_profiles(
                     "speech_seconds": round(sample.speech_seconds, 1) if sample.speech_seconds is not None else None,
                     "source_recording_id": str(sample.source_recording_id) if sample.source_recording_id else None,
                     "source_recording_title": recording_titles.get(sample.source_recording_id, "Shared voice sample"),
+                    "can_preview": bool(
+                        sample.source_recording_id in owned_recording_ids
+                        and sample.source_detection_id
+                        and longest_turn_seconds.get(sample.source_detection_id, 0.0) > 0.0
+                    ),
+                    "preview_seconds": round(
+                        min(longest_turn_seconds.get(sample.source_detection_id, 0.0), 8.0),
+                        2,
+                    ) if sample.source_detection_id else 0.0,
                     "created_at": sample.created_at.isoformat(),
                 }
                 for sample in bank
@@ -720,6 +749,71 @@ async def rename_speaker_profile(
         detection.display_name = profile.name
     await db.commit()
     return {"id": str(profile.id), "name": profile.name}
+
+
+@router.get("/profiles/{profile_id}/samples/{sample_id}/sample-audio")
+async def remembered_speaker_sample_audio(
+    profile_id: uuid.UUID,
+    sample_id: uuid.UUID,
+    x_parent_pin: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    require_parent_pin(x_parent_pin)
+    profile = await db.get(SpeakerProfile, profile_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Remembered speaker not found")
+
+    sample = await db.get(SpeakerProfileSample, sample_id)
+    if not sample or sample.profile_id != profile.id:
+        raise HTTPException(status_code=404, detail="Voice sample not found")
+    if not sample.source_recording_id or not sample.source_detection_id:
+        raise HTTPException(status_code=404, detail="This legacy voice sample has no playable source audio.")
+
+    recording = await db.get(Recording, sample.source_recording_id)
+    if not recording or recording.user_id != current_user_id():
+        raise HTTPException(status_code=404, detail="Voice sample audio is not available for this account.")
+
+    turns = (
+        await db.execute(
+            select(SpeakerTurn).where(SpeakerTurn.detection_id == sample.source_detection_id)
+        )
+    ).scalars().all()
+    if not turns:
+        raise HTTPException(status_code=404, detail="No attributed speech is available for this voice sample.")
+
+    longest = max(
+        turns,
+        key=lambda turn: max(0.0, turn.end_seconds - turn.start_seconds),
+    )
+    if longest.end_seconds <= longest.start_seconds:
+        raise HTTPException(status_code=404, detail="No playable speech is available for this voice sample.")
+
+    combined_path = None
+    delete_combined = False
+    try:
+        combined_path, delete_combined, _, _ = await build_combined_wav(recording, db)
+        clip, clip_start, clip_end = extract_wav_clip(
+            combined_path,
+            longest.start_seconds,
+            longest.end_seconds,
+            max_seconds=8.0,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        if delete_combined and combined_path is not None:
+            combined_path.unlink(missing_ok=True)
+
+    return Response(
+        content=clip,
+        media_type="audio/wav",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Voice-Sample": str(sample.id),
+            "X-Clip-Start": f"{clip_start:.3f}",
+            "X-Clip-End": f"{clip_end:.3f}",
+        },
+    )
 
 
 @router.delete("/profiles/{profile_id}/samples/{sample_id}", status_code=204)
