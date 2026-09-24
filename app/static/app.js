@@ -59,6 +59,7 @@
     speakerPolling: false,
     speakerTurns: [],
     speakerProfiles: [],
+    knownSpeakerProfiles: [],
     speakerPreviewAudio: null,
     speakerPreviewUrl: null,
     speakerPreviewKey: null,
@@ -74,6 +75,8 @@
     recordButton: $('recordButton'), recordButtonIcon: $('recordButtonIcon'), recordButtonText: $('recordButtonText'), meter: $('meter'),
     statusText: $('statusText'), statusDetail: $('statusDetail'), timer: $('timer'), pauseButton: $('pauseButton'),
     errorBox: $('errorBox'), transcriptView: $('transcriptView'), wordCount: $('wordCount'),
+    recordingTitleRow: $('recordingTitleRow'), recordingTitleInput: $('recordingTitleInput'),
+    saveRecordingTitleButton: $('saveRecordingTitleButton'), recordingTitleStatus: $('recordingTitleStatus'),
     editorWrap: $('editorWrap'), sentenceEditor: $('sentenceEditor'), editSaveStatus: $('editSaveStatus'), saveEditButton: $('saveEditButton'), cancelEditButton: $('cancelEditButton'),
     hearButton: $('hearButton'), focusButton: $('focusButton'), focusExitButton: $('focusExitButton'), useWordsButton: $('useWordsButton'),
     playRecordingButton: $('playRecordingButton'), editButton: $('editButton'), favouriteButton: $('favouriteButton'), newButton: $('newButton'), keepTalkingButton: $('keepTalkingButton'),
@@ -190,7 +193,7 @@
   }
 
   async function startAuthenticatedApp() {
-    await Promise.allSettled([checkHealth(), loadVoices()]);
+    await Promise.allSettled([checkHealth(), loadVoices(), loadKnownSpeakerProfiles()]);
     renderTranscript();
     syncRecordingUI();
     await checkRecoverable();
@@ -478,19 +481,17 @@
     }
   }
 
-  function beginSpeakerIdentityEdit(turnId) {
+  async function beginSpeakerIdentityEdit(turnId) {
     if (!turnId || state.recording || state.transcribing) return;
+    await loadKnownSpeakerProfiles();
     state.editingSpeakerIdentityTurnId = turnId;
     pausePlaybackFollowing();
     renderTranscript();
     requestAnimationFrame(() => {
-      const input = els.transcriptView.querySelector(
-        '.transcript-speaker-turn[data-turn-id="' + turnId + '"] .speaker-name-input'
+      const select = els.transcriptView.querySelector(
+        '.transcript-speaker-turn[data-turn-id="' + turnId + '"] .speaker-name-select'
       );
-      if (input) {
-        input.focus();
-        input.select();
-      }
+      select?.focus();
     });
   }
 
@@ -531,6 +532,7 @@
     const labelledTurns = !liveMode && Array.isArray(state.speakerTurns)
       ? state.speakerTurns.filter((turn) => String(turn?.text || '').trim())
       : [];
+    syncRecordingTitleUI();
     els.transcriptView.replaceChildren();
     els.transcriptView.classList.toggle('speaker-labelled', labelledTurns.length > 0);
     const count = wordCount(text);
@@ -557,11 +559,68 @@
           const nameWrap = document.createElement('div');
           nameWrap.className = 'transcript-speaker-name-wrap';
           if (turn.id === state.editingSpeakerIdentityTurnId) {
+            const currentProfile = state.knownSpeakerProfiles.find(
+              (profile) => profile.name.toLocaleLowerCase() === String(turn.display_name || '').toLocaleLowerCase()
+            );
+
+            const nameSelect = document.createElement('select');
+            nameSelect.className = 'speaker-name-select';
+            nameSelect.setAttribute('aria-label', 'Choose a remembered speaker');
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = state.knownSpeakerProfiles.length
+              ? 'Choose a remembered voice…'
+              : 'No remembered voices yet';
+            nameSelect.appendChild(placeholder);
+
+            for (const profile of state.knownSpeakerProfiles) {
+              const option = document.createElement('option');
+              option.value = 'profile:' + profile.id;
+              option.textContent = profile.name;
+              nameSelect.appendChild(option);
+            }
+
+            const newNameOption = document.createElement('option');
+            newNameOption.value = 'new';
+            newNameOption.textContent = '＋ New name…';
+            nameSelect.appendChild(newNameOption);
+
             const nameInput = document.createElement('input');
-            nameInput.className = 'speaker-name-input';
-            nameInput.value = turn.display_name || '';
+            nameInput.className = 'speaker-name-input hidden';
             nameInput.maxLength = 120;
-            nameInput.setAttribute('aria-label', 'Correct speaker name');
+            nameInput.placeholder = 'Type a new speaker name';
+            nameInput.setAttribute('aria-label', 'New speaker name');
+
+            if (currentProfile) {
+              nameSelect.value = 'profile:' + currentProfile.id;
+            } else if (turn.identity_corrected && turn.display_name && turn.display_name !== 'Unknown') {
+              nameSelect.value = 'new';
+              nameInput.value = turn.display_name;
+              nameInput.classList.remove('hidden');
+            }
+
+            const selectionPayload = (scope) => {
+              if (nameSelect.value.startsWith('profile:')) {
+                return { target_profile_id: nameSelect.value.slice(8), scope };
+              }
+              if (nameSelect.value === 'new') {
+                const name = nameInput.value.trim();
+                if (name) return { name, scope };
+              }
+              setError('Choose a remembered voice or select New name and enter a name.');
+              return null;
+            };
+
+            const syncNewName = () => {
+              const manual = nameSelect.value === 'new';
+              nameInput.classList.toggle('hidden', !manual);
+              if (manual) {
+                requestAnimationFrame(() => nameInput.focus());
+              } else {
+                nameInput.value = '';
+              }
+            };
+            nameSelect.addEventListener('change', syncNewName);
 
             const nameActions = document.createElement('div');
             nameActions.className = 'speaker-name-edit-actions';
@@ -569,19 +628,19 @@
             const saveTurn = document.createElement('button');
             saveTurn.type = 'button';
             saveTurn.textContent = 'This turn';
-            saveTurn.title = 'Use this name for only this spoken turn';
+            saveTurn.title = 'Use this speaker for only this spoken turn';
             saveTurn.addEventListener('click', () => {
-              const name = nameInput.value.trim();
-              if (name) saveSpeakerIdentity(turn.id, { name, scope: 'turn' });
+              const payload = selectionPayload('turn');
+              if (payload) saveSpeakerIdentity(turn.id, payload);
             });
 
             const saveAll = document.createElement('button');
             saveAll.type = 'button';
             saveAll.textContent = 'All matching turns';
-            saveAll.title = 'Use this name for every turn from the same originally detected speaker';
+            saveAll.title = 'Use this speaker for every turn from the same originally detected speaker';
             saveAll.addEventListener('click', () => {
-              const name = nameInput.value.trim();
-              if (name) saveSpeakerIdentity(turn.id, { name, scope: 'detection' });
+              const payload = selectionPayload('detection');
+              if (payload) saveSpeakerIdentity(turn.id, payload);
             });
 
             const unknown = document.createElement('button');
@@ -610,16 +669,22 @@
             nameInput.addEventListener('keydown', (event) => {
               if (event.key === 'Enter') {
                 event.preventDefault();
-                const name = nameInput.value.trim();
-                if (name) saveSpeakerIdentity(turn.id, { name, scope: 'turn' });
+                const payload = selectionPayload('turn');
+                if (payload) saveSpeakerIdentity(turn.id, payload);
               } else if (event.key === 'Escape') {
+                state.editingSpeakerIdentityTurnId = null;
+                renderTranscript();
+              }
+            });
+            nameSelect.addEventListener('keydown', (event) => {
+              if (event.key === 'Escape') {
                 state.editingSpeakerIdentityTurnId = null;
                 renderTranscript();
               }
             });
 
             nameActions.append(saveTurn, saveAll, unknown, reset, cancel);
-            nameWrap.append(nameInput, nameActions);
+            nameWrap.append(nameSelect, nameInput, nameActions);
           } else {
             const name = document.createElement('button');
             name.type = 'button';
@@ -803,6 +868,55 @@
       }
       if ([...els.voice.options].some((o) => o.value === selected)) els.voice.value = selected;
     } catch {}
+  }
+
+  async function loadKnownSpeakerProfiles() {
+    try {
+      const profiles = await api('/api/speaker-profiles', { cache: 'no-store' });
+      state.knownSpeakerProfiles = Array.isArray(profiles) ? profiles : [];
+    } catch {
+      state.knownSpeakerProfiles = [];
+    }
+    return state.knownSpeakerProfiles;
+  }
+
+  function syncRecordingTitleUI() {
+    if (!els.recordingTitleRow) return;
+    const record = state.currentRecording;
+    const visible = Boolean(record && record.status === 'ready' && !state.recording && !state.transcribing);
+    els.recordingTitleRow.classList.toggle('hidden', !visible);
+    if (!visible) {
+      if (els.recordingTitleStatus) els.recordingTitleStatus.textContent = '';
+      return;
+    }
+    if (document.activeElement !== els.recordingTitleInput) {
+      els.recordingTitleInput.value = record.title || '';
+    }
+  }
+
+  async function saveRecordingTitle() {
+    const record = state.currentRecording;
+    if (!record || record.status !== 'ready') return;
+    const title = els.recordingTitleInput.value.trim();
+    els.saveRecordingTitleButton.disabled = true;
+    els.recordingTitleStatus.textContent = 'Saving…';
+    try {
+      const updated = await api('/api/recordings/' + record.id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      if (state.currentRecording?.id !== record.id) return;
+      state.currentRecording = updated;
+      els.recordingTitleInput.value = updated.title || '';
+      els.recordingTitleStatus.textContent = 'Saved ✓';
+      showToast('Title saved');
+    } catch (error) {
+      els.recordingTitleStatus.textContent = 'Not saved';
+      setError('Could not save this title: ' + error.message);
+    } finally {
+      els.saveRecordingTitleButton.disabled = false;
+    }
   }
 
   function captureModeLabel(mode = els.captureSource?.value || 'microphone') {
@@ -2035,7 +2149,8 @@
         const option = document.createElement('option');
         option.value = recording.id;
         const duration = recording.duration_seconds ? ' · ' + formatTime(recording.duration_seconds) : '';
-        option.textContent = (recording.title || 'Recording') + ' · ' + friendlyDate(recording.created_at) + duration;
+        const owner = recording.owner_display_name || recording.owner_username || 'Unknown user';
+        option.textContent = owner + ' · ' + (recording.title || 'Recording') + ' · ' + friendlyDate(recording.created_at) + duration;
         els.speakerRecordingSelect.appendChild(option);
       }
       if ([...els.speakerRecordingSelect.options].some((option) => option.value === selected)) {
@@ -2170,7 +2285,8 @@
         const title = document.createElement('strong'); title.textContent = sample.source_recording_title || 'Saved voice sample';
         const detail = document.createElement('span'); detail.className = 'muted';
         const speech = sample.speech_seconds == null ? 'legacy sample' : (sample.speech_seconds.toFixed(1) + 's speech');
-        detail.textContent = speech + ' · ' + friendlyDate(sample.created_at);
+        const owner = sample.source_recording_owner ? (' · owner ' + sample.source_recording_owner) : '';
+        detail.textContent = speech + owner + ' · ' + friendlyDate(sample.created_at);
         info.append(title, detail);
 
         const sampleActions = document.createElement('div');
@@ -2187,9 +2303,7 @@
         preview.disabled = !sample.can_preview;
         preview.title = sample.can_preview
           ? 'Play this remembered voice sample'
-          : (sample.source_recording_title === 'Shared voice sample'
-              ? 'This sample came from another user; its source audio stays private.'
-              : 'The source audio for this sample is not available.');
+          : 'The source audio for this sample is not available.';
         preview.setAttribute('aria-pressed', 'false');
         preview.addEventListener('click', () => toggleRememberedSamplePreview(profile, sample, preview));
 
@@ -2330,6 +2444,7 @@
       title.textContent = sample.original_display_name + ' → ' + sample.corrected_display_name;
       const detail = document.createElement('span'); detail.className = 'muted';
       detail.textContent =
+        (sample.recording_owner ? sample.recording_owner + ' · ' : '') +
         (sample.recording_title || 'Recording') + ' · ' +
         formatTime(sample.start_seconds) + ' · ' +
         friendlyDate(sample.created_at);
@@ -2537,7 +2652,10 @@
 
   function renderSpeakerAnalysis(analysis) {
     stopSpeakerPreview();
+    const owner = analysis.recording_owner || analysis.recording_owner_username || 'Unknown user';
+    const recordingTitle = analysis.recording_title || 'Recording';
     els.speakerAnalysisMessage.textContent =
+      owner + ' · ' + recordingTitle + ' · ' +
       analysis.speaker_count + ' speaker' + (analysis.speaker_count === 1 ? '' : 's') +
       ' found · processed in ' + analysis.processing_seconds + 's';
     els.speakerAnalysisResult.replaceChildren();
@@ -2895,6 +3013,20 @@
   els.historySearch.addEventListener('input', () => { clearTimeout(state.searchTimer); state.searchTimer = setTimeout(loadHistory, 250); });
   els.loginForm.addEventListener('submit', loginUser);
   els.logoutButton.addEventListener('click', logoutUser);
+  els.saveRecordingTitleButton.addEventListener('click', saveRecordingTitle);
+  els.recordingTitleInput.addEventListener('input', () => {
+    els.recordingTitleStatus.textContent = 'Unsaved';
+  });
+  els.recordingTitleInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveRecordingTitle();
+    } else if (event.key === 'Escape') {
+      els.recordingTitleInput.value = state.currentRecording?.title || '';
+      els.recordingTitleStatus.textContent = '';
+      els.recordingTitleInput.blur();
+    }
+  });
   els.progressDays.addEventListener('change', () => { if (isAdmin()) loadProgress(); });
   els.runSpeakerAnalysisButton.addEventListener('click', runSpeakerAnalysis);
   els.refreshSpeakerProfilesButton.addEventListener('click', loadSpeakerProfiles);

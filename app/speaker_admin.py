@@ -14,6 +14,7 @@ from .config import settings
 from .db import SessionLocal, get_db
 from .models import (
     Recording,
+    User,
     SpeakerAnalysis,
     SpeakerDetection,
     SpeakerProfile,
@@ -170,6 +171,7 @@ async def rebuild_profile_summary(profile: SpeakerProfile, db: AsyncSession) -> 
 
 async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict:
     recording = await db.get(Recording, analysis.recording_id)
+    owner = await db.get(User, recording.user_id) if recording and recording.user_id else None
     detections = (
         await db.execute(
             select(SpeakerDetection)
@@ -203,6 +205,8 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
         "id": str(analysis.id),
         "recording_id": str(analysis.recording_id),
         "recording_title": recording.title if recording else None,
+        "recording_owner": (owner.display_name or owner.username) if owner else None,
+        "recording_owner_username": owner.username if owner else None,
         "status": analysis.status,
         "model": analysis.model,
         "speaker_count": analysis.speaker_count,
@@ -284,12 +288,12 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
     }
 
 
-async def owned_analysis(analysis_id: uuid.UUID, db: AsyncSession) -> SpeakerAnalysis:
+async def admin_analysis(analysis_id: uuid.UUID, db: AsyncSession) -> SpeakerAnalysis:
     analysis = await db.get(SpeakerAnalysis, analysis_id)
     if not analysis:
         raise HTTPException(status_code=404, detail="Speaker analysis not found")
     recording = await db.get(Recording, analysis.recording_id)
-    if not recording or recording.user_id != current_user_id():
+    if not recording:
         raise HTTPException(status_code=404, detail="Speaker analysis not found")
     return analysis
 
@@ -418,9 +422,9 @@ async def speaker_recordings(
 ) -> list[dict]:
     rows = (
         await db.execute(
-            select(Recording)
+            select(Recording, User)
+            .join(User, Recording.user_id == User.id)
             .where(
-                Recording.user_id == current_user_id(),
                 Recording.deleted_at.is_(None),
                 Recording.status == "ready",
                 Recording.audio_path.is_not(None),
@@ -428,16 +432,19 @@ async def speaker_recordings(
             .order_by(Recording.created_at.desc())
             .limit(limit)
         )
-    ).scalars().all()
+    ).all()
     return [
         {
-            "id": str(row.id),
-            "title": row.title or "Recording",
-            "created_at": row.created_at.isoformat(),
-            "duration_seconds": row.duration_seconds,
-            "words": word_count(row.transcript),
+            "id": str(recording.id),
+            "title": recording.title or "Recording",
+            "created_at": recording.created_at.isoformat(),
+            "duration_seconds": recording.duration_seconds,
+            "words": word_count(recording.transcript),
+            "owner_id": str(user.id),
+            "owner_username": user.username,
+            "owner_display_name": user.display_name,
         }
-        for row in rows
+        for recording, user in rows
     ]
 
 
@@ -451,7 +458,6 @@ async def start_speaker_analysis(
     recording = await db.get(Recording, recording_id)
     if (
         not recording
-        or recording.user_id != current_user_id()
         or recording.deleted_at is not None
         or recording.status != "ready"
     ):
@@ -472,7 +478,7 @@ async def get_speaker_analysis(
     analysis_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    analysis = await owned_analysis(analysis_id, db)
+    analysis = await admin_analysis(analysis_id, db)
     return await _analysis_payload(analysis, db)
 
 
@@ -482,7 +488,7 @@ async def speaker_sample_audio(
     speaker_key: str,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    analysis = await owned_analysis(analysis_id, db)
+    analysis = await admin_analysis(analysis_id, db)
     detection = (
         await db.execute(
             select(SpeakerDetection).where(
@@ -548,7 +554,7 @@ async def label_detection(
     payload: DetectionLabelUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    await owned_analysis(analysis_id, db)
+    await admin_analysis(analysis_id, db)
     detection = (
         await db.execute(
             select(SpeakerDetection).where(
@@ -578,7 +584,7 @@ async def correct_turn_identity(
     payload: TurnIdentityUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    analysis = await owned_analysis(analysis_id, db)
+    analysis = await admin_analysis(analysis_id, db)
     turn = await db.get(SpeakerTurn, turn_id)
     if not turn or turn.analysis_id != analysis.id:
         raise HTTPException(status_code=404, detail="Speaker turn not found")
@@ -696,7 +702,7 @@ async def remember_speaker(
     payload: RememberSpeakerRequest,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    await owned_analysis(analysis_id, db)
+    await admin_analysis(analysis_id, db)
     detection = (
         await db.execute(
             select(SpeakerDetection).where(
@@ -816,22 +822,29 @@ async def list_speaker_profiles(
         )
     ).scalars().all()
     recording_ids = {sample.source_recording_id for sample in samples if sample.source_recording_id}
-    recordings = (
+    recording_rows = (
         await db.execute(
-            select(Recording).where(
-                Recording.id.in_(recording_ids),
-                Recording.user_id == current_user_id(),
-            )
+            select(Recording, User)
+            .join(User, Recording.user_id == User.id)
+            .where(Recording.id.in_(recording_ids))
         )
-    ).scalars().all() if recording_ids else []
-    recording_titles = {recording.id: recording.title or "Recording" for recording in recordings}
-    owned_recording_ids = set(recording_titles)
+    ).all() if recording_ids else []
+    recordings_by_id = {recording.id: recording for recording, _ in recording_rows}
+    recording_titles = {
+        recording.id: recording.title or "Recording"
+        for recording, _ in recording_rows
+    }
+    recording_owners = {
+        recording.id: user.display_name or user.username
+        for recording, user in recording_rows
+    }
+    available_recording_ids = set(recordings_by_id)
 
     detection_ids = {
         sample.source_detection_id
         for sample in samples
         if sample.source_detection_id
-        and sample.source_recording_id in owned_recording_ids
+        and sample.source_recording_id in available_recording_ids
     }
     sample_turns = (
         await db.execute(
@@ -869,9 +882,10 @@ async def list_speaker_profiles(
                     "id": str(sample.id),
                     "speech_seconds": round(sample.speech_seconds, 1) if sample.speech_seconds is not None else None,
                     "source_recording_id": str(sample.source_recording_id) if sample.source_recording_id else None,
-                    "source_recording_title": recording_titles.get(sample.source_recording_id, "Shared voice sample"),
+                    "source_recording_title": recording_titles.get(sample.source_recording_id, "Saved voice sample"),
+                    "source_recording_owner": recording_owners.get(sample.source_recording_id),
                     "can_preview": bool(
-                        sample.source_recording_id in owned_recording_ids
+                        sample.source_recording_id in available_recording_ids
                         and sample.source_detection_id
                         and longest_turn_seconds.get(sample.source_detection_id, 0.0) > 0.0
                     ),
@@ -898,15 +912,18 @@ async def list_relabel_samples(
         )
     ).scalars().all()
     recording_ids = {row.recording_id for row in rows}
-    recordings = (
+    recording_rows = (
         await db.execute(
-            select(Recording).where(
-                Recording.id.in_(recording_ids),
-                Recording.user_id == current_user_id(),
-            )
+            select(Recording, User)
+            .join(User, Recording.user_id == User.id)
+            .where(Recording.id.in_(recording_ids))
         )
-    ).scalars().all() if recording_ids else []
-    recordings_by_id = {row.id: row for row in recordings}
+    ).all() if recording_ids else []
+    recordings_by_id = {recording.id: recording for recording, _ in recording_rows}
+    recording_owners = {
+        recording.id: user.display_name or user.username
+        for recording, user in recording_rows
+    }
     turns = (
         await db.execute(
             select(SpeakerTurn).where(SpeakerTurn.id.in_({row.turn_id for row in rows}))
@@ -925,6 +942,7 @@ async def list_relabel_samples(
             "id": str(row.id),
             "recording_id": str(row.recording_id),
             "recording_title": recording.title or "Recording",
+            "recording_owner": recording_owners.get(recording.id),
             "analysis_id": str(row.analysis_id),
             "turn_id": str(row.turn_id),
             "original_profile_id": str(row.original_profile_id) if row.original_profile_id else None,
@@ -945,7 +963,7 @@ async def list_relabel_samples(
     return result
 
 
-async def owned_relabel_sample(
+async def admin_relabel_sample(
     sample_id: uuid.UUID,
     db: AsyncSession,
 ) -> tuple[SpeakerRelabelSample, Recording, SpeakerTurn]:
@@ -953,7 +971,7 @@ async def owned_relabel_sample(
     if not sample:
         raise HTTPException(status_code=404, detail="Relabelled voice sample not found")
     recording = await db.get(Recording, sample.recording_id)
-    if not recording or recording.user_id != current_user_id():
+    if not recording:
         raise HTTPException(status_code=404, detail="Relabelled voice sample not found")
     turn = await db.get(SpeakerTurn, sample.turn_id)
     if not turn:
@@ -966,7 +984,7 @@ async def relabel_sample_audio(
     sample_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    sample, recording, turn = await owned_relabel_sample(sample_id, db)
+    sample, recording, turn = await admin_relabel_sample(sample_id, db)
     if turn.end_seconds <= turn.start_seconds:
         raise HTTPException(status_code=404, detail="No playable speech is available for this sample.")
 
@@ -1004,7 +1022,7 @@ async def review_relabel_sample(
     payload: RelabelStatusUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    sample, _, _ = await owned_relabel_sample(sample_id, db)
+    sample, _, _ = await admin_relabel_sample(sample_id, db)
     sample.status = payload.status
     sample.reviewed_at = None if payload.status == "pending" else datetime.now(timezone.utc)
     await db.commit()
@@ -1020,7 +1038,7 @@ async def undo_relabel_correction(
     sample_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    sample, _, turn = await owned_relabel_sample(sample_id, db)
+    sample, _, turn = await admin_relabel_sample(sample_id, db)
     turn.identity_override_profile_id = None
     turn.identity_override_detection_id = None
     turn.identity_override_unknown = False
@@ -1068,8 +1086,8 @@ async def remembered_speaker_sample_audio(
         raise HTTPException(status_code=404, detail="This legacy voice sample has no playable source audio.")
 
     recording = await db.get(Recording, sample.source_recording_id)
-    if not recording or recording.user_id != current_user_id():
-        raise HTTPException(status_code=404, detail="Voice sample audio is not available for this account.")
+    if not recording:
+        raise HTTPException(status_code=404, detail="Voice sample source recording is not available.")
 
     turns = (
         await db.execute(

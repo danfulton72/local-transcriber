@@ -139,3 +139,33 @@ def test_admin_can_assign_admin_permission():
         assert second["is_admin"] is True
         assert client.get("/api/progress").status_code == 200
         assert client.get("/api/admin/status").status_code == 200
+
+
+
+def test_recording_title_can_be_renamed():
+    suffix = uuid.uuid4().hex[:8]
+
+    with TestClient(app) as client:
+        login(client, "local", "change-me-now")
+        created = client.post("/api/recordings", json={"language": "en"}).json()
+        recording_id = created["id"]
+        finished = client.post(
+            f"/api/recordings/{recording_id}/finish",
+            json={
+                "transcript": "A short recording that needs a clearer title.",
+                "duration_seconds": 2.0,
+            },
+        )
+        assert finished.status_code == 200
+
+        new_title = f"Renamed conversation {suffix}"
+        renamed = client.patch(
+            f"/api/recordings/{recording_id}",
+            json={"title": new_title},
+        )
+        assert renamed.status_code == 200
+        assert renamed.json()["title"] == new_title
+
+        reloaded = client.get(f"/api/recordings/{recording_id}")
+        assert reloaded.status_code == 200
+        assert reloaded.json()["title"] == new_title
