@@ -1884,7 +1884,67 @@
     }
   }
 
+  async function toggleRememberedSamplePreview(profile, sample, button) {
+    const previewKey = 'profile:' + profile.id + ':sample:' + sample.id;
+    if (
+      state.speakerPreviewKey === previewKey &&
+      state.speakerPreviewAudio &&
+      !state.speakerPreviewAudio.paused
+    ) {
+      stopSpeakerPreview();
+      return;
+    }
+
+    stopSpeakerPreview();
+    button.disabled = true;
+    button.textContent = 'Loading sample…';
+
+    try {
+      const response = await fetch(
+        '/api/admin/speakers/profiles/' + profile.id +
+        '/samples/' + sample.id + '/sample-audio',
+        { headers: parentHeaders(), cache: 'no-store' },
+      );
+      if (!response.ok) {
+        let detail = 'Could not load this remembered voice sample.';
+        try {
+          const payload = await response.json();
+          detail = payload.detail || detail;
+        } catch {}
+        throw new Error(detail);
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      state.speakerPreviewAudio = audio;
+      state.speakerPreviewUrl = url;
+      state.speakerPreviewKey = previewKey;
+      state.speakerPreviewButton = button;
+
+      button.disabled = false;
+      button.textContent = '■ Stop sample';
+      button.setAttribute('aria-pressed', 'true');
+
+      audio.addEventListener('ended', () => {
+        if (state.speakerPreviewKey === previewKey) stopSpeakerPreview();
+      }, { once: true });
+      audio.addEventListener('error', () => {
+        if (state.speakerPreviewKey === previewKey) {
+          stopSpeakerPreview();
+          showToast('Could not play this remembered voice sample');
+        }
+      }, { once: true });
+
+      await audio.play();
+    } catch (error) {
+      stopSpeakerPreview();
+      showToast(error.message);
+    }
+  }
+
   function renderSpeakerProfiles(profiles) {
+    stopSpeakerPreview();
     els.speakerProfilesList.replaceChildren();
     if (!profiles.length) {
       const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'No remembered speakers yet.';
@@ -1937,12 +1997,33 @@
         detail.textContent = speech + ' · ' + friendlyDate(sample.created_at);
         info.append(title, detail);
 
+        const sampleActions = document.createElement('div');
+        sampleActions.className = 'voice-sample-actions';
+
+        const preview = document.createElement('button');
+        preview.type = 'button';
+        preview.className = 'speaker-preview-button voice-sample-preview';
+        const previewSeconds = Number(sample.preview_seconds || 0);
+        preview.dataset.idleLabel = previewSeconds
+          ? ('▶ Hear · ' + previewSeconds.toFixed(1) + 's')
+          : '▶ Hear';
+        preview.textContent = preview.dataset.idleLabel;
+        preview.disabled = !sample.can_preview;
+        preview.title = sample.can_preview
+          ? 'Play this remembered voice sample'
+          : (sample.source_recording_title === 'Shared voice sample'
+              ? 'This sample came from another user; its source audio stays private.'
+              : 'The source audio for this sample is not available.');
+        preview.setAttribute('aria-pressed', 'false');
+        preview.addEventListener('click', () => toggleRememberedSamplePreview(profile, sample, preview));
+
         const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger small'; remove.textContent = 'Remove sample';
         remove.disabled = profile.sample_count <= 1;
         remove.title = profile.sample_count <= 1 ? 'Use Forget voiceprint to remove the final sample.' : 'Remove this sample from future matching';
         remove.addEventListener('click', async () => {
           if (!confirm('Remove this voice sample from ' + profile.name + '?')) return;
           try {
+            stopSpeakerPreview();
             await api('/api/admin/speakers/profiles/' + profile.id + '/samples/' + sample.id, {
               method: 'DELETE', headers: parentHeaders(),
             });
@@ -1954,7 +2035,8 @@
           }
         });
 
-        sampleRow.append(info, remove);
+        sampleActions.append(preview, remove);
+        sampleRow.append(info, sampleActions);
         list.appendChild(sampleRow);
       }
       samples.appendChild(list);
