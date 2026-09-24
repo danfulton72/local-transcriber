@@ -30,7 +30,7 @@ SPEAKER_MODEL_BLOCK = r'''
     ttl: 0
     unloadTimeout: 7200
     concurrencyLimit: 1
-    cmdStop: sh -lc '/scripts/speaker-stop.sh "${PID}"'
+    cmdStop: sh /scripts/speaker-stop.sh "${PID}"
   # END TALK_TO_TYPE_SPEAKER_AUTO
 '''.strip("\n")
 
