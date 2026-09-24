@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Install Talk to Type into the existing /home/dan/ai Compose project.
+"""Install Talk to Type as /home/dan/ai/local-transcriber.
 
-This script is deliberately conservative:
-- it never overwrites an existing unrelated compose.override.yml;
-- it backs up llama-swap/t4.yaml before changing it;
-- it copies (does not delete) existing recordings/model cache;
-- it is idempotent and can be rerun after git pull.
+The repository itself is the application directory. Source, .env, recordings
+and runtime coordination files stay together under /home/dan/ai/local-transcriber.
+Only large ML cache data lives in the shared /databases/aimodels store.
+
+The script is idempotent and backs up llama-swap/t4.yaml before changing it.
 """
 
 from __future__ import annotations
@@ -37,28 +37,6 @@ SPEAKER_MODEL_BLOCK = r'''
 
 def fail(message: str) -> None:
     raise SystemExit(f"ERROR: {message}")
-
-
-def copy_tree_if_target_empty(source: Path, target: Path, label: str) -> None:
-    target.mkdir(parents=True, exist_ok=True)
-    if not source.exists() or not source.is_dir():
-        return
-
-    source_files = [item for item in source.rglob("*") if item.is_file()]
-    if not source_files:
-        return
-
-    target_files = [item for item in target.rglob("*") if item.is_file()]
-    if target_files:
-        print(f"{label}: destination already contains files; leaving it unchanged")
-        return
-
-    print(f"{label}: copying {len(source_files)} file(s) from {source} -> {target}")
-    for item in source_files:
-        relative = item.relative_to(source)
-        destination = target / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(item, destination)
 
 
 def patch_t4_config(path: Path) -> Path | None:
@@ -142,21 +120,17 @@ def install_override(ai_home: Path, repo: Path) -> None:
     print(f"compose override: {target} -> {source}")
 
 
-def install_app_env(ai_home: Path, repo: Path) -> Path:
-    runtime_root = ai_home / "local-transcriber"
-    runtime_root.mkdir(parents=True, exist_ok=True)
-    target = runtime_root / "app.env"
-
+def ensure_app_env(repo: Path) -> Path:
+    target = repo / ".env"
     if target.exists():
         print(f"app env: keeping existing {target}")
         return target
 
-    source = repo / ".env"
+    source = repo / ".env.example"
     if not source.exists():
-        source = repo / ".env.example"
-        print("app env: repo .env not found; using .env.example (edit before starting)")
+        fail(f"Missing {source}")
     shutil.copy2(source, target)
-    print(f"app env: copied {source} -> {target}")
+    print(f"app env: copied {source} -> {target}; edit it before starting")
     return target
 
 
@@ -180,13 +154,15 @@ def main() -> None:
     parser.add_argument("--ai-home", default=os.getenv("AI_HOME", "/home/dan/ai"))
     parser.add_argument(
         "--repo",
-        default=os.getenv("LOCAL_TRANSCRIBER_DIR", "/home/dan/local-transcriber"),
+        default=os.getenv(
+            "LOCAL_TRANSCRIBER_DIR",
+            str(Path(__file__).resolve().parents[2]),
+        ),
     )
     parser.add_argument(
         "--models-dir",
         default=os.getenv("MODELS_DIR", "/databases/aimodels"),
     )
-    parser.add_argument("--skip-copy", action="store_true")
     args = parser.parse_args()
 
     ai_home = Path(args.ai_home).expanduser().resolve()
@@ -206,29 +182,18 @@ def main() -> None:
     if not t4_config.exists():
         fail(f"Expected T4 llama-swap config at {t4_config}")
 
-    runtime_root = ai_home / "local-transcriber"
-    recordings_target = runtime_root / "recordings"
-    runtime_dir = runtime_root / "runtime"
-    model_target = models_dir / "talk-to-type" / "pyannote"
-
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    recordings_target.mkdir(parents=True, exist_ok=True)
-    model_target.mkdir(parents=True, exist_ok=True)
-
-    install_app_env(ai_home, repo)
-
-    if not args.skip_copy:
-        copy_tree_if_target_empty(
-            repo / "recordings",
-            recordings_target,
-            "recordings",
-        )
-        copy_tree_if_target_empty(
-            repo / "speaker-model-cache",
-            model_target,
-            "pyannote cache",
+    expected_repo = (ai_home / "local-transcriber").resolve()
+    if repo != expected_repo:
+        fail(
+            f"For the unified install, clone this repository at {expected_repo}; "
+            f"current path is {repo}."
         )
 
+    (repo / "recordings").mkdir(parents=True, exist_ok=True)
+    (repo / "runtime").mkdir(parents=True, exist_ok=True)
+    (models_dir / "talk-to-type" / "pyannote").mkdir(parents=True, exist_ok=True)
+
+    ensure_app_env(repo)
     patch_t4_config(t4_config)
     install_override(ai_home, repo)
     validate_compose(ai_home)
@@ -236,9 +201,8 @@ def main() -> None:
     print()
     print("Talk to Type AI-stack integration is installed.")
     print("Review/edit:")
-    print(f"  {runtime_root / 'app.env'}")
-    print("Then migrate from the standalone project with:")
-    print(f"  cd {repo} && docker compose down")
+    print(f"  {repo / '.env'}")
+    print("Then start the unified AI stack with:")
     print(f"  cd {ai_home} && docker compose up -d --build")
     print()
     print("Useful checks:")
