@@ -106,6 +106,13 @@
           </div>
         </div>
 
+        <div id="recordingTitleRow" class="recording-title-row hidden">
+          <label for="recordingTitleInput">Title</label>
+          <input id="recordingTitleInput" type="text" maxlength="240" autocomplete="off" aria-label="Recording title">
+          <button id="saveRecordingTitleButton" type="button">Save title</button>
+          <span id="recordingTitleStatus" class="muted small-note" aria-live="polite"></span>
+        </div>
+
         <div id="transcriptView" class="transcript empty conversation-scroll" aria-live="polite"><p>Your words will appear here.</p></div>
 
         <div id="editorWrap" class="editor hidden">
