@@ -191,15 +191,6 @@ async def store_audio_segment(
     return segment
 
 
-def check_parent_pin(x_parent_pin: str | None) -> None:
-    expected = settings.parent_pin.strip()
-    if not expected:
-        return
-    supplied = (x_parent_pin or "").strip()
-    if not supplied or not secrets.compare_digest(supplied, expected):
-        raise HTTPException(status_code=401, detail="Parent PIN required")
-
-
 @app.get("/healthz")
 async def health(db: AsyncSession = Depends(get_db)) -> dict:
     database_ok = True
