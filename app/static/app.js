@@ -48,6 +48,7 @@
     installPrompt: null,
     currentSpeakerAnalysisId: null,
     speakerPolling: false,
+    speakerTurns: [],
     authUser: null,
   };
 
@@ -284,7 +285,11 @@
     const liveMode = state.recording || state.transcribing;
     const confirmed = liveMode ? state.confirmedTranscript.trim() : text;
     const pending = liveMode ? state.livePending.trim() : '';
+    const labelledTurns = !liveMode && Array.isArray(state.speakerTurns)
+      ? state.speakerTurns.filter((turn) => String(turn?.text || '').trim())
+      : [];
     els.transcriptView.replaceChildren();
+    els.transcriptView.classList.toggle('speaker-labelled', labelledTurns.length > 0);
     const count = wordCount(text);
     els.wordCount.textContent = count + ' word' + (count === 1 ? '' : 's');
 
@@ -295,7 +300,35 @@
       els.transcriptView.appendChild(p);
     } else {
       els.transcriptView.classList.remove('empty');
-      if (confirmed) {
+      if (labelledTurns.length) {
+        for (const turn of labelledTurns) {
+          const block = document.createElement('section');
+          block.className = 'transcript-speaker-turn';
+
+          const meta = document.createElement('div');
+          meta.className = 'transcript-speaker-meta';
+          const name = document.createElement('strong');
+          name.textContent = turn.display_name || 'Speaker';
+          const time = document.createElement('span');
+          time.textContent = formatTime(turn.start_seconds || 0);
+          meta.append(name, time);
+
+          const body = document.createElement('div');
+          body.className = 'transcript-speaker-text';
+          for (const sentence of splitSentences(turn.text)) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'sentence';
+            button.textContent = sentence + ' ';
+            button.title = 'Tap to hear ' + (turn.display_name || 'this speaker');
+            button.addEventListener('click', () => speakText(sentence));
+            body.appendChild(button);
+          }
+
+          block.append(meta, body);
+          els.transcriptView.appendChild(block);
+        }
+      } else if (confirmed) {
         for (const sentence of splitSentences(confirmed)) {
           const button = document.createElement('button');
           button.type = 'button';
@@ -329,8 +362,9 @@
     maybeAutoFollow();
   }
 
-  function setTranscript(text) {
+  function setTranscript(text, speakerTurns = []) {
     state.transcript = String(text || '').trim();
+    state.speakerTurns = Array.isArray(speakerTurns) ? speakerTurns : [];
     if (!state.recording) {
       state.confirmedTranscript = state.transcript;
       state.livePending = '';
@@ -1270,8 +1304,24 @@
     }
   }
 
-  function openHistoryRecording(record) {
-    state.currentRecording = record; setTranscript(record.transcript); setStatus('Saved recording', friendlyDate(record.created_at)); switchPage('talk');
+  async function openHistoryRecording(record) {
+    stopSpeech();
+    setError('');
+    try {
+      const [fresh, speakerData] = await Promise.all([
+        api('/api/recordings/' + record.id, { cache: 'no-store' }),
+        api('/api/recordings/' + record.id + '/speaker-turns', { cache: 'no-store' }),
+      ]);
+      state.currentRecording = fresh;
+      setTranscript(fresh.transcript, speakerData?.turns || []);
+      const speakerDetail = speakerData?.turns?.length
+        ? ' · recognised speakers shown'
+        : '';
+      setStatus('Saved recording', friendlyDate(fresh.created_at) + speakerDetail);
+      switchPage('talk');
+    } catch (error) {
+      setError(error.message);
+    }
   }
 
   function parentHeaders() {
