@@ -2258,3 +2258,129 @@ body.reading-focus .playback-bar{
   padding:.35rem .55rem;
   font-size:.78rem;
 }
+
+
+/* v0.11 admin navigation + bounded conversation workspaces */
+[hidden]{display:none!important}
+
+#page-history,
+#page-progress,
+#page-tools{
+  max-width:none;
+  margin-inline:0;
+}
+
+.tools-section-heading{
+  margin:34px 2px 12px;
+}
+.tools-section-heading h2{
+  margin-bottom:0;
+}
+
+.conversation-scroll{
+  max-height:min(62vh,760px);
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
+  padding-right:4px;
+}
+#transcriptView.conversation-scroll{
+  max-height:min(64vh,820px);
+}
+body.reading-focus #transcriptView.conversation-scroll{
+  max-height:none;
+  overflow:visible;
+}
+
+.conversation-list-row{
+  width:100%;
+  min-height:0;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:16px;
+  align-items:center;
+  padding:13px 14px;
+  border:0;
+  border-bottom:1px solid var(--line);
+  border-radius:0;
+  background:transparent;
+  text-align:left;
+  color:var(--ink);
+  box-shadow:none;
+}
+.conversation-list-row:last-child{border-bottom:0}
+.conversation-list-main{
+  min-width:0;
+  display:grid;
+  gap:3px;
+}
+.conversation-list-main strong,
+.conversation-list-main span{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.conversation-list-meta{
+  color:var(--muted);
+  font-size:.8rem;
+  text-align:right;
+  white-space:nowrap;
+}
+.conversation-list-row:hover{
+  transform:none!important;
+  background:color-mix(in srgb,var(--accent-2) 45%,transparent);
+  box-shadow:none!important;
+}
+
+.user-row{
+  grid-template-columns:minmax(0,1.25fr) minmax(150px,1fr) minmax(170px,1fr) auto auto;
+}
+.user-admin-toggle{
+  white-space:nowrap;
+  justify-self:start;
+}
+
+@media (min-width:1180px){
+  .tabs{
+    width:176px;
+  }
+  .tab{
+    min-height:52px;
+    border-radius:14px;
+    padding:.72rem .9rem;
+    font-size:.94rem;
+  }
+  #page-progress,
+  #page-tools{
+    padding-bottom:30px;
+  }
+}
+
+@media (max-width:900px){
+  .user-row{
+    grid-template-columns:1fr 1fr;
+  }
+  .user-admin-toggle{
+    align-self:center;
+  }
+}
+
+@media (max-width:700px){
+  body.admin-user .tabs{
+    grid-template-columns:repeat(4,minmax(0,1fr));
+  }
+  body:not(.admin-user) .tabs{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .conversation-scroll{
+    max-height:58vh;
+  }
+  .conversation-list-row{
+    grid-template-columns:1fr;
+    gap:5px;
+  }
+  .conversation-list-meta{
+    text-align:left;
+    white-space:normal;
+  }
+}
