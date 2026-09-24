@@ -33,3 +33,11 @@ def test_admin_navigation_replaces_parent_pin():
     assert "parentPin" not in javascript
     assert "parentHeaders" not in javascript
     assert "is_admin" in javascript
+
+
+
+def test_html_ids_are_unique():
+    html = (STATIC / "index.html").read_text()
+    ids = re.findall(r'id="([^"]+)"', html)
+    duplicates = sorted({value for value in ids if ids.count(value) > 1})
+    assert not duplicates, f"Duplicate HTML ids: {duplicates}"
