@@ -43,7 +43,7 @@ models:
     assert 'speaker_only: "s"' in patched
     assert '"speaker_auto":' in patched
     assert 'proxy: "http://speaker-analyzer:9000"' in patched
-    assert 'cmdStop: sh -lc \'/scripts/speaker-stop.sh "${PID}"\'' in patched
+    assert 'cmdStop: sh /scripts/speaker-stop.sh "${PID}"' in patched
 
     # Idempotent: a second run should not create another backup or duplicate.
     assert installer.patch_t4_config(path) is None
