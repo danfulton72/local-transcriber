@@ -94,3 +94,17 @@ def test_listen_follow_edit_controls_are_served():
     assert ".transcript-speaker-turn.playback-current" in styles
     assert ".turn-inline-editor" in styles
     assert ".playback-bar" in styles
+
+
+
+def test_parent_speaker_cards_offer_voice_preview():
+    from pathlib import Path
+
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    styles = Path("app/static/styles.css").read_text(encoding="utf-8")
+
+    assert "▶ Hear sample" in source
+    assert "/sample-audio" in source
+    assert "toggleSpeakerPreview" in source
+    assert "Play the longest continuous section attributed to this speaker" in source
+    assert ".speaker-preview-button" in styles
