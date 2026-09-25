@@ -464,6 +464,8 @@ async def analyze(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=_public_error(exc)) from exc
     finally:
+        if UNLOAD_AFTER_DIARIZATION and _pipeline is not None:
+            await unload_pipeline()
         path.unlink(missing_ok=True)
         _set_busy_file(False)
         if _analysis_run_lock.locked():
