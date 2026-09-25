@@ -89,3 +89,54 @@ def test_find_compose_file_accepts_standard_names(tmp_path):
         candidate = tmp_path / name
         candidate.write_text("services: {}\n", encoding="utf-8")
         assert installer.find_compose_file(tmp_path) == candidate
+
+
+
+def load_uninstaller():
+    path = Path("deploy/ai-stack/uninstall.py")
+    spec = importlib.util.spec_from_file_location("ai_stack_uninstaller", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_ai_stack_uninstaller_removes_only_talk_to_type_t4_entries(tmp_path):
+    uninstaller = load_uninstaller()
+    path = tmp_path / "t4.yaml"
+    path.write_text(
+        """healthCheckTimeout: 300
+matrix:
+  vars:
+    a: nomic-embed
+    e: qwen3.5-9b
+    s: speaker_auto          # Talk to Type T4 reservation
+  sets:
+    chat_plus_embed: "(e) & a"
+    speaker_only: "s"
+
+models:
+  "qwen":
+    cmd: llama-server
+
+  # BEGIN TALK_TO_TYPE_SPEAKER_AUTO
+  "speaker_auto":
+    name: "Talk to Type speaker analysis reservation"
+    proxy: "http://speaker-analyzer:9000"
+  # END TALK_TO_TYPE_SPEAKER_AUTO
+
+other:
+  keep: true
+""",
+        encoding="utf-8",
+    )
+
+    uninstaller.unpatch_t4(path)
+    cleaned = path.read_text(encoding="utf-8")
+
+    assert "speaker_auto" not in cleaned
+    assert 'speaker_only: "s"' not in cleaned
+    assert '"qwen":' in cleaned
+    assert "other:" in cleaned
+    assert "keep: true" in cleaned
+    assert list(tmp_path.glob("t4.yaml.before-talk-to-type-detach-*"))
