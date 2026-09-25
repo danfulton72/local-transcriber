@@ -1,0 +1,60 @@
+# Talk to Type integration for the existing voice-stack Compose project.
+#
+# Expected production layout:
+#   /home/dan/voice/docker-compose.yml
+#   /home/dan/voice/local-transcriber
+#
+# Install with:
+#   python /home/dan/voice/local-transcriber/deploy/voice-stack/install.py
+#
+# The installer symlinks this file to the matching Compose override name in
+# /home/dan/voice so normal "cd /home/dan/voice && docker compose ..." commands
+# include Talk to Type automatically.
+
+services:
+  local-transcriber:
+    build:
+      context: ${LOCAL_TRANSCRIBER_DIR:-/home/dan/voice/local-transcriber}
+    container_name: local-transcriber
+    env_file:
+      - ${LOCAL_TRANSCRIBER_DIR:-/home/dan/voice/local-transcriber}/.env
+    environment:
+      GATEWAY_BASE_URL: http://wyoming-openai-gateway:8555/v1
+      SPEAKER_SERVICE_URL: http://speaker-analyzer:9000
+      SPEAKER_SWAP_URL: ""
+      SPEAKER_RESTORE_PREVIOUS: "false"
+    volumes:
+      - ${LOCAL_TRANSCRIBER_DIR:-/home/dan/voice/local-transcriber}/recordings:/data/recordings
+    ports:
+      - "8090:8080"
+    depends_on:
+      - wyoming-openai-gateway
+      - speaker-analyzer
+    restart: unless-stopped
+
+  speaker-analyzer:
+    build:
+      context: ${LOCAL_TRANSCRIBER_DIR:-/home/dan/voice/local-transcriber}/speaker_service
+    env_file:
+      - ${LOCAL_TRANSCRIBER_DIR:-/home/dan/voice/local-transcriber}/.env
+    environment:
+      HF_HOME: /models
+      GATEWAY_BASE_URL: http://wyoming-openai-gateway:8555/v1
+      PYANNOTE_MODEL: ${PYANNOTE_MODEL:-pyannote/speaker-diarization-community-1}
+      SPEAKER_DEVICE: cuda
+      SPEAKER_UNLOAD_AFTER_DIARIZATION: "true"
+      NVIDIA_VISIBLE_DEVICES: ${P4_UUID}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    volumes:
+      - ${VOICE_SPEAKER_MODELS_DIR:-/home/dan/voice/speaker-model-cache}:/models
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${P4_UUID}"]
+              capabilities: [gpu]
+    depends_on:
+      - wyoming-openai-gateway
+    restart: unless-stopped
