@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import os
-import re
 import shutil
 from pathlib import Path
 
@@ -47,28 +46,30 @@ def unpatch_t4(path: Path) -> None:
         return
 
     original = path.read_text(encoding="utf-8")
-    text = original
+    lines = original.splitlines()
 
-    text = re.sub(
-        r"\n?\s*# BEGIN TALK_TO_TYPE_SPEAKER_AUTO\n.*?"
-        r"# END TALK_TO_TYPE_SPEAKER_AUTO\n?",
-        "\n",
-        text,
-        flags=re.DOTALL,
-    )
-    text = re.sub(
-        r"^\s*s:\s*speaker_auto\s*(?:#.*)?\n",
-        "",
-        text,
-        flags=re.MULTILINE,
-    )
-    text = re.sub(
-        r'^\s*speaker_only:\s*"s"\s*\n',
-        "",
-        text,
-        flags=re.MULTILINE,
-    )
-    text = re.sub(r"\n{3,}", "\n\n", text).rstrip() + "\n"
+    cleaned: list[str] = []
+    inside_block = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "# BEGIN TALK_TO_TYPE_SPEAKER_AUTO":
+            inside_block = True
+            continue
+        if stripped == "# END TALK_TO_TYPE_SPEAKER_AUTO":
+            inside_block = False
+            continue
+        if inside_block:
+            continue
+        if stripped.startswith("s: speaker_auto"):
+            continue
+        if stripped == 'speaker_only: "s"':
+            continue
+        cleaned.append(line)
+
+    text = "\n".join(cleaned)
+    while "\n\n\n" in text:
+        text = text.replace("\n\n\n", "\n\n")
+    text = text.rstrip() + "\n"
 
     if text == original:
         print("t4.yaml: no Talk to Type reservation found")
@@ -105,13 +106,8 @@ def main() -> None:
     print()
     print("Legacy AI-stack integration detached.")
     print("This script does not stop or remove running containers.")
-    print("Before moving the repository, remove the old Talk to Type containers with:")
-    print(
-        "  docker compose -f /home/dan/ai/docker-compose.yaml "
-        "-f /home/dan/ai/compose.override.yml "
-        "rm -sf local-transcriber speaker-analyzer"
-    )
-    print("If the override has already been removed, use docker rm -f for those two containers only.")
+    print("The old local-transcriber and speaker-analyzer containers should be stopped")
+    print("and removed before running this detach step, as documented in deploy/voice-stack/README.md.")
 
 
 if __name__ == "__main__":
