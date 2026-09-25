@@ -24,3 +24,6 @@ def test_speaker_service_uses_pcm_waveform_input_and_diagnostics():
     assert '"compiled_arches"' in source
     assert '"device_error"' in source
     assert "Tesla P4/Pascal requires the CUDA 12.6" in source
+    assert "SPEAKER_UNLOAD_AFTER_DIARIZATION" in source
+    assert "async def unload_pipeline" in source
+    assert "torch.cuda.empty_cache()" in source
