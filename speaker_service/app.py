@@ -1,4 +1,5 @@
 import asyncio
+import gc
 import io
 import os
 import tempfile
@@ -22,6 +23,10 @@ GATEWAY_BASE_URL = os.getenv("GATEWAY_BASE_URL", "http://host.docker.internal:85
 DEVICE = os.getenv("SPEAKER_DEVICE", "cpu").strip().lower()
 BUSY_FILE_RAW = os.getenv("SPEAKER_BUSY_FILE", "").strip()
 BUSY_FILE = Path(BUSY_FILE_RAW) if BUSY_FILE_RAW else None
+UNLOAD_AFTER_DIARIZATION = os.getenv(
+    "SPEAKER_UNLOAD_AFTER_DIARIZATION",
+    "false",
+).strip().lower() in {"1", "true", "yes", "on"}
 
 _pipeline = None
 _pipeline_lock = asyncio.Lock()
@@ -186,6 +191,44 @@ async def get_pipeline():
     return _pipeline
 
 
+def _move_pipeline_to_cpu_sync(pipeline) -> None:
+    if pipeline is None or DEVICE == "cpu":
+        return
+    try:
+        import torch
+        pipeline.to(torch.device("cpu"))
+    except Exception:
+        # Dropping the final reference below is still useful even if a
+        # particular pipeline implementation cannot move itself back to CPU.
+        pass
+
+
+def _empty_cuda_cache_sync() -> None:
+    gc.collect()
+    if DEVICE == "cpu":
+        return
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+async def unload_pipeline() -> None:
+    global _pipeline
+    async with _pipeline_lock:
+        pipeline = _pipeline
+        _pipeline = None
+
+    if pipeline is None:
+        return
+
+    await asyncio.to_thread(_move_pipeline_to_cpu_sync, pipeline)
+    pipeline = None
+    await asyncio.to_thread(_empty_cuda_cache_sync)
+
+
 def _load_pcm_waveform(path: Path) -> dict:
     import torch
 
@@ -321,6 +364,7 @@ async def health() -> dict:
         "device_error": device_error,
         "busy": _analysis_run_lock.locked(),
         "busy_file": str(BUSY_FILE) if BUSY_FILE else None,
+        "unload_after_diarization": UNLOAD_AFTER_DIARIZATION,
         **runtime,
     }
 
@@ -376,6 +420,18 @@ async def analyze(
             speakers.append({"speaker_key": str(label), "embedding": _normalise(embeddings[index])})
 
         turns = _merge_turns(diarization)
+
+        # On a shared speech GPU, pyannote is needed only for the diarization
+        # phase. Release its CUDA residency before per-turn Whisper requests so
+        # Faster Whisper gets the P4 memory back for transcription.
+        if UNLOAD_AFTER_DIARIZATION:
+            pipeline = None
+            output = None
+            diarization = None
+            embeddings = None
+            audio = None
+            await unload_pipeline()
+
         async with httpx.AsyncClient(timeout=600) as client:
             for turn in turns:
                 if turn["end_seconds"] - turn["start_seconds"] < 0.18:
