@@ -28,7 +28,7 @@ jobs:
       - run: node tests/test_audio_utils.js
       - run: node --check app/static/sw.js
       - run: python -m json.tool app/static/manifest.webmanifest > /dev/null
-      - run: python -m compileall -q app migrations speaker_service deploy/ai-stack
+      - run: python -m compileall -q app migrations speaker_service deploy/ai-stack deploy/voice-stack
       - run: cp .env.example .env && docker compose config -q
       - name: Validate AI-stack integration overlay
         run: |
@@ -44,6 +44,19 @@ jobs:
           docker compose \
             -f tests/fixtures/ai-stack-base.yml \
             -f deploy/ai-stack/compose.override.yml \
+            config -q
+      - name: Validate voice-stack P4 integration overlay
+        run: |
+          mkdir -p "$PWD/recordings" /tmp/voice/speaker-model-cache
+          rm -rf /tmp/voice/local-transcriber
+          mkdir -p /tmp/voice
+          ln -s "$PWD" /tmp/voice/local-transcriber
+          P4_UUID=GPU-test \
+          LOCAL_TRANSCRIBER_DIR=/tmp/voice/local-transcriber \
+          VOICE_SPEAKER_MODELS_DIR=/tmp/voice/speaker-model-cache \
+          docker compose \
+            -f tests/fixtures/voice-stack-base.yml \
+            -f deploy/voice-stack/compose.override.yml \
             config -q
       - run: docker build -t local-transcriber-ci .
       - name: Validate app image migrations

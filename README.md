@@ -57,7 +57,7 @@ The app deliberately does **not** track attention, mouse movement, mood, sentime
 
 ## Architecture
 
-The recommended deployment is now part of the existing R720 `ai-stack` Compose project:
+The recommended R720 deployment now lives in the existing **voice stack**, alongside Faster Whisper and Piper:
 
 ```text
 Browser (HTTPS)
@@ -65,26 +65,23 @@ Browser (HTTPS)
       v
 Local Transcriber :8090  ───────> existing PostgreSQL
       |
-      +──── live speech ─────────> existing Wyoming OpenAI Gateway :8555
-      |                              |                 |
-      |                              v                 v
-      |                       Faster Whisper        Piper
+      +──── live speech/read-aloud ──> wyoming-openai-gateway :8555
+      |                                  |                 |
+      |                                  v                 v
+      |                           Faster Whisper         Piper
+      |                                  |
+      |                               Tesla P4
       |
-      +──── parent analysis ──────> llama-swap-t4
-                                      |
-                                 speaker_auto
-                                      |
-                                      v
-                               speaker-analyzer
-                                      |
-                                   Tesla T4
+      +──── admin speaker analysis ──> speaker-analyzer
+                                         |
+                                      Tesla P4
 ```
 
-The app and analyzer share the existing `ai` bridge network. Pyannote model/cache data lives under `/databases/aimodels/talk-to-type/pyannote`, while application state and recordings live under `/home/dan/ai/local-transcriber`.
+The app and analyzer join the voice stack's default Compose network. The production repository lives at `/home/dan/voice/local-transcriber`, recordings live inside that directory, and the pyannote/Hugging Face cache lives at `/home/dan/voice/speaker-model-cache`.
 
-Whisper, Piper and the Wyoming OpenAI Gateway remain separate and unchanged. Speaker analysis is still parent-triggered and post-recording only; live transcription is unchanged.
+Both Faster Whisper and pyannote use the existing `${P4_UUID}`. Speaker analysis is still admin-triggered and post-recording only. In the voice-stack deployment the analyzer releases pyannote from CUDA immediately after diarization, before it sends per-speaker clips through the existing Whisper gateway. That prevents pyannote from remaining resident on the 8 GB P4 after an analysis.
 
-When speaker analysis starts, Talk to Type asks the existing `llama-swap-t4` instance to load a hidden `speaker_auto` reservation. The T4 matrix evicts the current Qwen/embedding processes first, pyannote runs, and the app restores the previously-running T4 models afterwards unless another request has already claimed the GPU.
+The previous `deploy/ai-stack` integration remains available as a rollback/legacy path, but it is no longer the recommended production layout.
 
 ## Computer / system audio capture
 
@@ -198,60 +195,47 @@ On that first startup, the default account is created if it does not already exi
 
 The application has fallback bootstrap values so an upgrade cannot permanently lock itself out, but you should set your own credentials before first startup.
 
-## Recommended: install directly inside the existing AI stack
+## Recommended: install inside the existing voice stack
 
-For the Dell R720 deployment, clone Talk to Type directly as:
+Use the existing voice-stack root:
 
 ```text
-/home/dan/ai/local-transcriber
+/home/dan/voice
 ```
 
-This keeps source code, `.env`, recordings, and runtime coordination files together in one app directory under the AI stack. The only app-owned files stored elsewhere are the large pyannote/Hugging Face cache files, which live under `/databases/aimodels/talk-to-type/pyannote` with the rest of the model store.
+and place this repository at:
+
+```text
+/home/dan/voice/local-transcriber
+```
+
+The uploaded/production voice stack already provides `whisper`, `piper`, `wyoming-openai-gateway`, `openwakeword`, and `P4_UUID`. Talk to Type adds only two services through a managed Compose override: `local-transcriber` and `speaker-analyzer`.
 
 For a clean install:
 
 ```bash
-cd /home/dan/ai
+cd /home/dan/voice
 git clone https://github.com/danfulton72/local-transcriber.git
 cd local-transcriber
 
-python deploy/ai-stack/install.py
+python deploy/voice-stack/install.py
 nano .env
 ```
 
-The installer backs up `/home/dan/ai/llama-swap/t4.yaml`, adds the hidden `speaker_auto` T4 reservation, creates `recordings/` and `runtime/`, creates the shared pyannote model directory, links the Compose override into `/home/dan/ai`, and validates the combined stack.
-
-Then start from the main AI-stack directory:
+Then build and start only the Talk to Type services:
 
 ```bash
-cd /home/dan/ai
-docker compose up -d --build
+cd /home/dan/voice
+docker compose build local-transcriber speaker-analyzer
+docker compose run --rm --no-deps local-transcriber alembic upgrade head
+docker compose up -d local-transcriber speaker-analyzer
 ```
 
-From then on:
+The base voice-stack `docker-compose.yml` is not modified. The installer creates the matching managed Compose override symlink and validates the combined project.
 
-```bash
-cd /home/dan/ai/local-transcriber
-git pull
+Full migration, verification, P4-sharing and rollback instructions are in `deploy/voice-stack/README.md`.
 
-cd /home/dan/ai
-docker compose up -d --build
-```
-
-Directory layout:
-
-```text
-/home/dan/ai/local-transcriber/
-    source code
-    .env
-    recordings/
-    runtime/
-
-/databases/aimodels/talk-to-type/pyannote/
-    pyannote / Hugging Face cache
-```
-
-Full setup, verification and rollback instructions are in `deploy/ai-stack/README.md`.
+The older AI-stack/T4 integration remains under `deploy/ai-stack` only for rollback or installations that intentionally keep Talk to Type in that project.
 
 ## PostgreSQL
 
@@ -350,22 +334,24 @@ The Progress page is based only on data needed for the app itself plus explicit 
 
 Nothing is sent to a cloud transcription or analytics service by this application.
 
-## Updating the AI-stack install
+## Updating the voice-stack install
 
 For the recommended R720 layout:
 
 ```bash
-cd ~/ai/local-transcriber
-git pull
+cd /home/dan/voice/local-transcriber
+git pull --ff-only
 
-cd ~/ai
-docker compose up -d --build
+cd /home/dan/voice
+docker compose build local-transcriber speaker-analyzer
+docker compose run --rm --no-deps local-transcriber alembic upgrade head
+docker compose up -d local-transcriber speaker-analyzer
 docker compose logs --tail=100 local-transcriber speaker-analyzer
 ```
 
-Rerun `python deploy/ai-stack/install.py` from `~/ai/local-transcriber` whenever the integration/T4 arbitration files change.
+Rerun `python deploy/voice-stack/install.py` whenever the voice-stack integration files change. The installer leaves Whisper, Piper and OpenWakeWord untouched.
 
-The container runs `alembic upgrade head` automatically during startup. Existing PostgreSQL data and the `recordings/` directory are preserved. The current schema migrations also add users/sessions and assign legacy recordings to the bootstrap account on startup without replacing existing recordings.
+The container also runs `alembic upgrade head` automatically during normal startup, but running the migration explicitly with the newly built image before recreating the service gives a safer upgrade checkpoint.
 
 Then hard-refresh the browser. If you previously installed the PWA, its service worker uses network-first updates for the app shell so refreshed versions are picked up rather than being permanently pinned to an old JavaScript/CSS cache.
 

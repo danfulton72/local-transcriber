@@ -1,0 +1,35 @@
+services:
+  whisper:
+    build:
+      context: ./whisper
+      dockerfile: Dockerfile
+    image: local/faster-whisper-p4:v2.4.0-ls71
+    environment:
+      - WHISPER_MODEL=distil-whisper/distil-large-v3.5-ct2
+      - WHISPER_COMPUTE_TYPE=int8_float32
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${P4_UUID}"]
+              capabilities: [gpu]
+
+  piper:
+    image: rhasspy/wyoming-piper
+
+  wyoming-openai-gateway:
+    image: ghcr.io/archmonger/wyoming-openai-gateway:latest
+    environment:
+      - STT_HOST=whisper
+      - STT_PORT=10300
+      - TTS_HOST=piper
+      - TTS_PORT=10200
+      - PORT=8555
+    depends_on:
+      - whisper
+      - piper
+
+  openwakeword:
+    image: rhasspy/wyoming-openwakeword
