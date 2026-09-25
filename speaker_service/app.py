@@ -14,7 +14,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pyannote.audio import Pipeline
 
 
-app = FastAPI(title="Local Speaker Analyzer", version="0.1.1")
+app = FastAPI(title="Local Speaker Analyzer", version="0.1.2")
 
 MODEL = os.getenv("PYANNOTE_MODEL", "pyannote/speaker-diarization-community-1")
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip() or None
