@@ -14,7 +14,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pyannote.audio import Pipeline
 
 
-app = FastAPI(title="Local Speaker Analyzer", version="0.1.2")
+app = FastAPI(title="Local Speaker Analyzer", version="0.1.3")
 
 MODEL = os.getenv("PYANNOTE_MODEL", "pyannote/speaker-diarization-community-1")
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip() or None
@@ -56,6 +56,24 @@ async def clear_stale_busy_file() -> None:
     _set_busy_file(False)
 
 
+def _compiled_arch_supports(
+    capability: tuple[int, int],
+    compiled_arches: list[str],
+) -> bool:
+    device_major, device_minor = capability
+    for arch in compiled_arches:
+        if not arch.startswith("sm_"):
+            continue
+        digits = arch.removeprefix("sm_")
+        if not digits.isdigit() or len(digits) < 2:
+            continue
+        code = int(digits)
+        compiled_major, compiled_minor = divmod(code, 10)
+        if compiled_major == device_major and compiled_minor <= device_minor:
+            return True
+    return False
+
+
 def _torch_runtime() -> dict:
     try:
         import torch
@@ -85,7 +103,10 @@ def _torch_runtime() -> dict:
                 "capability": f"{capability[0]}.{capability[1]}",
                 "arch": arch,
                 "memory_gb": round(props.total_memory / (1024 ** 3), 1),
-                "compiled_kernel": arch in result["compiled_arches"],
+                "compiled_kernel": _compiled_arch_supports(
+                    capability,
+                    result["compiled_arches"],
+                ),
             })
     return result
 
@@ -122,13 +143,29 @@ def _validate_device_sync() -> None:
     capability = torch.cuda.get_device_capability(index)
     arch = f"sm_{capability[0]}{capability[1]}"
     compiled = list(torch.cuda.get_arch_list())
-    if compiled and arch not in compiled:
-        name = torch.cuda.get_device_name(index)
+    name = torch.cuda.get_device_name(index)
+
+    # NVIDIA cubins are forward-compatible within a compute-capability major
+    # version: for example sm_60 code can execute on a 6.1 Tesla P4. Do not
+    # require an exact sm_61 entry in torch.cuda.get_arch_list().
+    if compiled and not _compiled_arch_supports(capability, compiled):
         raise RuntimeError(
             f"{name} uses CUDA architecture {arch}, but this PyTorch build "
-            f"contains kernels for {', '.join(compiled)}. "
-            "Use the CUDA 12.6 speaker image for Pascal GPUs such as Tesla P4."
+            f"contains no compatible kernels in {', '.join(compiled)}."
         )
+
+    # Prove that this image can actually dispatch a CUDA kernel on the selected
+    # device. This catches unsupported binaries more reliably than arch strings.
+    try:
+        device = torch.device(f"cuda:{index}")
+        probe = torch.ones(1, device=device)
+        probe.add_(1)
+        torch.cuda.synchronize(index)
+        del probe
+    except Exception as exc:
+        raise RuntimeError(
+            f"{name} failed a CUDA runtime compatibility probe: {exc}"
+        ) from exc
 
 
 def _public_error(exc: Exception) -> str:
