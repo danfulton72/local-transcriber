@@ -50,3 +50,55 @@ const shortWordLike = concat(
 assert.equal(analyzeFinalTail(shortWordLike, sampleRate).hasSpeech, true);
 
 console.log('audio tail detector tests passed');
+
+// --- 16 kHz streaming resampler ---
+const { createResampler, findQuietCut, rms } = globalThis.TalkToTypeAudio;
+
+function tone(rate, seconds, freq, amplitude = 1) {
+  const out = new Float32Array(Math.round(rate * seconds));
+  for (let i = 0; i < out.length; i += 1) out[i] = Math.sin(2 * Math.PI * freq * i / rate) * amplitude;
+  return out;
+}
+
+function resampleInFrames(input, inputRate, outputRate, frame = 128) {
+  const resampler = createResampler(inputRate, outputRate);
+  const parts = [];
+  for (let i = 0; i < input.length; i += frame) parts.push(resampler.process(input.subarray(i, i + frame)));
+  return concat(...parts);
+}
+
+for (const inputRate of [48000, 44100]) {
+  const seconds = 2;
+  const speechBand = resampleInFrames(tone(inputRate, seconds, 1000), inputRate, 16000);
+  assert.ok(Math.abs(speechBand.length - 16000 * seconds) <= 2, `length at ${inputRate}: ${speechBand.length}`);
+  // Skip the filter warm-up; a full-scale sine has RMS 1/sqrt(2).
+  const passRms = rms(speechBand, 800, speechBand.length - 800);
+  assert.ok(Math.abs(passRms - Math.SQRT1_2) < 0.02, `1 kHz passband RMS at ${inputRate}: ${passRms}`);
+
+  // Above the 8 kHz output Nyquist must be strongly attenuated, not aliased.
+  const aliased = resampleInFrames(tone(inputRate, seconds, 12000), inputRate, 16000);
+  const stopRms = rms(aliased, 800, aliased.length - 800);
+  assert.ok(stopRms < 0.02, `12 kHz stopband RMS at ${inputRate}: ${stopRms}`);
+
+  // Frame size must not change the output (state carries across calls).
+  const a = resampleInFrames(tone(inputRate, 0.5, 440), inputRate, 16000, 128);
+  const b = resampleInFrames(tone(inputRate, 0.5, 440), inputRate, 16000, 4096);
+  assert.equal(a.length, b.length);
+  for (let i = 0; i < a.length; i += 1) assert.ok(Math.abs(a[i] - b[i]) < 1e-5);
+}
+
+const passthrough = createResampler(16000, 16000).process(new Float32Array([0.1, 0.2]));
+assert.deepEqual(Array.from(passthrough).map((v) => Number(v.toFixed(3))), [0.1, 0.2]);
+
+// --- quiet chunk boundary ---
+const cutRate = 16000;
+const gapped = concat(
+  tone(cutRate, 1.0, 200, 0.2),
+  new Float32Array(Math.round(cutRate * 0.1)),
+  tone(cutRate, 1.0, 200, 0.2),
+);
+const cut = findQuietCut(gapped, cutRate, 0.5 * cutRate, 1.8 * cutRate);
+assert.ok(cut > 1.0 * cutRate && cut < 1.1 * cutRate, `cut landed at ${cut / cutRate}s`);
+assert.equal(findQuietCut(gapped, cutRate, 100, 110), 110);
+
+console.log('resampler and quiet-cut tests passed');

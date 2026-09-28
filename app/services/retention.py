@@ -1,7 +1,8 @@
 import shutil
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -95,3 +96,65 @@ async def cleanup_expired_audio(db: AsyncSession) -> dict:
 
     await db.commit()
     return {"removed_recordings": removed, "policy": policy}
+
+
+async def _has_stored_audio_segments(recording_id, db: AsyncSession) -> bool:
+    paths = (
+        await db.execute(
+            select(RecordingAudioSegment.audio_path).where(
+                RecordingAudioSegment.recording_id == recording_id,
+                RecordingAudioSegment.audio_path.is_not(None),
+            )
+        )
+    ).scalars().all()
+    return bool(paths) and all(Path(path).exists() for path in paths)
+
+
+async def prune_live_chunk_audio(recording: Recording, db: AsyncSession) -> bool:
+    """Delete near-live chunk WAVs once the full recording audio is stored.
+
+    Chunk text/timing metadata is kept; only the duplicate audio goes. Chunks
+    are left alone if the full audio is missing, since they are then the only
+    copy of the voice recording.
+    """
+    if settings.keep_live_chunk_audio or recording.status != "ready":
+        return False
+    if not await _has_stored_audio_segments(recording.id, db):
+        return False
+
+    chunk_dir = settings.recordings_dir / str(recording.id) / "chunks"
+    existed = chunk_dir.exists()
+    if existed:
+        shutil.rmtree(chunk_dir, ignore_errors=True)
+    await db.execute(
+        update(TranscriptionChunk)
+        .where(
+            TranscriptionChunk.recording_id == recording.id,
+            TranscriptionChunk.audio_path.is_not(None),
+        )
+        .values(audio_path=None)
+    )
+    await db.commit()
+    return existed
+
+
+async def prune_finished_chunk_audio(db: AsyncSession) -> int:
+    """One-off style sweep for recordings finished before chunk pruning existed."""
+    if settings.keep_live_chunk_audio:
+        return 0
+    records = (
+        await db.execute(
+            select(Recording).where(
+                Recording.status == "ready",
+                exists().where(
+                    TranscriptionChunk.recording_id == Recording.id,
+                    TranscriptionChunk.audio_path.is_not(None),
+                ),
+            )
+        )
+    ).scalars().all()
+    pruned = 0
+    for recording in records:
+        if await prune_live_chunk_audio(recording, db):
+            pruned += 1
+    return pruned
