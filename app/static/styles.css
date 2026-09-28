@@ -2504,3 +2504,342 @@ body.acting-as-user .record-button{
   }
   .act-as-banner button{width:100%}
 }
+
+
+/* ------------------------------------------------------------------ */
+/* v0.15 Talk dock: the record controls are always on screen.          */
+/* The Talk page fills the viewport; the words card takes the space    */
+/* that is left and scrolls inside itself.                             */
+/* ------------------------------------------------------------------ */
+:root{
+  --talk-chrome:200px; /* tablet: header + top tabs + main padding */
+}
+#page-talk.talk-page.active{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  height:max(520px,calc(100dvh - var(--talk-chrome)));
+}
+#page-talk .words-card{
+  flex:1 1 auto;
+  min-height:0;
+}
+#page-talk .transcript{
+  min-height:0;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+}
+#page-talk .editor:not(.hidden){
+  flex:1 1 auto;
+  min-height:0;
+  overflow-y:auto;
+}
+#page-talk .recovery-banner,
+#page-talk #errorBox,
+#page-talk .playback-bar,
+#page-talk .talk-dock{
+  flex:0 0 auto;
+}
+body.reading-focus #page-talk.talk-page.active{height:auto}
+
+/* Word actions: a compact row at the bottom of the card */
+.card-actions .quick-actions{
+  width:100%;
+  margin:10px 0 0;
+  gap:8px;
+}
+.card-actions .quick-action,
+.dock-actions .quick-action{
+  min-height:48px;
+  display:flex;
+  flex-direction:row;
+  align-items:center;
+  justify-content:center;
+  gap:.4rem;
+  padding:.4rem .6rem;
+  border-radius:14px;
+  white-space:nowrap;
+}
+.card-actions .quick-action>span:first-child,
+.dock-actions .quick-action>span:first-child{font-size:1rem}
+.card-actions:empty,.dock-actions:empty{display:none}
+
+/* The dock */
+.talk-dock{
+  display:grid;
+  justify-items:center;
+  gap:4px;
+  padding:4px 0 0;
+}
+.talk-dock .capture-status{gap:2px}
+.lag-chip{
+  margin:2px 0 0;
+  padding:.18rem .7rem;
+  border-radius:999px;
+  background:#efe9da;
+  color:#4d575f;
+  font-size:.74rem;
+  font-weight:700;
+  font-variant-numeric:tabular-nums;
+}
+.lag-chip.slow{background:#f8e2b8;color:#704c13}
+.talk-dock.recording .status-detail{display:none}
+.capture-controls{
+  width:min(100%,560px);
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+  grid-template-areas:"lead record trail";
+  align-items:center;
+  gap:10px;
+  margin-top:4px;
+}
+.capture-lead{
+  grid-area:lead;
+  justify-self:start;
+  display:flex;
+  align-items:center;
+  min-width:0;
+}
+.capture-lead .timer{
+  grid-area:auto;
+  margin:0;
+  font-size:.95rem;
+  font-weight:700;
+  color:var(--muted);
+}
+.talk-dock.recording .capture-lead .timer{color:var(--ink)}
+.talk-dock.can-continue .capture-lead .timer{display:none}
+.capture-lead #keepTalkingButton{
+  min-height:44px;
+  padding:.4rem .8rem;
+  font-size:.78rem;
+  line-height:1.2;
+  white-space:normal;
+  text-align:left;
+}
+.capture-controls .record-button{
+  grid-area:record;
+  justify-self:center;
+  width:96px;
+  min-width:96px;
+}
+.capture-controls .capture-secondary-actions{
+  grid-area:trail;
+  justify-self:end;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.capture-secondary-actions #pauseButton{
+  min-height:44px;
+  padding:.4rem .9rem;
+  border-radius:999px;
+  font-size:.8rem;
+  font-weight:700;
+  white-space:nowrap;
+}
+
+/* "More" opens upwards as a small menu instead of growing the page */
+.talk-dock .more-actions{
+  position:relative;
+  width:auto;
+  margin:0;
+  padding:0;
+  border:0;
+}
+.talk-dock.recording .more-actions{display:none}
+.talk-dock .more-actions summary{
+  list-style:none;
+  min-height:44px;
+  display:flex;
+  align-items:center;
+  padding:0 .95rem;
+  border:1px solid var(--line);
+  border-radius:999px;
+  background:var(--card);
+  font-size:.8rem;
+  font-weight:700;
+  cursor:pointer;
+  white-space:nowrap;
+}
+.talk-dock .more-actions summary::-webkit-details-marker{display:none}
+.talk-dock .more-actions .actions{
+  position:absolute;
+  right:0;
+  bottom:calc(100% + 8px);
+  z-index:40;
+  width:min(300px,86vw);
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:6px;
+  padding:8px;
+  border:1px solid var(--line);
+  border-radius:16px;
+  background:#fffdf8;
+  box-shadow:0 14px 34px rgba(36,48,58,.14);
+}
+.talk-dock .more-actions .actions button{white-space:nowrap}
+
+/* Header status chip: always labelled with a coloured dot, and shows
+   Recording while live */
+.topbar-actions .health{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  white-space:nowrap;
+  font-weight:700;
+}
+.topbar-actions .health::before{
+  content:"";
+  flex:0 0 auto;
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:#8d959b;
+}
+.health.checking{background:#efe9da;color:#4d575f}
+.health.recording{background:#f6dede;color:#7c2e2e}
+.topbar-actions .health.online::before{background:#22956f}
+.topbar-actions .health.degraded::before{background:#c88722}
+.topbar-actions .health.recording::before{background:#b54d4d}
+.recording-title-row .small-note:empty{display:none}
+
+/* Menu */
+.drawer-title{display:grid;gap:.05rem;min-width:0}
+.drawer-title strong{font-size:1.05rem}
+.drawer-title span{color:var(--muted);font-size:.76rem}
+.drawer-kicker-row{display:flex;align-items:center;justify-content:space-between;gap:.6rem;margin-bottom:8px}
+.drawer-kicker-row .drawer-kicker{margin:0}
+.drawer-badge{
+  padding:.1rem .55rem;
+  border-radius:999px;
+  background:#e4ddcc;
+  color:#4d575f;
+  font-size:.68rem;
+  font-weight:700;
+  white-space:nowrap;
+}
+.drawer-grownup{
+  margin:10px 0;
+  padding:14px;
+  border:1px solid var(--line);
+  border-radius:16px;
+  background:#f8f4ea;
+}
+.drawer-field-stacked{grid-template-columns:1fr;gap:4px}
+.drawer-note{margin:.4rem .2rem 0;font-size:.78rem;line-height:1.5}
+body.admin-user .non-admin-only{display:none}
+.drawer-view-as .act-as-control{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;width:100%}
+.drawer-view-as .act-as-control>span{display:none}
+.drawer-view-as .act-as-control select{width:100%;min-height:44px;font-size:.9rem}
+@media (min-width:701px){
+  #drawerViewAs{display:none!important}
+}
+
+/* Tools: labels never break mid-word; status pills use the right colours */
+.pill.speaker-warning{background:#f8e2b8;color:#704c13}
+.pill.speaker-ready{background:#dcefe3;color:#225c42}
+.section-heading>button,
+.section-heading>.heading-button{
+  flex:0 0 auto;
+  white-space:nowrap;
+}
+.heading-button{
+  min-height:40px;
+  padding:.4rem .8rem;
+  font-size:.82rem;
+}
+.user-row button{white-space:nowrap}
+.user-row button:disabled.danger{border-color:var(--line);color:var(--muted)}
+.speaker-alert{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px 12px;
+  border-radius:12px;
+  background:#fbf1e0;
+  color:#6e4210;
+  font-size:.82rem;
+}
+.speaker-alert span{flex:1 1 auto}
+.speaker-alert button{
+  flex:0 0 auto;
+  min-height:36px;
+  padding:.3rem .75rem;
+  border-color:#e3c99e;
+  color:#6e4210;
+  font-weight:700;
+  white-space:nowrap;
+}
+
+/* Wide desktop: the dock is a card with status | controls | word actions */
+@media (min-width:1180px){
+  :root{--talk-chrome:136px}
+  .talk-dock{
+    grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);
+    align-items:center;
+    justify-items:stretch;
+    gap:20px;
+    padding:14px 22px;
+    border:1px solid var(--line);
+    border-radius:22px;
+    background:rgba(255,253,248,.94);
+    box-shadow:0 10px 28px rgba(45,55,52,.05);
+  }
+  .talk-dock .capture-status{
+    justify-items:start;
+    text-align:left;
+  }
+  .talk-dock .capture-status .meter{justify-content:flex-start}
+  .capture-controls{
+    width:auto;
+    display:flex;
+    gap:18px;
+    margin:0;
+  }
+  .capture-controls .capture-secondary-actions{order:0}
+  .capture-controls .record-button{order:1;width:100px;min-width:100px}
+  .capture-controls .capture-lead{order:2;min-width:76px}
+  .capture-lead .timer{font-size:1.15rem;color:var(--ink)}
+  .dock-actions{justify-self:end}
+  .dock-actions .quick-actions{
+    width:auto;
+    margin:0;
+    display:flex;
+    gap:8px;
+  }
+  .dock-actions .quick-action{min-height:44px;font-size:.76rem}
+}
+
+/* Phones: the dock sits directly above the bottom tab bar */
+@media (max-width:700px){
+  :root{--talk-chrome:calc(168px + env(safe-area-inset-bottom))}
+  #page-talk.talk-page.active{gap:8px}
+  .topbar-actions .health{
+    width:auto;
+    height:auto;
+    padding:.32rem .62rem;
+    font-size:.72rem;
+  }
+  /* Keep the saved-piece title to one line so the words keep the room. */
+  #page-talk .recording-title-row{
+    grid-template-columns:minmax(0,1fr) auto;
+    margin-bottom:8px;
+    padding:6px 8px;
+  }
+  #page-talk .recording-title-row label{
+    position:absolute;
+    width:1px;
+    height:1px;
+    overflow:hidden;
+    clip:rect(0,0,0,0);
+  }
+  #page-talk .recording-title-row input{min-height:40px;padding:.4rem .6rem}
+  #page-talk .recording-title-row button{width:auto;padding:.35rem .7rem;font-size:.78rem}
+  #page-talk .recording-title-row .small-note{grid-column:1/-1}
+  .capture-controls .record-button{width:92px;min-width:92px}
+  .card-actions .quick-action{min-height:46px;font-size:.72rem;padding:.35rem .4rem}
+}
+@media (max-width:360px){
+  .card-actions .quick-action>span:first-child{display:none}
+}

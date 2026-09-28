@@ -30,7 +30,12 @@ def test_word_first_shell_and_settings_drawer_are_served():
         assert 'id="focusButton"' in html
         assert 'id="useWordsButton"' in html
         assert 'id="editButton"' in html
-        assert 'data-drawer-page="progress"' in html
+        # The menu no longer duplicates the tab bar's page links; settings are
+        # split into reading (everyone) and grown-up (admin-only) sections.
+        assert 'data-drawer-page=' not in html
+        assert 'class="drawer-section drawer-grownup admin-only"' in html
+        assert "Names and topic words" in html
+        assert 'class="muted drawer-note non-admin-only"' in html
         assert 'class="grown-up"' not in html
 
 
@@ -124,3 +129,24 @@ def test_remembered_voice_samples_offer_admin_playback_with_owner_label():
     assert "The source audio for this sample is not available." in source
     assert "voice-sample-actions" in source
     assert ".voice-sample-preview" in styles
+
+
+
+def test_talk_dock_keeps_record_controls_on_screen():
+    from pathlib import Path
+
+    html = Path("app/static/index.html").read_text(encoding="utf-8")
+    source = Path("app/static/app.js").read_text(encoding="utf-8")
+    styles = Path("app/static/styles.css").read_text(encoding="utf-8")
+
+    dock = html[html.index('id="talkDock"'):html.index('id="dockActions"')]
+    for control in ('id="recordButton"', 'id="pauseButton"', 'id="timer"', 'id="lagChip"', 'id="moreActions"'):
+        assert control in dock
+    card = html[html.index('class="words-card"'):html.index('id="playbackBar"')]
+    assert 'id="cardActions"' in card and 'class="quick-actions"' in card
+
+    assert "function placeResponsiveControls" in source
+    assert "function updateLagChip" in source
+    assert "function renderHealthBadge" in source
+    assert "height:max(520px,calc(100dvh - var(--talk-chrome)))" in styles
+    assert ".pill.speaker-warning" in styles

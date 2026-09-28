@@ -30,7 +30,7 @@
       <span class="brand-mark" aria-hidden="true">☺</span>
       <div><h1>Talk to Type</h1><span class="brand-subtitle">Your words, written down.</span></div>
     </div>
-    <div class="topbar-actions">
+    <div id="topbarActions" class="topbar-actions">
       <label id="actAsControl" class="act-as-control admin-only" hidden>
         <span>View as</span>
         <select id="actAsSelect" aria-label="View app as another user"><option value="">My account</option></select>
@@ -56,37 +56,46 @@
   </section>
 
   <div id="drawerBackdrop" class="drawer-backdrop hidden" aria-hidden="true"></div>
-  <aside id="appDrawer" class="app-drawer" role="dialog" aria-modal="true" aria-hidden="true" aria-label="Settings and support">
+  <aside id="appDrawer" class="app-drawer" role="dialog" aria-modal="true" aria-hidden="true" aria-label="Menu">
     <div class="drawer-header">
-      <div class="brand drawer-brand">
-        <span class="brand-mark small-mark" aria-hidden="true">☺</span>
-        <div><strong>Talk to Type</strong><span>Settings &amp; support</span></div>
+      <div class="drawer-title">
+        <strong>Menu</strong>
+        <span id="drawerSignedIn">Settings &amp; support</span>
       </div>
       <button id="closeMenuButton" class="drawer-close" type="button" aria-label="Close menu">×</button>
     </div>
 
     <div class="drawer-scroll">
+      <section id="drawerViewAs" class="drawer-section drawer-view-as admin-only" hidden>
+        <p class="drawer-kicker">View as</p>
+        <div id="drawerViewAsSlot"></div>
+      </section>
+
       <section class="drawer-section">
-        <p class="drawer-kicker">App settings</p>
+        <p class="drawer-kicker">Reading your words back</p>
+        <div class="drawer-settings">
+          <label class="drawer-field"><span>🔊 Voice</span><select id="voice"><option value="en_GB-northern_english_male-medium">Northern English</option></select></label>
+          <label class="drawer-field"><span>↗ Speed</span><select id="speechSpeed"><option value="0.8">Slower</option><option value="0.9" selected>Calm</option><option value="1">Normal</option><option value="1.15">Faster</option></select></label>
+        </div>
+      </section>
+
+      <section class="drawer-section drawer-grownup admin-only" hidden>
+        <div class="drawer-kicker-row"><p class="drawer-kicker">Grown-up settings</p><span class="drawer-badge">Admins only</span></div>
         <div class="drawer-settings">
           <label class="drawer-field"><span>🎙 Audio source</span><select id="captureSource"><option value="microphone">Microphone</option><option value="computer">Computer audio</option><option value="mixed">Computer audio + microphone</option></select></label>
           <div id="captureSourceHint" class="capture-source-hint"><strong>Microphone</strong><span class="muted">Uses this device's microphone.</span></div>
           <p class="muted capture-privacy-note">For Teams or another desktop app, choose <strong>Entire Screen</strong> and enable <strong>Share system audio</strong>. For browser media, choose the tab and enable <strong>Share tab audio</strong>. Talk to Type keeps only the audio; screen video is not recorded or stored.</p>
           <label class="drawer-field"><span>🌐 Language</span><select id="language"><option value="">Auto detect</option><option value="en">English</option><option value="no">Norwegian</option></select></label>
           <label class="drawer-field"><span>⏱ Near-live chunk</span><select id="chunkSeconds"><option value="3">3 seconds</option><option value="5" selected>5 seconds</option><option value="8">8 seconds</option><option value="12">12 seconds</option></select></label>
-          <label class="drawer-field"><span>🔊 Read-aloud voice</span><select id="voice"><option value="en_GB-northern_english_male-medium">Northern English</option></select></label>
-          <label class="drawer-field"><span>↗ Read-aloud speed</span><select id="speechSpeed"><option value="0.8">Slower</option><option value="0.9" selected>Calm</option><option value="1">Normal</option><option value="1.15">Faster</option></select></label>
-          <label class="drawer-field"><span>✍ Whisper context</span><input id="prompt" type="text" placeholder="Optional names or topic words"></label>
+          <label class="drawer-field drawer-field-stacked"><span>✍ Names and topic words</span><input id="prompt" type="text" placeholder="e.g. names, places, school topics"></label>
         </div>
       </section>
 
       <section class="drawer-section">
-        <p class="drawer-kicker">Tools</p>
-        <label class="drawer-action file-action">📄 Import audio file<input id="fileInput" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.webm"></label>
-        <button id="installAppButton" class="drawer-action" type="button">📲 <span><strong>Install app</strong><small id="installHint">Add Talk to Type to this device.</small></span></button>
-        <button class="drawer-action drawer-page-link" type="button" data-drawer-page="history">📚 <span><strong>My words</strong><small>Open saved work</small></span></button>
-        <button class="drawer-action drawer-page-link admin-only" type="button" data-drawer-page="progress" hidden>📈 <span><strong>Progress</strong><small>Usage and correction trends</small></span></button>
-        <button class="drawer-action drawer-page-link admin-only" type="button" data-drawer-page="tools" hidden>🛠 <span><strong>Tools</strong><small>Users, speakers, storage and backup</small></span></button>
+        <p class="drawer-kicker">This device</p>
+        <label class="drawer-action file-action admin-only" hidden>📄 Import audio file<input id="fileInput" type="file" accept="audio/*,.wav,.mp3,.m4a,.flac,.ogg,.webm"></label>
+        <button id="installAppButton" class="drawer-action" type="button">📲 <span><strong>Put Talk to Type on my home screen</strong><small id="installHint">Add Talk to Type to this device.</small></span></button>
+        <p class="muted drawer-note non-admin-only">Microphone, language and other settings are looked after by a grown-up.</p>
       </section>
     </div>
 
@@ -135,13 +144,16 @@
             <div class="button-row"><button id="saveEditButton" class="primary small" type="button">Done</button><button id="cancelEditButton" class="secondary small" type="button">Undo changes</button></div>
           </div>
         </div>
+
+        <div id="cardActions" class="card-actions">
+          <div class="quick-actions" aria-label="Word actions">
+            <button id="hearButton" class="quick-action hear-action" type="button" disabled><span aria-hidden="true">🔊</span><span>Hear it</span></button>
+            <button id="focusButton" class="quick-action read-action" type="button" disabled><span aria-hidden="true">📖</span><span>Read</span></button>
+            <button id="useWordsButton" class="quick-action use-action" type="button" disabled><span aria-hidden="true">↗</span><span>Use my words</span></button>
+          </div>
+        </div>
       </section>
 
-      <div class="quick-actions" aria-label="Word actions">
-        <button id="hearButton" class="quick-action hear-action" type="button" disabled><span aria-hidden="true">🔊</span><span>Hear it</span></button>
-        <button id="focusButton" class="quick-action read-action" type="button" disabled><span aria-hidden="true">📖</span><span>Read</span></button>
-        <button id="useWordsButton" class="quick-action use-action" type="button" disabled><span aria-hidden="true">↗</span><span>Use my words</span></button>
-      </div>
 
       <div id="playbackBar" class="playback-bar hidden" aria-label="Saved voice playback">
         <button id="playbackBackButton" class="playback-skip" type="button" aria-label="Back 5 seconds">↶ 5s</button>
@@ -152,29 +164,34 @@
         <button id="playbackFollowButton" class="playback-follow hidden" type="button">↓ Follow audio</button>
       </div>
 
-      <div class="capture-zone">
+      <section id="talkDock" class="talk-dock capture-zone" aria-label="Recording">
         <div class="capture-status">
           <div id="meter" class="meter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
           <p id="statusText" class="status">Ready when you are</p>
           <p id="statusDetail" class="status-detail">Press the microphone and talk normally.</p>
-          <p id="timer" class="timer">00:00</p>
+          <p id="lagChip" class="lag-chip hidden"></p>
         </div>
-        <button id="recordButton" class="record-button" type="button" aria-label="Start talking"><span id="recordButtonIcon" class="mic">🎙</span><span id="recordButtonText">Start talking</span></button>
-        <div class="capture-secondary-actions">
-          <button id="pauseButton" class="secondary hidden" type="button">Pause</button>
-          <button id="keepTalkingButton" class="primary hidden" type="button">🎙 Keep talking</button>
+        <div class="capture-controls">
+          <div class="capture-lead">
+            <p id="timer" class="timer">00:00</p>
+            <button id="keepTalkingButton" class="primary hidden" type="button">🎙 Keep talking</button>
+          </div>
+          <button id="recordButton" class="record-button" type="button" aria-label="Start talking"><span id="recordButtonIcon" class="mic">🎙</span><span id="recordButtonText">Start talking</span></button>
+          <div class="capture-secondary-actions">
+            <button id="pauseButton" class="secondary hidden" type="button">Pause</button>
+            <details id="moreActions" class="more-actions">
+              <summary>More</summary>
+              <div class="actions">
+                <button id="editButton" type="button" disabled>✏ Edit</button>
+                <button id="playRecordingButton" type="button" disabled>▶ My voice</button>
+                <button id="favouriteButton" type="button" disabled>☆ Favourite</button>
+                <button id="newButton" type="button">＋ New piece</button>
+              </div>
+            </details>
+          </div>
         </div>
-      </div>
-
-      <details class="more-actions">
-        <summary>More actions</summary>
-        <div class="actions">
-          <button id="editButton" type="button" disabled>✏ Edit</button>
-          <button id="playRecordingButton" type="button" disabled>▶ My voice</button>
-          <button id="favouriteButton" type="button" disabled>☆ Favourite</button>
-          <button id="newButton" type="button">＋ New piece</button>
-        </div>
-      </details>
+        <div id="dockActions" class="dock-actions"></div>
+      </section>
     </section>
     <section id="page-history" class="page">
       <div class="section-heading"><div><p class="eyebrow">Saved locally</p><h2>My words</h2></div><button id="refreshHistoryButton" type="button">Refresh</button></div>
@@ -212,7 +229,7 @@
             <h3>Users</h3>
             <p class="muted">Each user has separate recordings. Admin users can access Progress and Tools.</p>
           </div>
-          <button id="refreshUsersButton" type="button">Refresh</button>
+          <button id="refreshUsersButton" class="heading-button" type="button">↻ Refresh</button>
         </div>
         <form id="createUserForm" class="user-create-grid">
           <label class="admin-label">Username<input id="newUsername" type="text" autocomplete="off" required></label>
@@ -264,7 +281,7 @@
               <h3>Remembered speakers</h3>
               <p class="muted">Review saved voiceprints and the confirmed samples used for future matching.</p>
             </div>
-            <button id="refreshSpeakerProfilesButton" type="button">Refresh</button>
+            <button id="refreshSpeakerProfilesButton" class="heading-button" type="button">↻ Refresh</button>
           </div>
           <div id="speakerProfilesList" class="speaker-profiles-list conversation-scroll"><p class="muted">No remembered speakers loaded yet.</p></div>
           <p class="muted small-note">Voiceprints are shared across app users. Admins can review retained source audio across accounts for speaker matching.</p>
@@ -277,7 +294,7 @@
             <h3>Relabelled voice samples</h3>
             <p class="muted">Manual corrections form a separate review set for future retraining and do not alter remembered voiceprints automatically.</p>
           </div>
-          <button id="refreshRelabelSamplesButton" type="button">Refresh</button>
+          <button id="refreshRelabelSamplesButton" class="heading-button" type="button">↻ Refresh</button>
         </div>
         <div id="relabelSamplesList" class="relabel-samples-list conversation-scroll"><p class="muted">No relabelled samples loaded yet.</p></div>
       </section>
@@ -320,7 +337,7 @@
       <section class="panel recycle-panel">
         <div class="section-heading compact-heading">
           <div><h3>Recycle bin</h3><p class="muted">Deleted work stays here until you restore it or permanently remove it.</p></div>
-          <button id="refreshRecycleButton" type="button">Refresh</button>
+          <button id="refreshRecycleButton" class="heading-button" type="button">↻ Refresh</button>
         </div>
         <div id="recycleList" class="history-list conversation-scroll"><p class="muted">Loading…</p></div>
       </section>
