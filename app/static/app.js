@@ -32,6 +32,9 @@
     continuation: false,
     startedAt: 0,
     timer: null,
+    health: null,
+    liveTranscribedUpTo: 0,
+    pausedAt: 0,
     transcript: '',
     currentRecording: null,
     recoverableRecording: null,
@@ -83,6 +86,8 @@
     editorWrap: $('editorWrap'), sentenceEditor: $('sentenceEditor'), editSaveStatus: $('editSaveStatus'), saveEditButton: $('saveEditButton'), cancelEditButton: $('cancelEditButton'),
     hearButton: $('hearButton'), focusButton: $('focusButton'), focusExitButton: $('focusExitButton'), useWordsButton: $('useWordsButton'),
     playRecordingButton: $('playRecordingButton'), editButton: $('editButton'), favouriteButton: $('favouriteButton'), newButton: $('newButton'), keepTalkingButton: $('keepTalkingButton'),
+    talkDock: $('talkDock'), lagChip: $('lagChip'), moreActions: $('moreActions'), cardActions: $('cardActions'), dockActions: $('dockActions'),
+    topbarActions: $('topbarActions'), drawerViewAsSlot: $('drawerViewAsSlot'), drawerSignedIn: $('drawerSignedIn'),
     playbackBar: $('playbackBar'), playbackBackButton: $('playbackBackButton'), playbackToggleButton: $('playbackToggleButton'),
     playbackForwardButton: $('playbackForwardButton'), playbackTime: $('playbackTime'), playbackRate: $('playbackRate'),
     playbackFollowButton: $('playbackFollowButton'), followWordsButton: $('followWordsButton'),
@@ -150,7 +155,30 @@
     if (els.currentUserLabel && state.authUser) {
       els.currentUserLabel.textContent = (state.authUser.display_name || state.authUser.username) + (state.authUser.is_admin ? ' · Admin' : '');
     }
+    if (els.drawerSignedIn && state.authUser) {
+      els.drawerSignedIn.textContent = 'Signed in as ' + (state.authUser.display_name || state.authUser.username) + (state.authUser.is_admin ? ' · Grown-up' : '');
+    }
   }
+
+  // Phones get View as in the menu (it does not fit the header), and wide
+  // screens show the word actions in the recording dock rather than the card.
+  const phoneLayout = window.matchMedia('(max-width: 700px)');
+  const wideLayout = window.matchMedia('(min-width: 1180px)');
+  function placeResponsiveControls() {
+    if (els.actAsControl && els.drawerViewAsSlot && els.topbarActions) {
+      if (phoneLayout.matches) {
+        if (els.actAsControl.parentElement !== els.drawerViewAsSlot) els.drawerViewAsSlot.appendChild(els.actAsControl);
+      } else if (els.actAsControl.parentElement !== els.topbarActions) {
+        els.topbarActions.insertBefore(els.actAsControl, els.topbarActions.firstChild);
+      }
+    }
+    const quickActions = document.querySelector('.quick-actions');
+    const host = wideLayout.matches ? els.dockActions : els.cardActions;
+    if (quickActions && host && quickActions.parentElement !== host) host.appendChild(quickActions);
+  }
+  placeResponsiveControls();
+  phoneLayout.addEventListener?.('change', placeResponsiveControls);
+  wideLayout.addEventListener?.('change', placeResponsiveControls);
 
   function applyRoleVisibility() {
     const allowed = isAdmin();
@@ -869,6 +897,7 @@
     els.playRecordingButton.disabled = !state.currentRecording?.has_audio;
     els.favouriteButton.disabled = !state.currentRecording;
     els.keepTalkingButton.classList.toggle('hidden', !canContinue);
+    els.talkDock?.classList.toggle('can-continue', canContinue);
     els.favouriteButton.textContent = state.currentRecording?.is_favourite ? '★ Favourite' : '☆ Favourite';
     updateFollowButton();
     maybeAutoFollow();
@@ -927,16 +956,35 @@
     return payload;
   }
 
+  function renderHealthBadge() {
+    if (!els.healthBadge) return;
+    let kind = 'checking';
+    let text = 'Checking…';
+    if (state.recording) {
+      kind = 'recording';
+      text = 'Recording';
+    } else if (state.health === 'online') {
+      kind = 'online';
+      text = 'Speech ready';
+    } else if (state.health === 'degraded') {
+      kind = 'degraded';
+      text = 'Needs attention';
+    } else if (state.health === 'offline') {
+      kind = 'degraded';
+      text = 'Offline';
+    }
+    els.healthBadge.className = 'health ' + kind;
+    if (els.healthBadge.textContent !== text) els.healthBadge.textContent = text;
+  }
+
   async function checkHealth() {
     try {
       const data = await api('/healthz', { cache: 'no-store' });
-      const good = data.database && data.speech_gateway;
-      els.healthBadge.className = 'health ' + (good ? 'online' : 'degraded');
-      els.healthBadge.textContent = good ? 'Local speech ready' : 'Needs attention';
+      state.health = data.database && data.speech_gateway ? 'online' : 'degraded';
     } catch {
-      els.healthBadge.className = 'health degraded';
-      els.healthBadge.textContent = 'Offline';
+      state.health = 'offline';
     }
+    renderHealthBadge();
   }
 
   async function loadVoices() {
@@ -1121,7 +1169,28 @@
   function startTimer() {
     state.startedAt = Date.now();
     els.timer.textContent = '00:00';
-    state.timer = setInterval(() => { els.timer.textContent = formatTime((Date.now() - state.startedAt) / 1000); }, 250);
+    state.liveTranscribedUpTo = state.startedAt;
+    state.timer = setInterval(() => {
+      els.timer.textContent = formatTime((Date.now() - state.startedAt) / 1000);
+      updateLagChip();
+    }, 250);
+    updateLagChip();
+  }
+
+  // How far the written words trail the speaker: time since the end of the
+  // audio in the most recently transcribed chunk. Shown only while recording.
+  function updateLagChip() {
+    if (!els.lagChip) return;
+    const show = state.recording && !state.paused;
+    els.lagChip.classList.toggle('hidden', !show);
+    if (!show) return;
+    const behind = Math.max(0, Math.round((Date.now() - (state.liveTranscribedUpTo || state.startedAt)) / 1000));
+    const slow = behind >= 15;
+    els.lagChip.classList.toggle('slow', slow);
+    const text = slow
+      ? 'Words are ' + behind + ' s behind. The speech server is busy.'
+      : 'Words about ' + behind + ' s behind you';
+    if (els.lagChip.textContent !== text) els.lagChip.textContent = text;
   }
 
   function stopTimer() {
@@ -1188,6 +1257,11 @@
     els.language.disabled = state.recording || state.transcribing;
     els.chunkSeconds.disabled = state.recording || state.transcribing;
     if (els.captureSource) els.captureSource.disabled = state.recording || state.transcribing;
+    if (els.actAsSelect) els.actAsSelect.disabled = state.recording || state.transcribing;
+    els.talkDock?.classList.toggle('recording', state.recording);
+    if (state.recording && els.moreActions) els.moreActions.open = false;
+    renderHealthBadge();
+    updateLagChip();
     els.fileInput.disabled = state.recording || state.transcribing || acting;
     els.keepTalkingButton.disabled = acting;
     els.newButton.disabled = acting;
@@ -1375,7 +1449,7 @@
     state.liveBuffers = remainder.length ? [remainder] : [];
     state.liveSampleCount = remainder.length;
     state.liveFreshSamples = finalChunk ? 0 : Math.max(0, remainder.length - overlap);
-    state.liveQueue.push({ index: ++state.liveChunkIndex, blob: encodeWav(audio, state.sampleRate) });
+    state.liveQueue.push({ index: ++state.liveChunkIndex, blob: encodeWav(audio, state.sampleRate), endedAt: Date.now() });
     processLiveQueue();
     return true;
   }
@@ -1394,6 +1468,7 @@
       try {
         const result = await api('/api/recordings/' + state.currentRecording.id + '/chunks', { method: 'POST', body: form });
         acceptLiveTranscript(result.text);
+        state.liveTranscribedUpTo = Math.max(state.liveTranscribedUpTo || 0, item.endedAt || 0);
         state.liveCompleted += 1;
         state.liveProcessingSeconds += Number(result.processing_seconds || 0);
         const activeTitle = state.captureMode === 'microphone' ? 'I’m listening' : 'Capturing audio';
@@ -1481,6 +1556,13 @@
   function togglePause() {
     if (!state.recording) return;
     state.paused = !state.paused; if (state.paused) setMeter(0);
+    if (state.paused) {
+      state.pausedAt = Date.now();
+    } else if (state.pausedAt) {
+      state.liveTranscribedUpTo += Date.now() - state.pausedAt;
+      state.pausedAt = 0;
+    }
+    updateLagChip();
     els.pauseButton.textContent = state.paused ? 'Carry on' : 'Pause';
     const activeTitle = state.captureMode === 'microphone' ? 'I’m listening' : 'Capturing audio';
     setStatus(state.paused ? 'Paused' : activeTitle, state.paused ? 'Press Carry on when you are ready.' : (state.captureMode === 'microphone' ? 'Keep talking.' : 'Shared audio capture is running.'));
@@ -2154,6 +2236,7 @@
       toggle.textContent = user.is_active ? 'Deactivate' : 'Reactivate';
       toggle.className = user.is_active ? 'danger' : '';
       toggle.disabled = Boolean(user.is_current && user.is_active);
+      if (toggle.disabled) toggle.title = 'You can’t deactivate the account you’re signed in with.';
       toggle.addEventListener('click', async () => {
         if (user.is_active && !confirm('Deactivate ' + user.display_name + '? They will no longer be able to sign in.')) return;
         try {
@@ -2216,6 +2299,26 @@
     }
   }
 
+  function setSpeakerServiceProblem(message) {
+    const problem = Boolean(message);
+    els.runSpeakerAnalysisButton.disabled = problem || state.speakerPolling;
+    els.speakerRecordingSelect.disabled = problem;
+    els.speakerCountSelect.disabled = problem;
+    els.speakerAnalysisMessage.classList.toggle('speaker-alert', problem);
+    if (!problem) return;
+    const text = document.createElement('span');
+    text.textContent = message;
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'small';
+    retry.textContent = 'Try again';
+    retry.addEventListener('click', () => {
+      retry.disabled = true;
+      loadSpeakerStatusAndRecordings();
+    });
+    els.speakerAnalysisMessage.replaceChildren(text, retry);
+  }
+
   async function loadSpeakerStatusAndRecordings() {
     try {
       const [status, recordings] = await Promise.all([
@@ -2227,15 +2330,15 @@
       if (!status.reachable) {
         els.speakerServiceStatus.textContent = 'Unavailable';
         els.speakerServiceStatus.className = 'pill speaker-warning';
-        els.speakerAnalysisMessage.textContent = 'Speaker analyzer is not reachable.';
+        setSpeakerServiceProblem('The speaker analyzer isn’t responding. Check that the speaker-analyzer container is running.');
       } else if (!service.configured) {
         els.speakerServiceStatus.textContent = 'Needs HF token';
         els.speakerServiceStatus.className = 'pill speaker-warning';
-        els.speakerAnalysisMessage.textContent = 'Accept the pyannote Community-1 terms and add HF_TOKEN to .env.';
+        setSpeakerServiceProblem('Accept the pyannote Community-1 terms and add HF_TOKEN to .env.');
       } else if (service.status === 'device_error') {
         els.speakerServiceStatus.textContent = 'GPU problem';
         els.speakerServiceStatus.className = 'pill speaker-warning';
-        els.speakerAnalysisMessage.textContent = service.device_error || 'The selected GPU is not compatible with the speaker analyzer.';
+        setSpeakerServiceProblem(service.device_error || 'The selected GPU is not compatible with the speaker analyzer.');
       } else {
         const gpu = Array.isArray(service.gpus)
           ? service.gpus.find((item) => String(service.device || '').endsWith(':' + item.index))
@@ -2245,6 +2348,7 @@
         const swapText = service.arbitrated ? ' · managed by llama-swap' : '';
         els.speakerServiceStatus.textContent = (service.loaded ? 'Ready' : 'Ready · model loads on first use') + gpuText + swapText;
         els.speakerServiceStatus.className = 'pill speaker-ready';
+        setSpeakerServiceProblem('');
         if (!state.speakerPolling) els.speakerAnalysisMessage.textContent = '';
       }
 
@@ -2267,7 +2371,7 @@
     } catch (error) {
       els.speakerServiceStatus.textContent = 'Unavailable';
       els.speakerServiceStatus.className = 'pill speaker-warning';
-      els.speakerAnalysisMessage.textContent = error.message;
+      setSpeakerServiceProblem(error.message || 'The speaker analyzer isn’t responding.');
     }
   }
 
@@ -3139,6 +3243,18 @@
   els.stopActAsButton?.addEventListener('click', () => switchActAs(''));
     els.progressDays.addEventListener('change', () => { if (isAdmin()) loadProgress(); });
   els.runSpeakerAnalysisButton.addEventListener('click', runSpeakerAnalysis);
+  document.addEventListener('click', (event) => {
+    if (els.moreActions?.open && !els.moreActions.contains(event.target)) els.moreActions.open = false;
+  });
+  els.moreActions?.querySelectorAll('.actions button').forEach((button) => {
+    button.addEventListener('click', () => { els.moreActions.open = false; });
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && els.moreActions?.open) {
+      els.moreActions.open = false;
+      els.moreActions.querySelector('summary')?.focus();
+    }
+  });
   els.refreshSpeakerProfilesButton.addEventListener('click', loadSpeakerProfiles);
   els.refreshRelabelSamplesButton?.addEventListener('click', loadRelabelSamples);
   els.refreshUsersButton.addEventListener('click', loadUsers);
