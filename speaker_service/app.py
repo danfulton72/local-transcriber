@@ -14,7 +14,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pyannote.audio import Pipeline
 
 
-app = FastAPI(title="Local Speaker Analyzer", version="0.1.3")
+app = FastAPI(title="Local Speaker Analyzer", version="0.1.4")
 
 MODEL = os.getenv("PYANNOTE_MODEL", "pyannote/speaker-diarization-community-1")
 HF_TOKEN = os.getenv("HF_TOKEN", "").strip() or None
@@ -29,6 +29,9 @@ UNLOAD_AFTER_DIARIZATION = os.getenv(
 ).strip().lower() in {"1", "true", "yes", "on"}
 
 _pipeline = None
+# CPU-resident copy kept after unloading from CUDA. Moving it back to the GPU
+# is much faster than re-reading the pipeline from the Hugging Face cache.
+_cpu_pipeline = None
 _pipeline_lock = asyncio.Lock()
 _analysis_run_lock = asyncio.Lock()
 
@@ -218,26 +221,44 @@ def _load_pipeline_sync():
     return pipeline
 
 
+def _move_pipeline_to_device_sync(pipeline):
+    _validate_device_sync()
+    import torch
+    pipeline.to(torch.device(DEVICE))
+    return pipeline
+
+
 async def get_pipeline():
-    global _pipeline
+    global _pipeline, _cpu_pipeline
     if _pipeline is not None:
         return _pipeline
     async with _pipeline_lock:
         if _pipeline is None:
-            _pipeline = await asyncio.to_thread(_load_pipeline_sync)
+            cached = _cpu_pipeline
+            _cpu_pipeline = None
+            if cached is not None and DEVICE != "cpu":
+                try:
+                    _pipeline = await asyncio.to_thread(_move_pipeline_to_device_sync, cached)
+                except Exception:
+                    traceback.print_exc()
+                    cached = None
+                    await asyncio.to_thread(_empty_cuda_cache_sync)
+            if _pipeline is None:
+                _pipeline = await asyncio.to_thread(_load_pipeline_sync)
     return _pipeline
 
 
-def _move_pipeline_to_cpu_sync(pipeline) -> None:
+def _move_pipeline_to_cpu_sync(pipeline) -> bool:
     if pipeline is None or DEVICE == "cpu":
-        return
+        return False
     try:
         import torch
         pipeline.to(torch.device("cpu"))
+        return True
     except Exception:
         # Dropping the final reference below is still useful even if a
         # particular pipeline implementation cannot move itself back to CPU.
-        pass
+        return False
 
 
 def _empty_cuda_cache_sync() -> None:
@@ -253,17 +274,19 @@ def _empty_cuda_cache_sync() -> None:
 
 
 async def unload_pipeline() -> None:
-    global _pipeline
+    global _pipeline, _cpu_pipeline
     async with _pipeline_lock:
         pipeline = _pipeline
         _pipeline = None
 
-    if pipeline is None:
-        return
+        if pipeline is None:
+            return
 
-    await asyncio.to_thread(_move_pipeline_to_cpu_sync, pipeline)
-    pipeline = None
-    await asyncio.to_thread(_empty_cuda_cache_sync)
+        moved = await asyncio.to_thread(_move_pipeline_to_cpu_sync, pipeline)
+        # Keep the CPU copy for the next analysis only if it really left CUDA.
+        _cpu_pipeline = pipeline if moved else None
+        pipeline = None
+        await asyncio.to_thread(_empty_cuda_cache_sync)
 
 
 def _load_pcm_waveform(path: Path) -> dict:
@@ -395,6 +418,7 @@ async def health() -> dict:
         "status": status,
         "configured": configured,
         "loaded": _pipeline is not None,
+        "cpu_cached": _cpu_pipeline is not None,
         "model": MODEL,
         "device": DEVICE,
         "local_model": local_model,

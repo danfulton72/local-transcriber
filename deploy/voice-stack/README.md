@@ -209,6 +209,9 @@ The speaker analyzer should report one visible GPU, the Tesla P4.
 Then run one admin speaker analysis. After it completes, Tools → Speakers
 should report the analyzer as not loaded until the next analysis because the
 voice-stack deployment deliberately unloads pyannote after diarization.
+The analyzer keeps a CPU-memory copy of the pipeline (`cpu_cached` in its
+`/healthz`), so the next analysis moves it back to the P4 instead of reloading
+it from the model cache.
 
 ## P4 sharing notes
 

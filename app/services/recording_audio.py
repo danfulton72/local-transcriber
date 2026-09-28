@@ -1,7 +1,13 @@
 import io
 import tempfile
+import warnings
 import wave
 from pathlib import Path
+
+with warnings.catch_warnings():
+    # audioop is deprecated in 3.12 and provided by audioop-lts on 3.13+.
+    warnings.simplefilter("ignore", DeprecationWarning)
+    import audioop
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,43 +59,97 @@ async def build_combined_wav(
     output_path = Path(temp.name)
     temp.close()
 
-    expected_format = None
-    total_frames = 0
     try:
-        with wave.open(str(output_path), "wb") as output:
-            for index, segment in enumerate(segments):
-                try:
-                    source = wave.open(str(segment.audio_path), "rb")
-                except (wave.Error, EOFError) as exc:
-                    raise ValueError(f"Audio segment {index + 1} is not a valid PCM WAV file.") from exc
+        total_frames, sample_rate = combine_wav_segments(
+            [Path(segment.audio_path) for segment in segments],
+            output_path,
+        )
+        return output_path, True, len(segments), total_frames / sample_rate
+    except Exception:
+        output_path.unlink(missing_ok=True)
+        raise
 
-                with source:
-                    current_format = (
+
+# Common format used when a recording mixes segment formats, e.g. a 48 kHz
+# recording made before 16 kHz capture, continued later with "Keep talking".
+NORMALISED_CHANNELS = 1
+NORMALISED_WIDTH = 2
+NORMALISED_RATE = 16000
+_COPY_BLOCK_FRAMES = 65536
+
+
+def _normalise_pcm(data: bytes, channels: int, width: int, rate: int) -> bytes:
+    if width == 1:
+        # 8-bit WAV is unsigned; audioop expects signed samples.
+        data = audioop.bias(data, 1, -128)
+    if width != NORMALISED_WIDTH:
+        data = audioop.lin2lin(data, width, NORMALISED_WIDTH)
+    if channels == 2:
+        data = audioop.tomono(data, NORMALISED_WIDTH, 0.5, 0.5)
+    elif channels != 1:
+        raise ValueError(f"Unsupported channel count: {channels}.")
+    if rate != NORMALISED_RATE:
+        data, _ = audioop.ratecv(data, NORMALISED_WIDTH, 1, rate, NORMALISED_RATE, None)
+    return data
+
+
+def combine_wav_segments(paths: list[Path], output_path: Path) -> tuple[int, int]:
+    """Concatenate PCM WAV segments into ``output_path``.
+
+    Segments that share a format are streamed through unchanged. If formats
+    differ, every segment is converted to 16 kHz mono 16-bit so older
+    recordings continued at the new capture rate still play and analyse.
+    Returns ``(total_frames, sample_rate)``.
+    """
+    formats = []
+    for index, path in enumerate(paths):
+        try:
+            with wave.open(str(path), "rb") as source:
+                formats.append(
+                    (
                         source.getnchannels(),
                         source.getsampwidth(),
                         source.getframerate(),
                         source.getcomptype(),
-                        source.getcompname(),
                     )
-                    if expected_format is None:
-                        expected_format = current_format
-                        output.setnchannels(source.getnchannels())
-                        output.setsampwidth(source.getsampwidth())
-                        output.setframerate(source.getframerate())
-                        output.setcomptype(source.getcomptype(), source.getcompname())
-                    elif current_format != expected_format:
-                        raise ValueError("Voice segments use different audio formats.")
+                )
+        except (wave.Error, EOFError) as exc:
+            raise ValueError(f"Audio segment {index + 1} is not a valid PCM WAV file.") from exc
+    if not formats:
+        raise ValueError("Audio is not available for this recording.")
+    if any(item[3] != "NONE" for item in formats):
+        raise ValueError("Voice segments must be uncompressed PCM WAV audio.")
 
-                    frame_count = source.getnframes()
-                    output.writeframesraw(source.readframes(frame_count))
-                    total_frames += frame_count
-            output.writeframes(b"")
+    uniform = len(set(formats)) == 1
+    channels, width, rate = (
+        formats[0][:3] if uniform else (NORMALISED_CHANNELS, NORMALISED_WIDTH, NORMALISED_RATE)
+    )
 
-        duration = total_frames / expected_format[2] if expected_format else None
-        return output_path, True, len(segments), duration
-    except Exception:
-        output_path.unlink(missing_ok=True)
-        raise
+    total_frames = 0
+    with wave.open(str(output_path), "wb") as output:
+        output.setnchannels(channels)
+        output.setsampwidth(width)
+        output.setframerate(rate)
+        for path, (src_channels, src_width, src_rate, _) in zip(paths, formats):
+            with wave.open(str(path), "rb") as source:
+                if uniform:
+                    while True:
+                        data = source.readframes(_COPY_BLOCK_FRAMES)
+                        if not data:
+                            break
+                        output.writeframesraw(data)
+                    total_frames += source.getnframes()
+                else:
+                    data = _normalise_pcm(
+                        source.readframes(source.getnframes()),
+                        src_channels,
+                        src_width,
+                        src_rate,
+                    )
+                    output.writeframesraw(data)
+                    total_frames += len(data) // (NORMALISED_WIDTH * NORMALISED_CHANNELS)
+        output.writeframes(b"")
+    return total_frames, rate
 
 
 

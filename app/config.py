@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     speaker_swap_key: str = ""
     speaker_restore_previous: bool = True
     speaker_match_threshold: float = 0.78
+    # Near-live chunk WAVs duplicate the full recording. Keep them only when
+    # troubleshooting transcription; by default they are removed once a
+    # recording finishes with its full audio safely stored.
+    keep_live_chunk_audio: bool = False
 
 
 settings = Settings()

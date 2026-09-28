@@ -2,6 +2,12 @@
   'use strict';
 
   const $ = (id) => document.getElementById(id);
+  // Whisper and pyannote both work at 16 kHz mono; capturing at the browser's
+  // native 44.1/48 kHz only triples upload size, disk use and memory.
+  const CAPTURE_SAMPLE_RATE = 16000;
+  // Full-quality audio is uploaded in segments while recording so a long
+  // session never has to be held (or re-encoded) in the tab all at once.
+  const AUDIO_SEGMENT_SECONDS = 60;
   const state = {
     recording: false,
     paused: false,
@@ -15,8 +21,15 @@
     processor: null,
     mute: null,
     captureMode: 'microphone',
-    sampleRate: 48000,
-    fullBuffers: [],
+    sampleRate: CAPTURE_SAMPLE_RATE,
+    stopping: false,
+    segmentBuffers: [],
+    segmentSampleCount: 0,
+    segmentIndex: 0,
+    segmentQueue: [],
+    segmentUploading: false,
+    segmentUploadError: null,
+    segmentDrainResolvers: [],
     liveBuffers: [],
     liveSampleCount: 0,
     liveFreshSamples: 0,
@@ -619,10 +632,21 @@
       ? state.speakerTurns.filter((turn) => String(turn?.text || '').trim())
       : [];
     syncRecordingTitleUI();
-    els.transcriptView.replaceChildren();
-    els.transcriptView.classList.toggle('speaker-labelled', labelledTurns.length > 0);
     const count = wordCount(text);
     els.wordCount.textContent = count + ' word' + (count === 1 ? '' : 's');
+
+    // While recording, each chunk only appends text, so update the DOM in
+    // place instead of rebuilding every sentence button on every chunk.
+    const liveRender = liveMode && !labelledTurns.length && Boolean(text);
+    if (liveRender && els.transcriptView.dataset.renderMode === 'live') {
+      renderLiveTranscriptIncremental(confirmed, pending);
+      updateTranscriptControls(text);
+      return;
+    }
+
+    els.transcriptView.replaceChildren();
+    els.transcriptView.dataset.renderMode = liveRender ? 'live' : 'full';
+    els.transcriptView.classList.toggle('speaker-labelled', labelledTurns.length > 0);
 
     if (!text) {
       els.transcriptView.classList.add('empty');
@@ -842,24 +866,58 @@
         }
       } else if (confirmed) {
         for (const sentence of splitSentences(confirmed)) {
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.className = 'sentence';
-          button.textContent = sentence + ' ';
-          button.title = 'Tap to hear this sentence';
-          button.addEventListener('click', () => speakText(sentence));
-          els.transcriptView.appendChild(button);
+          els.transcriptView.appendChild(sentenceButton(sentence));
         }
       }
-      if (pending) {
-        const preview = document.createElement('span');
-        preview.className = 'live-preview';
-        preview.textContent = pending;
-        preview.setAttribute('aria-label', 'Latest words still being checked');
-        els.transcriptView.appendChild(preview);
-      }
+      if (pending) els.transcriptView.appendChild(livePreview(pending));
     }
 
+    updateTranscriptControls(text);
+  }
+
+  function sentenceButton(sentence) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'sentence';
+    button.dataset.sentence = sentence;
+    button.textContent = sentence + ' ';
+    button.title = 'Tap to hear this sentence';
+    button.addEventListener('click', () => speakText(sentence));
+    return button;
+  }
+
+  function livePreview(pending) {
+    const preview = document.createElement('span');
+    preview.className = 'live-preview';
+    preview.textContent = pending;
+    preview.setAttribute('aria-label', 'Latest words still being checked');
+    return preview;
+  }
+
+  function renderLiveTranscriptIncremental(confirmed, pending) {
+    const view = els.transcriptView;
+    const sentences = confirmed ? splitSentences(confirmed) : [];
+    const buttons = [...view.querySelectorAll(':scope > button.sentence')];
+    let keep = 0;
+    while (keep < buttons.length && keep < sentences.length && buttons[keep].dataset.sentence === sentences[keep]) {
+      keep += 1;
+    }
+    for (let i = keep; i < buttons.length; i += 1) buttons[i].remove();
+
+    let preview = view.querySelector(':scope > .live-preview');
+    const fragment = document.createDocumentFragment();
+    for (let i = keep; i < sentences.length; i += 1) fragment.appendChild(sentenceButton(sentences[i]));
+    view.insertBefore(fragment, preview);
+
+    if (pending) {
+      if (!preview) view.appendChild(livePreview(pending));
+      else if (preview.textContent !== pending) preview.textContent = pending;
+    } else if (preview) {
+      preview.remove();
+    }
+  }
+
+  function updateTranscriptControls(text) {
     const hasText = Boolean(text);
     const canContinue = Boolean(state.currentRecording && hasText && !state.recording && !state.transcribing);
     els.hearButton.disabled = !hasText;
@@ -1249,13 +1307,15 @@
       await ctx.resume();
       const stream = capture.stream;
       const source = ctx.createMediaStreamSource(stream);
-      const processor = ctx.createScriptProcessor(4096, 1, 1);
       const mute = ctx.createGain(); mute.gain.value = 0;
 
       let record = reuseExisting ? state.currentRecording : null;
+      let processor;
       try {
+        processor = await createCaptureProcessor(ctx);
         if (!record) record = await createRecording();
       } catch (error) {
+        try { processor?.disconnect(); } catch {}
         capture.streams.forEach((item) => item.getTracks().forEach((track) => track.stop()));
         capture.sources.forEach((item) => { try { item.disconnect(); } catch {} });
         try { capture.destination?.disconnect(); } catch {}
@@ -1277,8 +1337,11 @@
       state.processor = processor;
       state.mute = mute;
       state.captureMode = mode;
-      state.sampleRate = ctx.sampleRate;
-      state.fullBuffers = [];
+      state.sampleRate = CAPTURE_SAMPLE_RATE;
+      state.stopping = false;
+      state.segmentBuffers = [];
+      state.segmentSampleCount = 0;
+      state.segmentIndex = 0;
       resetLive();
       state.recording = true;
       state.paused = false;
@@ -1296,20 +1359,6 @@
           if (state.recording && state.captureMode !== 'microphone') stopRecording();
         }, { once: true });
       }
-
-      processor.onaudioprocess = (event) => {
-        if (!state.recording || state.paused) return setMeter(0);
-        const input = event.inputBuffer.getChannelData(0);
-        const chunk = new Float32Array(input);
-        state.fullBuffers.push(chunk);
-        state.liveBuffers.push(chunk);
-        state.liveSampleCount += chunk.length;
-        state.liveFreshSamples += chunk.length;
-        maybeFlushLiveChunk();
-        let sum = 0;
-        for (let i = 0; i < input.length; i += 1) sum += input[i] * input[i];
-        setMeter(Math.sqrt(sum / input.length));
-      };
 
       source.connect(processor);
       processor.connect(mute);
@@ -1330,6 +1379,133 @@
     } catch (error) {
       cleanupRecording();
       setError(error?.message || 'I could not open the selected audio source.');
+    }
+  }
+
+  // Prefer an AudioWorklet so capture runs off the main thread; fall back to
+  // the deprecated ScriptProcessorNode only where AudioWorklet is missing.
+  // Both paths deliver 16 kHz mono Float32 samples to handleCapturedAudio.
+  async function createCaptureProcessor(ctx) {
+    if (ctx.audioWorklet && typeof AudioWorkletNode !== 'undefined') {
+      try {
+        await ctx.audioWorklet.addModule('/audio-utils.js');
+        await ctx.audioWorklet.addModule('/capture-worklet.js');
+        const node = new AudioWorkletNode(ctx, 'talk-to-type-capture', {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [1],
+          channelCount: 1,
+          channelCountMode: 'explicit',
+          channelInterpretation: 'speakers',
+          processorOptions: { targetRate: CAPTURE_SAMPLE_RATE },
+        });
+        node.port.onmessage = (event) => {
+          if (event.data?.samples) handleCapturedAudio(event.data.samples, event.data.level);
+        };
+        return node;
+      } catch (error) {
+        console.warn('[Talk to Type] AudioWorklet unavailable; using ScriptProcessor fallback', error);
+      }
+    }
+    const node = ctx.createScriptProcessor(4096, 1, 1);
+    const resampler = window.TalkToTypeAudio.createResampler(ctx.sampleRate, CAPTURE_SAMPLE_RATE);
+    node.onaudioprocess = (event) => {
+      const input = event.inputBuffer.getChannelData(0);
+      handleCapturedAudio(resampler.process(input), window.TalkToTypeAudio.rms(input));
+    };
+    return node;
+  }
+
+  // Ask the worklet to hand over its last partial batch and wait (briefly)
+  // for it, so the final ~100 ms of speech is not lost on stop.
+  function stopCaptureProcessor() {
+    const port = state.processor?.port;
+    if (!port) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, 300);
+      const previous = port.onmessage;
+      port.onmessage = (event) => {
+        if (event.data?.type === 'stopped') {
+          clearTimeout(timer);
+          resolve();
+          return;
+        }
+        previous?.call(port, event);
+      };
+      port.postMessage({ type: 'stop' });
+    });
+  }
+
+  function handleCapturedAudio(samples, level) {
+    if (!state.recording || state.paused) { setMeter(0); return; }
+    if (!samples?.length) return;
+    state.segmentBuffers.push(samples);
+    state.segmentSampleCount += samples.length;
+    state.liveBuffers.push(samples);
+    state.liveSampleCount += samples.length;
+    state.liveFreshSamples += samples.length;
+    maybeFlushLiveChunk();
+    if (state.segmentSampleCount >= AUDIO_SEGMENT_SECONDS * state.sampleRate) flushAudioSegment();
+    setMeter(level || 0);
+  }
+
+  function flushAudioSegment() {
+    if (!state.segmentBuffers.length || !state.currentRecording) return;
+    const samples = mergeBuffers(state.segmentBuffers);
+    state.segmentBuffers = [];
+    state.segmentSampleCount = 0;
+    if (!samples.length) return;
+    state.segmentQueue.push({
+      recordingId: state.currentRecording.id,
+      index: ++state.segmentIndex,
+      blob: encodeWav(samples, state.sampleRate),
+      duration: samples.length / state.sampleRate,
+    });
+    processSegmentQueue();
+  }
+
+  async function processSegmentQueue() {
+    if (state.segmentUploading) return;
+    state.segmentUploading = true;
+    try {
+      while (state.segmentQueue.length) {
+        const item = state.segmentQueue[0];
+        let lastError = null;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          try {
+            const form = new FormData();
+            form.append('file', item.blob, 'segment-' + String(item.index).padStart(4, '0') + '.wav');
+            form.append('duration_seconds', item.duration.toFixed(3));
+            await api('/api/recordings/' + item.recordingId + '/audio', { method: 'POST', body: form });
+            lastError = null;
+            break;
+          } catch (error) {
+            lastError = error;
+            await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+          }
+        }
+        if (lastError) {
+          // Keep the segment queued; the next flush (or stop) retries it.
+          state.segmentUploadError = lastError;
+          if (state.recording) setError('Some voice audio is not saved yet. I will keep trying.');
+          break;
+        }
+        state.segmentQueue.shift();
+        state.segmentUploadError = null;
+      }
+    } finally {
+      state.segmentUploading = false;
+      state.segmentDrainResolvers.splice(0).forEach((resolve) => resolve());
+    }
+  }
+
+  async function waitForSegmentUploads() {
+    while (state.segmentUploading) {
+      await new Promise((resolve) => state.segmentDrainResolvers.push(resolve));
+    }
+    if (state.segmentQueue.length) await processSegmentQueue();
+    if (state.segmentQueue.length) {
+      throw new Error(state.segmentUploadError?.message || 'Voice audio could not be uploaded.');
     }
   }
 
@@ -1367,7 +1543,14 @@
       }
     }
 
-    const sendLength = finalChunk ? merged.length : target;
+    // Cut at the quietest moment in the last second before the target rather
+    // than mid-word; the overlap and text de-duplication still cover the join.
+    const searchFrom = Math.max(Math.round(target * .6), target - Math.round(1.0 * state.sampleRate));
+    const sendLength = finalChunk
+      ? merged.length
+      : (window.TalkToTypeAudio?.findQuietCut
+        ? window.TalkToTypeAudio.findQuietCut(merged, state.sampleRate, searchFrom, target)
+        : target);
     if (sendLength < Math.round(.25 * state.sampleRate)) return false;
     const audio = merged.slice(0, sendLength);
     const nextStart = finalChunk ? merged.length : Math.max(0, sendLength - overlap);
@@ -1411,7 +1594,11 @@
 
   function cleanupRecording() {
     stopTimer(); setMeter(0);
-    if (state.processor) { state.processor.onaudioprocess = null; try { state.processor.disconnect(); } catch {} }
+    if (state.processor) {
+      state.processor.onaudioprocess = null;
+      if (state.processor.port) state.processor.port.onmessage = null;
+      try { state.processor.disconnect(); } catch {}
+    }
     try { state.source?.disconnect(); } catch {}
     for (const inputSource of state.inputSources || []) { try { inputSource.disconnect(); } catch {} }
     try { state.mixDestination?.disconnect(); } catch {}
@@ -1433,22 +1620,22 @@
   }
 
   async function stopRecording() {
-    if (!state.recording) return;
+    if (!state.recording || state.stopping) return;
+    state.stopping = true;
     const elapsed = Math.max(0, (Date.now() - state.startedAt) / 1000);
+    await stopCaptureProcessor();
     state.recording = false;
     flushLiveChunk(true);
+    flushAudioSegment();
     cleanupRecording();
+    state.stopping = false;
     state.transcribing = true; syncRecordingUI(); setStatus('Nearly done', 'Saving your voice and checking the last few words…');
     await waitForLiveDrain();
     commitLivePending();
     clearTimeout(state.draftSaveTimer);
     try {
       await persistDraftNow();
-      const wav = encodeWav(mergeBuffers(state.fullBuffers), state.sampleRate);
-      const audioForm = new FormData();
-      audioForm.append('file', wav, 'recording-' + Date.now() + '.wav');
-      audioForm.append('duration_seconds', String(elapsed));
-      await api('/api/recordings/' + state.currentRecording.id + '/audio', { method: 'POST', body: audioForm });
+      await waitForSegmentUploads();
 
       let finalText = state.transcript.trim();
       if (state.continuation && state.captureBaseTranscript && finalText.startsWith(state.captureBaseTranscript)) {
@@ -1474,7 +1661,7 @@
       setError('Your words are safe as a draft, but finishing the recording failed: ' + error.message);
       setStatus('Your draft is safe', 'You can recover it when this page opens again.');
     } finally {
-      state.transcribing = false; state.fullBuffers = []; syncRecordingUI();
+      state.transcribing = false; state.segmentBuffers = []; state.segmentSampleCount = 0; syncRecordingUI();
     }
   }
 

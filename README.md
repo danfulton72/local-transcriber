@@ -21,8 +21,8 @@ A local-first, kid-friendly speech-to-text app for turning spoken ideas into edi
 - **Reading focus** mode that turns the screen into a large, distraction-light transcript
 - **Use my words** uses the device share sheet when available and falls back to clipboard
 - Installable home-screen PWA for supported desktop, tablet and mobile browsers
-- Saves voice captures as separate audio segments plus the Whisper transcript and timestamp
-- Stores near-live audio chunks for troubleshooting/recovery
+- Captures at 16 kHz mono (Whisper/pyannote's native rate) using an AudioWorklet, and uploads full-quality audio in 60-second segments while recording, so long sessions never sit in browser memory
+- Near-live chunks are cut at the quietest moment near each boundary; their duplicate chunk WAVs are removed once a recording finishes with its full audio stored (set `KEEP_LIVE_CHUNK_AUDIO=true` to keep them for troubleshooting)
 - Keeps the original Whisper transcript separately from later edits
 - **My words** history with search, favourites, playback and soft-delete
 - Piper read-aloud for full transcripts or individual sentences
@@ -322,7 +322,7 @@ GET  /v1/voices
 
 PostgreSQL stores recording timestamps/duration/status, title/favourite state, original and edited transcripts, edit revisions, near-live chunk transcript metadata, and explicit usage events such as read-aloud and copy.
 
-The `recordings/` volume stores the full WAV recording and near-live chunk WAV files.
+The `recordings/` volume stores the full recording as 16 kHz mono WAV segments. Near-live chunk WAVs are kept only while a recording is in progress (or when `KEEP_LIVE_CHUNK_AUDIO=true`); chunk text and timing stay in PostgreSQL. Recordings made before 16 kHz capture keep their original audio, and mixed-rate recordings are normalised to 16 kHz when combined for playback or speaker analysis.
 
 ### Backups
 
