@@ -195,6 +195,23 @@ On that first startup, the default account is created if it does not already exi
 
 The application has fallback bootstrap values so an upgrade cannot permanently lock itself out, but you should set your own credentials before first startup.
 
+## Dockhand / Hawser deployment
+
+For a Dockhand-managed R720 voice host, use the repository-root
+`docker-compose.dockhand.yml` as a **Git stack** with **Context directory
+`.`** and **Build images on deploy** enabled. Dockhand then builds
+`local-transcriber` and `speaker-analyzer` directly from this repository,
+while persistent recordings/model data stay on the Docker host under
+`/opt/stacks/voice`.
+
+Secrets such as the PostgreSQL URL, bootstrap password and Hugging Face token
+are supplied as Dockhand stack variables rather than committed to Git. The
+Dockhand stack also pins both application services to the in-stack
+`wyoming-openai-gateway` service name, avoiding host-loopback routing.
+
+The full one-time conversion, stack-variable list, verification and update
+workflow is in [deploy/dockhand/README.md](deploy/dockhand/README.md).
+
 ## Recommended: install inside the existing voice stack
 
 Use the existing voice-stack root:
