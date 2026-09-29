@@ -1,0 +1,155 @@
+# Dockhand/Hawser production stack for the R720 voice host.
+#
+# Configure this as a Dockhand Git stack:
+#   Repository: https://github.com/danfulton72/local-transcriber
+#   Branch: main
+#   Compose file path: docker-compose.dockhand.yml
+#   Context directory: .
+#   Build images on deploy: ON
+#   Disable build cache: OFF (normally)
+#   Re-pull images: OFF (whisper is a host-local image)
+#
+# Persistent data stays on the Docker host under /opt/stacks/voice.
+# Secrets and deployment-specific values are supplied as Dockhand stack variables.
+
+services:
+  whisper:
+    image: local/faster-whisper-p4:v2.4.0-ls71
+    container_name: whisper
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC
+      WHISPER_MODEL: distil-whisper/distil-large-v3.5-ct2
+      WHISPER_LANG: en
+      WHISPER_BEAM: "1"
+      WHISPER_COMPUTE_TYPE: int8_float32
+    volumes:
+      - /opt/stacks/voice/whisper-data:/config
+    ports:
+      - "10300:10300"
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${P4_UUID:?Set P4_UUID in Dockhand stack variables}"]
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  piper:
+    image: rhasspy/wyoming-piper
+    container_name: piper
+    command: --voice en_GB-northern_english_male-medium
+    volumes:
+      - /opt/stacks/voice/piper-data:/data
+    environment:
+      TZ: Europe/London
+    ports:
+      - "10200:10200"
+    restart: unless-stopped
+
+  wyoming-openai-gateway:
+    image: ghcr.io/archmonger/wyoming-openai-gateway:latest
+    container_name: wyoming-openai-gateway
+    environment:
+      STT_HOST: whisper
+      STT_PORT: "10300"
+      TTS_HOST: piper
+      TTS_PORT: "10200"
+      HOST: 0.0.0.0
+      PORT: "8555"
+      PREFIX: /v1
+      LOG_LEVEL: INFO
+    ports:
+      - "8555:8555"
+    depends_on:
+      - whisper
+      - piper
+    restart: unless-stopped
+
+  openwakeword:
+    image: rhasspy/wyoming-openwakeword
+    container_name: openwakeword
+    user: "1001:1001"
+    volumes:
+      - /opt/stacks/voice/openwakeword:/data
+      - /opt/stacks/voice/openwakeword:/custom
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      TZ: Europe/London
+    command: --preload-model 'ok_nabu' --custom-model-dir /custom
+    ports:
+      - "10400:10400"
+    restart: unless-stopped
+
+  local-transcriber:
+    build:
+      context: .
+    image: voice-local-transcriber:latest
+    container_name: local-transcriber
+    environment:
+      DEFAULT_USERNAME: "${DEFAULT_USERNAME:-local}"
+      DEFAULT_PASSWORD: "${DEFAULT_PASSWORD:?Set DEFAULT_PASSWORD in Dockhand stack variables}"
+      DEFAULT_DISPLAY_NAME: "${DEFAULT_DISPLAY_NAME:-Local user}"
+      AUTH_SESSION_DAYS: "${AUTH_SESSION_DAYS:-30}"
+      AUTH_COOKIE_SECURE: "${AUTH_COOKIE_SECURE:-true}"
+      DATABASE_URL: "${DATABASE_URL:?Set DATABASE_URL in Dockhand stack variables}"
+      GATEWAY_BASE_URL: "http://wyoming-openai-gateway:8555/v1"
+      RECORDINGS_DIR: "/data/recordings"
+      DEFAULT_LANGUAGE: "${DEFAULT_LANGUAGE:-}"
+      DEFAULT_VOICE: "${DEFAULT_VOICE:-en_GB-northern_english_male-medium}"
+      SPEAKER_MATCH_THRESHOLD: "${SPEAKER_MATCH_THRESHOLD:-0.78}"
+      KEEP_LIVE_CHUNK_AUDIO: "${KEEP_LIVE_CHUNK_AUDIO:-false}"
+      SPEAKER_SERVICE_URL: "http://speaker-analyzer:9000"
+      SPEAKER_SWAP_URL: ""
+      SPEAKER_RESTORE_PREVIOUS: "false"
+    volumes:
+      - /opt/stacks/voice/local-transcriber/recordings:/data/recordings
+    ports:
+      - "8090:8080"
+    depends_on:
+      wyoming-openai-gateway:
+        condition: service_started
+      speaker-analyzer:
+        condition: service_healthy
+    restart: unless-stopped
+
+  speaker-analyzer:
+    build:
+      context: ./speaker_service
+    image: voice-speaker-analyzer:latest
+    environment:
+      HF_TOKEN: "${HF_TOKEN:?Set HF_TOKEN in Dockhand stack variables}"
+      HF_HOME: "/models"
+      GATEWAY_BASE_URL: "http://wyoming-openai-gateway:8555/v1"
+      PYANNOTE_MODEL: "${PYANNOTE_MODEL:-pyannote/speaker-diarization-community-1}"
+      SPEAKER_DEVICE: "cuda"
+      SPEAKER_UNLOAD_AFTER_DIARIZATION: "true"
+      NVIDIA_VISIBLE_DEVICES: "${P4_UUID:?Set P4_UUID in Dockhand stack variables}"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+    volumes:
+      - /opt/stacks/voice/speaker-model-cache:/models
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${P4_UUID:?Set P4_UUID in Dockhand stack variables}"]
+              capabilities: [gpu]
+    depends_on:
+      - wyoming-openai-gateway
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import httpx; r=httpx.get('http://127.0.0.1:9000/healthz', timeout=5); r.raise_for_status()"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
