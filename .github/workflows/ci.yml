@@ -58,6 +58,13 @@ jobs:
             -f tests/fixtures/voice-stack-base.yml \
             -f deploy/voice-stack/compose.override.yml \
             config -q
+      - name: Validate Dockhand Git stack
+        env:
+          P4_UUID: GPU-test
+          DATABASE_URL: postgresql+asyncpg://transcriber:test@127.0.0.1:5432/transcriber
+          DEFAULT_PASSWORD: test-password
+          HF_TOKEN: hf_test
+        run: docker compose -f docker-compose.dockhand.yml config -q
       - run: docker build -t local-transcriber-ci .
       - name: Validate app image migrations
         run: |
