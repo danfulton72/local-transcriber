@@ -72,7 +72,12 @@
     lastScrollY: window.scrollY,
     installPrompt: null,
     currentSpeakerAnalysisId: null,
+    currentSpeakerAnalysisRecordingId: null,
     speakerPolling: false,
+    meetingNotesStatus: null,
+    meetingNotesRecordingId: null,
+    meetingNotesPolling: false,
+    meetingNotesResult: null,
     speakerTurns: [],
     speakerProfiles: [],
     knownSpeakerProfiles: [],
@@ -121,6 +126,14 @@
     speakerAnalysisMessage: $('speakerAnalysisMessage'), speakerAnalysisResult: $('speakerAnalysisResult'),
     speakerProfilesList: $('speakerProfilesList'), refreshSpeakerProfilesButton: $('refreshSpeakerProfilesButton'),
     relabelSamplesList: $('relabelSamplesList'), refreshRelabelSamplesButton: $('refreshRelabelSamplesButton'),
+    meetingNotesServiceStatus: $('meetingNotesServiceStatus'),
+    notebookPickerDialog: $('notebookPickerDialog'), notebookPickerForm: $('notebookPickerForm'),
+    notebookPickerMessage: $('notebookPickerMessage'), notebookPickerList: $('notebookPickerList'),
+    notebookPickerRefreshButton: $('notebookPickerRefreshButton'), notebookPickerConfirmButton: $('notebookPickerConfirmButton'),
+    meetingNotesExportButton: $('meetingNotesExportButton'), meetingNotesGenerateButton: $('meetingNotesGenerateButton'),
+    meetingNotesResendButton: $('meetingNotesResendButton'), meetingNotesDownloadButton: $('meetingNotesDownloadButton'),
+    meetingNotesMessage: $('meetingNotesMessage'), meetingNotesPreview: $('meetingNotesPreview'),
+    meetingNotesLinkRow: $('meetingNotesLinkRow'), meetingNotesLink: $('meetingNotesLink'),
     userList: $('userList'), refreshUsersButton: $('refreshUsersButton'), createUserForm: $('createUserForm'),
     newUsername: $('newUsername'), newUserDisplayName: $('newUserDisplayName'), newUserPassword: $('newUserPassword'), newUserIsAdmin: $('newUserIsAdmin'),
     createUserButton: $('createUserButton'), userAdminMessage: $('userAdminMessage'),
@@ -2480,7 +2493,13 @@
   }
 
   async function loadSpeakerTools() {
-    await Promise.allSettled([loadSpeakerStatusAndRecordings(), loadSpeakerProfiles(), loadRelabelSamples()]);
+    await Promise.allSettled([
+      loadSpeakerStatusAndRecordings(),
+      loadSpeakerProfiles(),
+      loadRelabelSamples(),
+      loadMeetingNotesStatus(),
+    ]);
+    loadMeetingNotes();
     if (state.currentSpeakerAnalysisId && !state.speakerPolling) {
       pollSpeakerAnalysis(state.currentSpeakerAnalysisId, true);
     }
@@ -2974,6 +2993,257 @@
     } catch {}
   }
 
+  // ---------------------------------------------------------------------
+  // Meeting notes & Open Notebook export
+  // ---------------------------------------------------------------------
+
+  function meetingNotesRecordingId() {
+    return els.speakerRecordingSelect.value || state.currentSpeakerAnalysisRecordingId || null;
+  }
+
+  async function loadMeetingNotesStatus() {
+    try {
+      const status = await api('/api/admin/meeting-notes/status', { cache: 'no-store' });
+      state.meetingNotesStatus = status;
+      const llmInfo = status.llm || {};
+      const notebook = status.open_notebook || {};
+      const parts = [];
+      let ok = true;
+      if (!llmInfo.configured) { parts.push('Model not set'); ok = false; }
+      else if (!llmInfo.reachable) { parts.push('Model offline'); ok = false; }
+      else if (llmInfo.model_available === false) { parts.push('Model ' + llmInfo.model + ' not loaded'); ok = false; }
+      else parts.push('Model ready');
+      if (!notebook.configured) parts.push('Open Notebook not set');
+      else if (!notebook.reachable) { parts.push('Open Notebook offline'); ok = false; }
+      else parts.push('Open Notebook ready');
+      els.meetingNotesServiceStatus.textContent = parts.join(' · ');
+      els.meetingNotesServiceStatus.className = 'pill ' + (ok ? 'speaker-ready' : 'speaker-warning');
+
+    } catch (error) {
+      state.meetingNotesStatus = null;
+      els.meetingNotesServiceStatus.textContent = 'Unavailable';
+      els.meetingNotesServiceStatus.className = 'pill speaker-warning';
+    }
+    updateMeetingNotesButtons();
+  }
+
+  function updateMeetingNotesButtons() {
+    const status = state.meetingNotesStatus || {};
+    const llmReady = Boolean(status.llm?.configured);
+    const notebookReady = Boolean(status.open_notebook?.configured);
+    const recordingId = meetingNotesRecordingId();
+    const result = state.meetingNotesResult;
+    const busy = state.meetingNotesPolling || ['queued', 'processing'].includes(result?.status);
+    const hasNotes = Boolean(result?.has_notes);
+    const matches = result && result.recording_id === recordingId;
+
+    els.meetingNotesExportButton.disabled = !recordingId || busy || !llmReady || !notebookReady;
+    els.meetingNotesGenerateButton.disabled = !recordingId || busy || !llmReady;
+    els.meetingNotesResendButton.disabled = !recordingId || busy || !notebookReady || !(matches && hasNotes);
+    els.meetingNotesDownloadButton.disabled = !(matches && hasNotes);
+    els.meetingNotesExportButton.title = !llmReady
+      ? 'Set LLM_BASE_URL to your llama-server'
+      : !notebookReady ? 'Set OPEN_NOTEBOOK_URL to export' : '';
+    els.meetingNotesResendButton.title = 'Send the saved transcript and notes again without re-running the model';
+  }
+
+  function renderMeetingNotes(result) {
+    state.meetingNotesResult = result;
+    const notesText = result?.notes_markdown || '';
+    els.meetingNotesPreview.textContent = notesText;
+    els.meetingNotesPreview.hidden = !notesText;
+
+    let message = '';
+    if (!result || result.status === 'none') {
+      message = 'No notes yet for this conversation.';
+    } else if (result.status === 'queued' || result.status === 'processing') {
+      message = (result.stage || 'Queued') + '…';
+    } else if (result.status === 'error') {
+      message = 'Failed: ' + (result.error || 'unknown error') + (notesText ? ' The last saved notes are shown below.' : '');
+    } else {
+      const when = result.exported_at || result.notes_generated_at;
+      message = (result.stage || 'Notes ready') + (when ? ' · ' + friendlyDate(when) : '') +
+        (result.model ? ' · ' + result.model : '') +
+        (result.processing_seconds ? ' · ' + result.processing_seconds + 's' : '') +
+        (result.analysis_id ? '' : ' · no speaker labels (run speaker analysis for named owners)');
+    }
+    els.meetingNotesMessage.textContent = message;
+    els.meetingNotesMessage.classList.toggle('speaker-alert', result?.status === 'error');
+
+    const uiUrl = state.meetingNotesStatus?.open_notebook?.ui_url;
+    const notebookId = result?.open_notebook_notebook_id;
+    const exported = Boolean(result?.open_notebook_note_id);
+    els.meetingNotesLinkRow.hidden = !(uiUrl && notebookId && exported);
+    if (uiUrl && notebookId) {
+      els.meetingNotesLink.href = uiUrl + '/notebooks/' + encodeURIComponent(notebookId);
+    }
+    updateMeetingNotesButtons();
+  }
+
+  async function loadMeetingNotes() {
+    const recordingId = meetingNotesRecordingId();
+    state.meetingNotesRecordingId = recordingId;
+    if (!recordingId) {
+      state.meetingNotesResult = null;
+      els.meetingNotesPreview.hidden = true;
+      els.meetingNotesLinkRow.hidden = true;
+      els.meetingNotesMessage.textContent = 'Choose a conversation above.';
+      updateMeetingNotesButtons();
+      return;
+    }
+    try {
+      const result = await api('/api/admin/meeting-notes/recordings/' + recordingId, { cache: 'no-store' });
+      if (meetingNotesRecordingId() !== recordingId) return;
+      renderMeetingNotes(result);
+      if (['queued', 'processing'].includes(result.status)) pollMeetingNotes(recordingId);
+    } catch (error) {
+      els.meetingNotesMessage.textContent = error.message;
+    }
+  }
+
+  async function pollMeetingNotes(recordingId) {
+    if (state.meetingNotesPolling) return;
+    state.meetingNotesPolling = true;
+    updateMeetingNotesButtons();
+    try {
+      for (let attempt = 0; attempt < 900; attempt += 1) {
+        const result = await api('/api/admin/meeting-notes/recordings/' + recordingId, { cache: 'no-store' });
+        if (meetingNotesRecordingId() === recordingId) renderMeetingNotes(result);
+        if (!['queued', 'processing'].includes(result.status)) {
+          if (result.status === 'completed') {
+            showToast(result.export_requested ? 'Notes exported to Open Notebook' : 'Meeting notes ready');
+          }
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    } catch (error) {
+      els.meetingNotesMessage.textContent = error.message;
+    } finally {
+      state.meetingNotesPolling = false;
+      updateMeetingNotesButtons();
+    }
+  }
+
+  async function startMeetingNotes({ regenerate, exportToNotebook }) {
+    const recordingId = meetingNotesRecordingId();
+    if (!recordingId) {
+      els.meetingNotesMessage.textContent = 'Choose a conversation above first.';
+      return;
+    }
+    const body = { regenerate_notes: regenerate, export: exportToNotebook };
+    if (exportToNotebook) {
+      const notebook = await chooseNotebook();
+      if (!notebook) return;
+      body.notebook_id = notebook.id;
+      body.notebook_name = notebook.name;
+    }
+    if (
+      regenerate &&
+      state.currentSpeakerAnalysisId &&
+      state.currentSpeakerAnalysisRecordingId === recordingId
+    ) {
+      body.analysis_id = state.currentSpeakerAnalysisId;
+    }
+    els.meetingNotesMessage.textContent = regenerate ? 'Starting notes…' : 'Sending to Open Notebook…';
+    els.meetingNotesExportButton.disabled = true;
+    els.meetingNotesGenerateButton.disabled = true;
+    els.meetingNotesResendButton.disabled = true;
+    try {
+      const job = await api('/api/admin/meeting-notes/recordings/' + recordingId, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      renderMeetingNotes(job);
+      await pollMeetingNotes(recordingId);
+    } catch (error) {
+      els.meetingNotesMessage.textContent = error.message;
+      updateMeetingNotesButtons();
+    }
+  }
+
+  let notebookPickerNotebooks = [];
+
+  async function loadNotebookPickerList(preferredId) {
+    const list = els.notebookPickerList;
+    list.replaceChildren();
+    els.notebookPickerConfirmButton.disabled = true;
+    els.notebookPickerMessage.textContent = 'Loading notebooks from Open Notebook…';
+    els.notebookPickerMessage.classList.remove('speaker-alert');
+    try {
+      const payload = await api('/api/admin/meeting-notes/notebooks', { cache: 'no-store' });
+      notebookPickerNotebooks = payload.notebooks || [];
+      if (!notebookPickerNotebooks.length) {
+        els.notebookPickerMessage.textContent = 'No notebooks yet. Create one in Open Notebook, then refresh.';
+        return;
+      }
+      const ids = notebookPickerNotebooks.map((item) => item.id);
+      const selectedId = [preferredId, payload.default_notebook_id].find((id) => id && ids.includes(id)) || ids[0];
+      for (const item of notebookPickerNotebooks) {
+        const label = document.createElement('label');
+        label.className = 'notebook-picker-option';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'notebookPickerChoice';
+        radio.value = item.id;
+        radio.checked = item.id === selectedId;
+        const name = document.createElement('span');
+        name.textContent = item.name;
+        label.append(radio, name);
+        const tags = [];
+        if (item.id === preferredId) tags.push('last used');
+        if (item.id === payload.default_notebook_id) tags.push('default');
+        if (tags.length) {
+          const tag = document.createElement('span');
+          tag.className = 'muted';
+          tag.textContent = tags.join(' · ');
+          label.appendChild(tag);
+        }
+        list.appendChild(label);
+      }
+      els.notebookPickerMessage.textContent = notebookPickerNotebooks.length === 1
+        ? '1 notebook available.'
+        : notebookPickerNotebooks.length + ' notebooks available.';
+      els.notebookPickerConfirmButton.disabled = false;
+      list.querySelector('input:checked')?.focus();
+    } catch (error) {
+      notebookPickerNotebooks = [];
+      els.notebookPickerMessage.textContent = error.message;
+      els.notebookPickerMessage.classList.add('speaker-alert');
+    }
+  }
+
+  function chooseNotebook() {
+    const dialog = els.notebookPickerDialog;
+    const preferredId = state.meetingNotesResult?.recording_id === meetingNotesRecordingId()
+      ? state.meetingNotesResult?.open_notebook_notebook_id
+      : null;
+    return new Promise((resolve) => {
+      const onClose = () => {
+        dialog.removeEventListener('close', onClose);
+        if (dialog.returnValue !== 'confirm') { resolve(null); return; }
+        const chosen = els.notebookPickerList.querySelector('input[name="notebookPickerChoice"]:checked');
+        resolve(notebookPickerNotebooks.find((item) => item.id === chosen?.value) || null);
+      };
+      dialog.addEventListener('close', onClose);
+      dialog.returnValue = '';
+      dialog.showModal();
+      loadNotebookPickerList(preferredId);
+    });
+  }
+
+  function downloadMeetingNotes() {
+    const recordingId = meetingNotesRecordingId();
+    if (!recordingId) return;
+    const link = document.createElement('a');
+    link.href = '/api/admin/meeting-notes/recordings/' + recordingId + '/notes.md';
+    link.download = '';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
   function stopSpeakerPreview() {
     if (state.speakerPreviewAudio) {
       try { state.speakerPreviewAudio.pause(); } catch {}
@@ -3051,6 +3321,10 @@
 
   function renderSpeakerAnalysis(analysis) {
     stopSpeakerPreview();
+    state.currentSpeakerAnalysisRecordingId = analysis.recording_id;
+    if (!els.speakerRecordingSelect.value && state.meetingNotesRecordingId !== analysis.recording_id) {
+      loadMeetingNotes();
+    }
     const owner = analysis.recording_owner || analysis.recording_owner_username || 'Unknown user';
     const recordingTitle = analysis.recording_title || 'Recording';
     els.speakerAnalysisMessage.textContent =
@@ -3430,6 +3704,15 @@
   els.stopActAsButton?.addEventListener('click', () => switchActAs(''));
     els.progressDays.addEventListener('change', () => { if (isAdmin()) loadProgress(); });
   els.runSpeakerAnalysisButton.addEventListener('click', runSpeakerAnalysis);
+  els.speakerRecordingSelect.addEventListener('change', () => loadMeetingNotes());
+  els.meetingNotesExportButton.addEventListener('click', () => startMeetingNotes({ regenerate: true, exportToNotebook: true }));
+  els.meetingNotesGenerateButton.addEventListener('click', () => startMeetingNotes({ regenerate: true, exportToNotebook: false }));
+  els.meetingNotesResendButton.addEventListener('click', () => startMeetingNotes({ regenerate: false, exportToNotebook: true }));
+  els.meetingNotesDownloadButton.addEventListener('click', downloadMeetingNotes);
+  els.notebookPickerRefreshButton.addEventListener('click', () => {
+    const chosen = els.notebookPickerList.querySelector('input[name="notebookPickerChoice"]:checked');
+    loadNotebookPickerList(chosen?.value || state.meetingNotesResult?.open_notebook_notebook_id);
+  });
   document.addEventListener('click', (event) => {
     if (els.moreActions?.open && !els.moreActions.contains(event.target)) els.moreActions.open = false;
   });

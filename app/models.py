@@ -249,3 +249,35 @@ class SpeakerRelabelSample(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MeetingExport(Base):
+    """Generated meeting notes for one recording and its Open Notebook copy."""
+
+    __tablename__ = "meeting_exports"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recording_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("recordings.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    analysis_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("speaker_analyses.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
+    stage: Mapped[str] = mapped_column(String(160), default="")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str] = mapped_column(String(200), default="")
+    transcript_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
+    export_requested: Mapped[bool] = mapped_column(Boolean, default=True)
+    open_notebook_notebook_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    open_notebook_source_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    open_notebook_note_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    processing_seconds: Mapped[float] = mapped_column(Float, default=0.0)
+    requested_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    notes_generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

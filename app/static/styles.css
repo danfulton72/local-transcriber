@@ -2843,3 +2843,52 @@ body.admin-user .non-admin-only{display:none}
 @media (max-width:360px){
   .card-actions .quick-action>span:first-child{display:none}
 }
+
+/* Meeting notes & Open Notebook export */
+.meeting-notes-panel{margin-top:1rem}
+.meeting-notes-controls{
+  grid-template-columns:repeat(4,auto);
+  justify-content:start;
+}
+.meeting-notes-controls button{min-width:0}
+.meeting-notes-preview{
+  margin:14px 0 0;
+  padding:16px;
+  max-height:32rem;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:var(--bg);
+  color:var(--ink);
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  font:.92rem/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (max-width: 900px){
+  .meeting-notes-controls{grid-template-columns:1fr 1fr}
+  .meeting-notes-controls button{grid-column:auto;width:100%}
+}
+@media (max-width: 560px){
+  .meeting-notes-controls{grid-template-columns:1fr}
+}
+.notebook-picker{
+  width:min(460px,calc(100vw - 32px));
+  padding:22px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--card);
+  color:var(--ink);
+  box-shadow:var(--shadow);
+}
+.notebook-picker::backdrop{background:rgba(36,48,58,.45)}
+.notebook-picker h3{margin:0 0 .25rem}
+.notebook-picker-list{display:grid;gap:8px;margin:14px 0;max-height:50vh}
+.notebook-picker-option{
+  display:flex;align-items:center;gap:10px;
+  min-height:var(--tap);padding:.6rem .85rem;
+  border:1px solid var(--line);border-radius:14px;cursor:pointer;
+}
+.notebook-picker-option:has(input:checked){border-color:var(--accent);background:var(--accent-2)}
+.notebook-picker-option input{width:auto;min-height:0;margin:0}
+.notebook-picker-option .muted{margin-left:auto;font-size:.8rem}
+.notebook-picker-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}
+.notebook-picker-actions #notebookPickerRefreshButton{margin-right:auto}

@@ -46,6 +46,11 @@ A local-first, kid-friendly speech-to-text app for turning spoken ideas into edi
   - samples under 3 seconds of attributed speech are rejected
   - review/remove individual voice samples, rename the person, or forget the whole voiceprint at any time
   - recognised speakers are reviewed/managed in the parent area; after a parent completes an analysis, reopening that saved conversation in **Your words** shows the resolved speaker names beside their turns
+- Admin-only **Tools → Meeting notes & Open Notebook**:
+  - turns a speaker-analysed conversation into ordered meeting notes (summary, decisions, action items with owners, discussion by topic, open questions) using your own local model through any OpenAI-compatible endpoint, such as llama.cpp's `llama-server`
+  - long meetings are split to fit the model's context, extracted part by part, then organised in one final pass
+  - optionally sends the speaker-labelled transcript (as an embedded source) and the notes (as a note) to a self-hosted [Open Notebook](https://github.com/lfnovo/open-notebook) notebook; re-exporting replaces the previous copies
+  - notes can be downloaded as Markdown, e.g. for Obsidian
 - Admin-only storage tools:
   - recycle bin with restore and permanent delete
   - voice-audio retention (forever / 30 / 90 / 365 days)
@@ -160,6 +165,61 @@ Open **Tools** as an admin, then use the **Speakers** section:
 Each remembered person keeps a small bank of up to 8 normalized speaker embeddings. The matcher scores a new voice against the strongest few samples rather than relying on one running average. Samples with less than 3 seconds of attributed speech are not accepted, and the same detected speaker cannot be added twice from one analysis. Existing single-embedding profiles are migrated into the bank as their first sample.
 
 Remembered voiceprints are numeric speaker embeddings stored in your PostgreSQL database. The app does not expose voiceprint-management controls to non-admin users. Recognition is a similarity match, not proof of identity, so admin review remains authoritative.
+
+## Meeting notes and Open Notebook export
+
+Admin-only and post-recording, like speaker analysis. Nothing leaves your network: the notes model and Open Notebook are both services you run.
+
+```
+Record ─► Whisper ─► Tools → Speakers: analyse, then fix names
+                                  │
+            Tools → Meeting notes & Open Notebook: "Generate notes & export"
+                     │                                │
+                     ▼                                ▼
+     llama-server (OpenAI-compatible)        Open Notebook API
+     pass 1: extract per part                ├─ source: speaker-labelled transcript (embedded)
+     pass 2: organise into notes ──────────► └─ note:   meeting notes
+```
+
+### Workflow
+
+1. Analyse the conversation in **Tools → Speakers** and correct any speaker names. Notes use the corrected names and corrected turn text, so owners of action items come out right. Recordings with no speaker analysis still work, but every line is marked *Unidentified*.
+2. In **Meeting notes & Open Notebook**, with the same conversation selected, press **Generate notes & export**. A picker loads the current list of notebooks live from Open Notebook; the default notebook (or the one this recording was last exported to) is preselected. Choose one and press **Export**. Progress is shown while each part is processed.
+3. **Generate notes only** keeps the notes in this app. **Re-send saved notes** opens the same picker and pushes the saved transcript and notes again without re-running the model, replacing the earlier copies (including when you pick a different notebook). **Download .md** saves the notes as Markdown.
+
+Permanently deleting a recording from the recycle bin also deletes its source and note from Open Notebook (best effort). Soft-deleting, audio retention and audio deletion leave exported notes alone.
+
+### Notes model (llama.cpp)
+
+Any OpenAI-compatible `/v1/chat/completions` endpoint works. For llama.cpp:
+
+```
+llama-server -m your-model.gguf --host 0.0.0.0 --port 8080 \
+  -ngl 99 -c 32768 --jinja --alias meeting-llm
+```
+
+- Keep `LLM_CONTEXT_TOKENS` equal to `-c`. The transcript is split into parts of at most `LLM_CHUNK_TOKENS` (default 12000), leaving room for the prompt and `LLM_MAX_OUTPUT_TOKENS`.
+- `LLM_DISABLE_THINKING=true` sends `chat_template_kwargs: {"enable_thinking": false}`, which switches off reasoning in Qwen3-style templates (needs `--jinja`). Any `<think>` block that still appears is stripped.
+- `LLM_MODEL` must match the model name the server reports (`--alias`); the Tools status pill warns if it does not.
+
+### Open Notebook
+
+1. In Open Notebook, add your llama-server as an OpenAI-compatible provider and set an embedding model; the transcript source is embedded so Open Notebook's search and chat can find it.
+2. Create a notebook (one per project or team works best, so you can ask questions across meetings).
+3. Set `OPEN_NOTEBOOK_URL` (the API, normally port 5055), `OPEN_NOTEBOOK_PASSWORD` if you set one, and optionally `OPEN_NOTEBOOK_NOTEBOOK_ID` to preselect a notebook in the export picker and `OPEN_NOTEBOOK_UI_URL` (normally port 8502) for an **Open in Open Notebook** link.
+
+Both URLs must be reachable **from inside the local-transcriber container**. Use the other host's LAN address, a shared Docker network name, or `http://host.docker.internal:<port>` for services on the same host (the Compose files add the `host-gateway` mapping).
+
+```
+LLM_BASE_URL=http://192.168.1.40:8080/v1
+LLM_MODEL=meeting-llm
+OPEN_NOTEBOOK_URL=http://192.168.1.40:5055
+OPEN_NOTEBOOK_PASSWORD=...
+OPEN_NOTEBOOK_NOTEBOOK_ID=notebook:abc123
+OPEN_NOTEBOOK_UI_URL=http://192.168.1.40:8502
+```
+
+For Dockhand, supply the same names as stack variables. Leave `LLM_BASE_URL` empty to hide notes generation, and `OPEN_NOTEBOOK_URL` empty to keep notes local.
 
 ## Users and sign-in
 
@@ -349,7 +409,7 @@ A complete backup needs **both** the PostgreSQL `transcriber` database and the `
 
 The Progress page is based only on data needed for the app itself plus explicit actions. Correction counts compare the saved original Whisper transcript with the transcript the user deliberately edited and saved.
 
-Nothing is sent to a cloud transcription or analytics service by this application.
+Nothing is sent to a cloud transcription or analytics service by this application. Meeting notes are only sent to the notes model and Open Notebook addresses you configure; point both at services on your own network.
 
 ## Updating the voice-stack install
 
@@ -383,13 +443,14 @@ Admin accounts see separate **Progress** and **Tools** pages. Progress contains 
 - **Users** — add accounts, change display names, reset passwords, grant/revoke admin access, and deactivate/reactivate accounts. A password or permission change revokes that user's existing sessions.
 
 - **Speakers** — analyse saved conversations, manage remembered voices, and review relabelled samples.
+- **Meeting notes & Open Notebook** — generate ordered notes from an analysed conversation and export them with the transcript to Open Notebook.
 - **Voice recording retention** — controls stored audio only; transcripts/history remain.
 - **Backup & status** — checks PostgreSQL, the speech gateway and local audio storage, and can download an application backup ZIP.
 - **Recycle bin** — restore soft-deleted work or permanently remove it.
 
 Retention cleanup runs on application startup and whenever a recording finishes. Permanent delete removes the database history for that recording and its stored audio.
 
-The downloadable ZIP is a convenient app-level backup. It includes remembered speaker embeddings and speaker-analysis metadata when those features have been used, so treat backup ZIPs as sensitive data just like the stored voice recordings. For infrastructure/disaster recovery, retaining your normal PostgreSQL backup as well is still recommended.
+The downloadable ZIP is a convenient app-level backup. It includes remembered speaker embeddings, speaker-analysis metadata and generated meeting notes when those features have been used, so treat backup ZIPs as sensitive data just like the stored voice recordings. For infrastructure/disaster recovery, retaining your normal PostgreSQL backup as well is still recommended.
 
 ## Development
 

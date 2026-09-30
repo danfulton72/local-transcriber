@@ -26,6 +26,7 @@ from .config import settings
 from .db import get_db
 from .models import (
     AppSetting,
+    MeetingExport,
     Recording,
     RecordingAudioSegment,
     SpeakerAnalysis,
@@ -40,6 +41,7 @@ from .models import (
     UserSession,
 )
 from .services.gateway import gateway
+from .services.open_notebook import open_notebook
 from .services.progress import word_count
 from .services.retention import cleanup_expired_audio, get_retention_policy, set_retention_policy
 
@@ -462,6 +464,17 @@ async def permanently_delete(
     if recording_dir.exists():
         shutil.rmtree(recording_dir, ignore_errors=True)
 
+    # Permanent delete also removes the exported copy from Open Notebook.
+    export = (
+        await db.execute(select(MeetingExport).where(MeetingExport.recording_id == recording.id))
+    ).scalar_one_or_none()
+    if export is not None:
+        await open_notebook.delete_quietly(
+            source_id=export.open_notebook_source_id,
+            note_id=export.open_notebook_note_id,
+        )
+        await db.execute(delete(MeetingExport).where(MeetingExport.recording_id == recording.id))
+
     await db.execute(delete(UsageEvent).where(UsageEvent.recording_id == recording.id))
     await db.execute(delete(TranscriptRevision).where(TranscriptRevision.recording_id == recording.id))
     await db.execute(delete(TranscriptionChunk).where(TranscriptionChunk.recording_id == recording.id))
@@ -503,6 +516,9 @@ async def download_backup(
         )
     ).scalars().all()
     app_settings = (await db.execute(select(AppSetting).order_by(AppSetting.key))).scalars().all()
+    meeting_exports = (
+        await db.execute(select(MeetingExport).order_by(MeetingExport.created_at))
+    ).scalars().all()
 
     exported_at = datetime.now(timezone.utc)
     manifest = {
@@ -569,6 +585,15 @@ async def download_backup(
                 "end_seconds", "text", "edited_text", "updated_at",
             ])
             for row in speaker_turns
+        ],
+        "meeting_exports": [
+            _serialize_row(row, [
+                "id", "recording_id", "analysis_id", "status", "model",
+                "notes_markdown", "open_notebook_notebook_id",
+                "open_notebook_source_id", "open_notebook_note_id",
+                "notes_generated_at", "exported_at",
+            ])
+            for row in meeting_exports
         ],
         "settings": {row.key: row.value for row in app_settings},
     }
