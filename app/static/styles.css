@@ -3087,3 +3087,7 @@ button.link-button{padding-left:0;padding-right:0}
   .users-table th:nth-child(4),.users-table td:nth-child(4){display:none}
   .table-actions{white-space:normal}
 }
+
+.speaker-row-actions{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0}
+.speaker-row-actions button.quiet{min-height:34px;padding:.25rem .5rem}
+.sample-saved{margin:0;padding:.25rem .5rem;color:#1f5e44;font-weight:700;white-space:nowrap}

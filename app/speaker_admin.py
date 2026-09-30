@@ -937,6 +937,7 @@ async def list_speaker_profiles(
                     "id": str(sample.id),
                     "speech_seconds": round(sample.speech_seconds, 1) if sample.speech_seconds is not None else None,
                     "source_recording_id": str(sample.source_recording_id) if sample.source_recording_id else None,
+                    "source_detection_id": str(sample.source_detection_id) if sample.source_detection_id else None,
                     "source_recording_title": recording_titles.get(sample.source_recording_id, "Saved voice sample"),
                     "source_recording_owner": recording_owners.get(sample.source_recording_id),
                     "can_preview": bool(
