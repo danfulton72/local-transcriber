@@ -303,7 +303,10 @@
           <button id="meetingNotesDownloadButton" type="button">Download .md</button>
         </div>
         <p id="meetingNotesMessage" class="muted small-note" aria-live="polite">Choose a conversation above.</p>
-        <p id="meetingNotesLinkRow" class="small-note" hidden><a id="meetingNotesLink" href="#" target="_blank" rel="noopener">Open in Open Notebook ↗</a></p>
+        <p id="meetingNotesLinkRow" class="export-badge" hidden>
+          <span id="meetingNotesExportBadgeText"></span>
+          <a id="meetingNotesLink" href="#" target="_blank" rel="noopener" hidden>Open ↗</a>
+        </p>
         <pre id="meetingNotesPreview" class="meeting-notes-preview conversation-scroll" hidden></pre>
         <dialog id="notebookPickerDialog" class="notebook-picker" aria-labelledby="notebookPickerTitle">
           <form id="notebookPickerForm" method="dialog">

@@ -187,6 +187,8 @@ Record ─► Whisper ─► Tools → Speakers: analyse, then fix names
 2. In **Meeting notes & Open Notebook**, with the same conversation selected, press **Generate notes & export**. A picker loads the current list of notebooks live from Open Notebook; the default notebook (or the one this recording was last exported to) is preselected. Choose one and press **Export**. Progress is shown while each part is processed.
 3. **Generate notes only** keeps the notes in this app. **Re-send saved notes** opens the same picker and pushes the saved transcript and notes again without re-running the model, replacing the earlier copies (including when you pick a different notebook). **Download .md** saves the notes as Markdown.
 
+Export state is stored in the database. Conversations already in Open Notebook are marked **✓ Open Notebook** in the conversation list, and the panel shows which notebook they went to and when. For these, **Re-send saved notes** becomes the main button and **Generate notes & export** becomes **Regenerate & replace**. If you regenerate notes without exporting, the panel warns that newer notes have not been sent yet.
+
 Permanently deleting a recording from the recycle bin also deletes its source and note from Open Notebook (best effort). Soft-deleting, audio retention and audio deletion leave exported notes alone.
 
 ### Notes model (llama.cpp)

@@ -134,6 +134,7 @@
     meetingNotesResendButton: $('meetingNotesResendButton'), meetingNotesDownloadButton: $('meetingNotesDownloadButton'),
     meetingNotesMessage: $('meetingNotesMessage'), meetingNotesPreview: $('meetingNotesPreview'),
     meetingNotesLinkRow: $('meetingNotesLinkRow'), meetingNotesLink: $('meetingNotesLink'),
+    meetingNotesExportBadgeText: $('meetingNotesExportBadgeText'),
     userList: $('userList'), refreshUsersButton: $('refreshUsersButton'), createUserForm: $('createUserForm'),
     newUsername: $('newUsername'), newUserDisplayName: $('newUserDisplayName'), newUserPassword: $('newUserPassword'), newUserIsAdmin: $('newUserIsAdmin'),
     createUserButton: $('createUserButton'), userAdminMessage: $('userAdminMessage'),
@@ -2568,7 +2569,9 @@
         option.value = recording.id;
         const duration = recording.duration_seconds ? ' · ' + formatTime(recording.duration_seconds) : '';
         const owner = recording.owner_display_name || recording.owner_username || 'Unknown user';
-        option.textContent = owner + ' · ' + (recording.title || 'Recording') + ' · ' + friendlyDate(recording.created_at) + duration;
+        option.dataset.label = owner + ' · ' + (recording.title || 'Recording') + ' · ' + friendlyDate(recording.created_at) + duration;
+        option.dataset.exported = recording.open_notebook_exported ? 'true' : 'false';
+        option.textContent = option.dataset.label + (recording.open_notebook_exported ? ' · ✓ Open Notebook' : '');
         els.speakerRecordingSelect.appendChild(option);
       }
       if ([...els.speakerRecordingSelect.options].some((option) => option.value === selected)) {
@@ -3037,14 +3040,27 @@
     const hasNotes = Boolean(result?.has_notes);
     const matches = result && result.recording_id === recordingId;
 
+    const exported = Boolean(matches && result.exported);
+
+    // Once a conversation is in Open Notebook, re-sending becomes the main
+    // action; regenerating is still available (e.g. after fixing names).
+    els.meetingNotesExportButton.textContent = exported ? 'Regenerate & replace' : 'Generate notes & export';
+    els.meetingNotesResendButton.textContent = exported ? 'Re-send saved notes' : 'Export saved notes';
+    els.meetingNotesExportButton.classList.toggle('primary', !exported);
+    els.meetingNotesResendButton.classList.toggle('primary', exported);
+    els.meetingNotesResendButton.hidden = !(matches && hasNotes);
+
     els.meetingNotesExportButton.disabled = !recordingId || busy || !llmReady || !notebookReady;
     els.meetingNotesGenerateButton.disabled = !recordingId || busy || !llmReady;
     els.meetingNotesResendButton.disabled = !recordingId || busy || !notebookReady || !(matches && hasNotes);
     els.meetingNotesDownloadButton.disabled = !(matches && hasNotes);
     els.meetingNotesExportButton.title = !llmReady
       ? 'Set LLM_BASE_URL to your llama-server'
-      : !notebookReady ? 'Set OPEN_NOTEBOOK_URL to export' : '';
-    els.meetingNotesResendButton.title = 'Send the saved transcript and notes again without re-running the model';
+      : !notebookReady ? 'Set OPEN_NOTEBOOK_URL to export'
+        : exported ? 'Run the model again and replace the copy in Open Notebook' : '';
+    els.meetingNotesResendButton.title = exported
+      ? 'Send the saved transcript and notes again without re-running the model, replacing the copy in Open Notebook'
+      : 'Send the saved transcript and notes to Open Notebook without re-running the model';
   }
 
   function renderMeetingNotes(result) {
@@ -3072,12 +3088,33 @@
 
     const uiUrl = state.meetingNotesStatus?.open_notebook?.ui_url;
     const notebookId = result?.open_notebook_notebook_id;
-    const exported = Boolean(result?.open_notebook_note_id);
-    els.meetingNotesLinkRow.hidden = !(uiUrl && notebookId && exported);
+    const exported = Boolean(result?.exported);
+    els.meetingNotesLinkRow.hidden = !exported;
+    els.meetingNotesLinkRow.classList.toggle('outdated', Boolean(result?.export_outdated));
+    if (exported) {
+      const where = result.open_notebook_notebook_name ? ' · ' + result.open_notebook_notebook_name : '';
+      const when = result.exported_at ? ' · sent ' + friendlyDate(result.exported_at) : '';
+      els.meetingNotesExportBadgeText.textContent = result.export_outdated
+        ? '⚠ In Open Notebook' + where + when + ' · newer notes not sent yet'
+        : '✓ In Open Notebook' + where + when;
+    }
+    els.meetingNotesLink.hidden = !(uiUrl && notebookId && exported);
     if (uiUrl && notebookId) {
       els.meetingNotesLink.href = uiUrl + '/notebooks/' + encodeURIComponent(notebookId);
     }
+    markRecordingExported(result);
     updateMeetingNotesButtons();
+  }
+
+  // Keep the conversation list's "✓ Open Notebook" marker in step with the
+  // latest result without reloading the whole list.
+  function markRecordingExported(result) {
+    if (!result?.recording_id) return;
+    const option = [...els.speakerRecordingSelect.options].find((item) => item.value === result.recording_id);
+    if (!option || !option.dataset.label) return;
+    const exported = Boolean(result.exported);
+    option.dataset.exported = exported ? 'true' : 'false';
+    option.textContent = option.dataset.label + (exported ? ' · ✓ Open Notebook' : '');
   }
 
   async function loadMeetingNotes() {

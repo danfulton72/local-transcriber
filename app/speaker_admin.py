@@ -13,6 +13,7 @@ from .auth import actor_user_id, require_admin
 from .config import settings
 from .db import SessionLocal, get_db
 from .models import (
+    MeetingExport,
     Recording,
     User,
     SpeakerAnalysis,
@@ -433,6 +434,18 @@ async def speaker_recordings(
             .limit(limit)
         )
     ).all()
+    recording_ids = [recording.id for recording, _ in rows]
+    exported_ids = set(
+        (
+            await db.execute(
+                select(MeetingExport.recording_id).where(
+                    MeetingExport.recording_id.in_(recording_ids),
+                    MeetingExport.open_notebook_note_id.is_not(None),
+                    MeetingExport.exported_at.is_not(None),
+                )
+            )
+        ).scalars().all()
+    ) if recording_ids else set()
     return [
         {
             "id": str(recording.id),
@@ -443,6 +456,7 @@ async def speaker_recordings(
             "owner_id": str(user.id),
             "owner_username": user.username,
             "owner_display_name": user.display_name,
+            "open_notebook_exported": recording.id in exported_ids,
         }
         for recording, user in rows
     ]
