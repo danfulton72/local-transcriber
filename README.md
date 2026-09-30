@@ -442,7 +442,7 @@ Admin accounts see separate **Progress** and **Tools** pages. Progress contains 
 
 - **Users** — add accounts, change display names, reset passwords, grant/revoke admin access, and deactivate/reactivate accounts. A password or permission change revokes that user's existing sessions.
 
-- **Speakers** — analyse saved conversations, manage remembered voices, and review relabelled samples.
+- **Speakers** — analyse saved conversations, manage remembered voices, and review relabelled samples. The relabelled list opens on **Needs review**; approved or excluded samples move to **All history**, which can be filtered by date range and status, and **Back to review** returns one to the queue.
 - **Meeting notes & Open Notebook** — generate ordered notes from an analysed conversation and export them with the transcript to Open Notebook.
 - **Voice recording retention** — controls stored audio only; transcripts/history remain.
 - **Backup & status** — checks PostgreSQL, the speech gateway and local audio storage, and can download an application backup ZIP.

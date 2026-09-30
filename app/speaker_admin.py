@@ -902,15 +902,58 @@ async def list_speaker_profiles(
     return result
 
 
-@router.get("/relabels")
-async def list_relabel_samples(
+RELABEL_STATUS_FILTERS = {
+    "pending": ["pending"],
+    "approved": ["approved"],
+    "excluded": ["excluded"],
+    "reviewed": ["approved", "excluded"],
+}
+
+
+@router.get("/relabels/summary")
+async def relabel_summary(
     db: AsyncSession = Depends(get_db),
-) -> list[dict]:
+) -> dict:
     rows = (
         await db.execute(
-            select(SpeakerRelabelSample).order_by(SpeakerRelabelSample.created_at.desc())
+            select(SpeakerRelabelSample.status, func.count())
+            .group_by(SpeakerRelabelSample.status)
         )
-    ).scalars().all()
+    ).all()
+    counts = {status: int(count) for status, count in rows}
+    return {
+        "pending": counts.get("pending", 0),
+        "approved": counts.get("approved", 0),
+        "excluded": counts.get("excluded", 0),
+        "total": sum(counts.values()),
+    }
+
+
+@router.get("/relabels")
+async def list_relabel_samples(
+    status: str | None = Query(default=None, pattern="^(pending|approved|excluded|reviewed)$"),
+    created_from: datetime | None = Query(default=None),
+    created_to: datetime | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Relabelled samples, newest first.
+
+    With no filters every sample is returned. ``status`` narrows to one review
+    state ("reviewed" = approved or excluded); ``created_from``/``created_to``
+    bound when the correction was made (inclusive, timezone-aware).
+    """
+    query = select(SpeakerRelabelSample).order_by(SpeakerRelabelSample.created_at.desc())
+    if status:
+        query = query.where(SpeakerRelabelSample.status.in_(RELABEL_STATUS_FILTERS[status]))
+    if created_from is not None:
+        if created_from.tzinfo is None:
+            created_from = created_from.replace(tzinfo=timezone.utc)
+        query = query.where(SpeakerRelabelSample.created_at >= created_from)
+    if created_to is not None:
+        if created_to.tzinfo is None:
+            created_to = created_to.replace(tzinfo=timezone.utc)
+        query = query.where(SpeakerRelabelSample.created_at <= created_to)
+    rows = (await db.execute(query)).scalars().all()
     recording_ids = {row.recording_id for row in rows}
     recording_rows = (
         await db.execute(

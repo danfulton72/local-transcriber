@@ -74,6 +74,7 @@
     currentSpeakerAnalysisId: null,
     currentSpeakerAnalysisRecordingId: null,
     speakerPolling: false,
+    relabelView: 'pending',
     meetingNotesStatus: null,
     meetingNotesRecordingId: null,
     meetingNotesPolling: false,
@@ -126,6 +127,10 @@
     speakerAnalysisMessage: $('speakerAnalysisMessage'), speakerAnalysisResult: $('speakerAnalysisResult'),
     speakerProfilesList: $('speakerProfilesList'), refreshSpeakerProfilesButton: $('refreshSpeakerProfilesButton'),
     relabelSamplesList: $('relabelSamplesList'), refreshRelabelSamplesButton: $('refreshRelabelSamplesButton'),
+    relabelPendingViewButton: $('relabelPendingViewButton'), relabelHistoryViewButton: $('relabelHistoryViewButton'),
+    relabelHistoryFilters: $('relabelHistoryFilters'), relabelFromDate: $('relabelFromDate'),
+    relabelToDate: $('relabelToDate'), relabelStatusFilter: $('relabelStatusFilter'),
+    relabelClearFiltersButton: $('relabelClearFiltersButton'), relabelSamplesSummary: $('relabelSamplesSummary'),
     meetingNotesServiceStatus: $('meetingNotesServiceStatus'),
     notebookPickerDialog: $('notebookPickerDialog'), notebookPickerForm: $('notebookPickerForm'),
     notebookPickerMessage: $('notebookPickerMessage'), notebookPickerList: $('notebookPickerList'),
@@ -2833,10 +2838,55 @@
     }
   }
 
+  // Local calendar day -> ISO instant, so the date range follows the admin's clock.
+  function localDayBoundary(value, endOfDay) {
+    if (!value) return null;
+    const [year, month, day] = value.split('-').map(Number);
+    const date = endOfDay
+      ? new Date(year, month - 1, day, 23, 59, 59, 999)
+      : new Date(year, month - 1, day, 0, 0, 0, 0);
+    return date.toISOString();
+  }
+
+  function setRelabelView(view) {
+    state.relabelView = view;
+    const history = view === 'history';
+    els.relabelPendingViewButton.setAttribute('aria-pressed', String(!history));
+    els.relabelHistoryViewButton.setAttribute('aria-pressed', String(history));
+    els.relabelHistoryFilters.hidden = !history;
+    loadRelabelSamples();
+  }
+
   async function loadRelabelSamples() {
     if (!els.relabelSamplesList) return;
+    const params = new URLSearchParams();
+    if (state.relabelView === 'history') {
+      if (els.relabelStatusFilter.value) params.set('status', els.relabelStatusFilter.value);
+      const from = localDayBoundary(els.relabelFromDate.value, false);
+      const to = localDayBoundary(els.relabelToDate.value, true);
+      if (from) params.set('created_from', from);
+      if (to) params.set('created_to', to);
+    } else {
+      params.set('status', 'pending');
+    }
     try {
-      const samples = await api('/api/admin/speakers/relabels', { cache: 'no-store' });
+      const [samples, summary] = await Promise.all([
+        api('/api/admin/speakers/relabels?' + params.toString(), { cache: 'no-store' }),
+        api('/api/admin/speakers/relabels/summary', { cache: 'no-store' }),
+      ]);
+      els.relabelPendingViewButton.textContent = 'Needs review (' + summary.pending + ')';
+      els.relabelHistoryViewButton.textContent = 'All history (' + summary.total + ')';
+      if (state.relabelView === 'history') {
+        const filtered = Boolean(params.toString());
+        els.relabelSamplesSummary.textContent = filtered
+          ? samples.length + ' of ' + summary.total + ' samples match these filters.'
+          : 'All ' + summary.total + ' samples · ' + summary.approved + ' approved · ' +
+            summary.excluded + ' excluded · ' + summary.pending + ' waiting for review.';
+      } else {
+        els.relabelSamplesSummary.textContent = summary.pending
+          ? 'Approve or exclude each sample; reviewed samples move to All history.'
+          : '';
+      }
       renderRelabelSamples(samples);
     } catch (error) {
       els.relabelSamplesList.replaceChildren();
@@ -2850,7 +2900,9 @@
     els.relabelSamplesList.replaceChildren();
     if (!samples.length) {
       const p = document.createElement('p'); p.className = 'muted';
-      p.textContent = 'No manually relabelled voice samples yet.';
+      p.textContent = state.relabelView === 'history'
+        ? 'No relabelled samples match these filters.'
+        : 'Nothing waiting for review. Reviewed samples are in All history.';
       els.relabelSamplesList.appendChild(p);
       return;
     }
@@ -2864,8 +2916,9 @@
       detail.textContent =
         (sample.recording_owner ? sample.recording_owner + ' · ' : '') +
         (sample.recording_title || 'Recording') + ' · ' +
-        formatTime(sample.start_seconds) + ' · ' +
-        friendlyDate(sample.created_at);
+        formatTime(sample.start_seconds) + ' · relabelled ' +
+        friendlyDate(sample.created_at) +
+        (sample.reviewed_at && sample.status !== 'pending' ? ' · reviewed ' + friendlyDate(sample.reviewed_at) : '');
       const status = document.createElement('span');
       status.className = 'speaker-match ' + (sample.status === 'approved' ? 'matched' : '');
       status.textContent = sample.status === 'approved'
@@ -2895,6 +2948,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'approved' }),
         });
+        if (state.relabelView === 'pending') showToast('Approved · moved to All history');
         await loadRelabelSamples();
       });
 
@@ -2907,6 +2961,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'excluded' }),
         });
+        if (state.relabelView === 'pending') showToast('Excluded · moved to All history');
         await loadRelabelSamples();
       });
 
@@ -2921,7 +2976,20 @@
         if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
       });
 
-      actions.append(hear, approve, exclude, undo);
+      const reopen = document.createElement('button'); reopen.type = 'button';
+      reopen.textContent = 'Back to review';
+      reopen.title = 'Return this sample to the Needs review queue';
+      reopen.hidden = sample.status === 'pending';
+      reopen.addEventListener('click', async () => {
+        await api('/api/admin/speakers/relabels/' + sample.id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'pending' }),
+        });
+        await loadRelabelSamples();
+      });
+
+      actions.append(hear, approve, exclude, reopen, undo);
       row.append(info, actions);
       els.relabelSamplesList.appendChild(row);
     }
@@ -3704,6 +3772,17 @@
   els.stopActAsButton?.addEventListener('click', () => switchActAs(''));
     els.progressDays.addEventListener('change', () => { if (isAdmin()) loadProgress(); });
   els.runSpeakerAnalysisButton.addEventListener('click', runSpeakerAnalysis);
+  els.relabelPendingViewButton.addEventListener('click', () => setRelabelView('pending'));
+  els.relabelHistoryViewButton.addEventListener('click', () => setRelabelView('history'));
+  for (const control of [els.relabelFromDate, els.relabelToDate, els.relabelStatusFilter]) {
+    control.addEventListener('change', () => loadRelabelSamples());
+  }
+  els.relabelClearFiltersButton.addEventListener('click', () => {
+    els.relabelFromDate.value = '';
+    els.relabelToDate.value = '';
+    els.relabelStatusFilter.value = '';
+    loadRelabelSamples();
+  });
   els.speakerRecordingSelect.addEventListener('change', () => loadMeetingNotes());
   els.meetingNotesExportButton.addEventListener('click', () => startMeetingNotes({ regenerate: true, exportToNotebook: true }));
   els.meetingNotesGenerateButton.addEventListener('click', () => startMeetingNotes({ regenerate: true, exportToNotebook: false }));
