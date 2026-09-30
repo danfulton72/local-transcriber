@@ -68,8 +68,32 @@ KEEP_LIVE_CHUNK_AUDIO=false
 PYANNOTE_MODEL=pyannote/speaker-diarization-community-1
 ```
 
+Optional, for **Tools → Meeting notes & Open Notebook** (leave `LLM_BASE_URL`
+unset to hide notes, and `OPEN_NOTEBOOK_URL` unset to keep notes local):
+
+```text
+LLM_BASE_URL=http://<llama-server-host>:8080/v1
+LLM_MODEL=meeting-llm
+LLM_API_KEY=
+LLM_CONTEXT_TOKENS=32768
+LLM_CHUNK_TOKENS=12000
+LLM_MAX_OUTPUT_TOKENS=4096
+LLM_DISABLE_THINKING=true
+NOTES_TIMEZONE=Europe/London
+OPEN_NOTEBOOK_URL=http://<open-notebook-host>:5055
+OPEN_NOTEBOOK_PASSWORD=...
+OPEN_NOTEBOOK_NOTEBOOK_ID=
+OPEN_NOTEBOOK_UI_URL=http://<open-notebook-host>:8502
+```
+
+These URLs are used from inside the `local-transcriber` container, so use a
+LAN address, or `host.docker.internal` for a service running directly on the
+Docker host. `LLM_MODEL` must match llama-server's `--alias`, and
+`LLM_CONTEXT_TOKENS` its `-c`.
+
 Mark `DATABASE_URL`, `DEFAULT_PASSWORD` and `HF_TOKEN` as secrets in
-Dockhand. `P4_UUID` is not secret.
+Dockhand, and also `OPEN_NOTEBOOK_PASSWORD` and `LLM_API_KEY` if you use them.
+`P4_UUID` is not secret.
 
 The Compose file deliberately does not use `env_file:`. Dockhand resolves
 the stack variables and sends the rendered environment to Hawser.

@@ -408,3 +408,32 @@ def test_notebook_list_reports_open_notebook_errors(services, monkeypatch):
         response = client.get("/api/admin/meeting-notes/notebooks")
         assert response.status_code == 502
         assert "OPEN_NOTEBOOK_PASSWORD" in response.json()["detail"]
+
+
+def test_status_reports_unreachable_services_quickly(services, monkeypatch):
+    import time
+    from app.main import app
+
+    def refused(request):
+        raise httpx.ConnectError("connection refused", request=request)
+
+    monkeypatch.setattr(llm_module, "http_transport", httpx.MockTransport(refused))
+    monkeypatch.setattr(open_notebook_module, "http_transport", httpx.MockTransport(refused))
+    with TestClient(app) as client:
+        login_admin(client)
+        started = time.perf_counter()
+        status = client.get("/api/admin/meeting-notes/status").json()
+        assert time.perf_counter() - started < 5
+        assert status["llm"]["reachable"] is False
+        assert "connection refused" in status["llm"]["error"]
+        assert status["open_notebook"]["reachable"] is False
+
+
+def test_app_shell_is_revalidated_but_api_is_untouched():
+    from app.main import app
+
+    with TestClient(app) as client:
+        for path in ("/", "/app.js", "/styles.css"):
+            assert client.get(path).headers.get("cache-control") == "no-cache", path
+        login_admin(client)
+        assert client.get("/api/recordings").headers.get("cache-control") != "no-cache"

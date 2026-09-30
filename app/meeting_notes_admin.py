@@ -1,5 +1,6 @@
 """Admin-only meeting notes generation and export to Open Notebook."""
 
+import asyncio
 import logging
 import time
 import uuid
@@ -36,6 +37,7 @@ router = APIRouter(
 )
 
 ACTIVE_STATUSES = {"queued", "processing"}
+STATUS_TIMEOUT_SECONDS = 5.0
 
 
 class MeetingNotesRequest(BaseModel):
@@ -214,32 +216,45 @@ async def process_meeting_export(export_id: uuid.UUID, notebook_label: str | Non
             await db.commit()
 
 
-@router.get("/status")
-async def meeting_notes_status() -> dict:
-    llm_info: dict = {"configured": llm.configured, "reachable": False, "model": settings.llm_model}
-    if llm.configured:
-        try:
-            models = await llm.models()
-            llm_info["reachable"] = True
-            llm_info["model_available"] = not models or settings.llm_model in models
-            llm_info["models"] = models
-        except (httpx.HTTPError, OSError, ValueError):
-            pass
+async def _probe_llm() -> dict:
+    info: dict = {"configured": llm.configured, "reachable": False, "model": settings.llm_model}
+    if not llm.configured:
+        return info
+    try:
+        models = await asyncio.wait_for(llm.models(), timeout=STATUS_TIMEOUT_SECONDS)
+        info["reachable"] = True
+        info["model_available"] = not models or settings.llm_model in models
+        info["models"] = models
+    except (asyncio.TimeoutError, httpx.HTTPError, OSError, ValueError) as exc:
+        info["error"] = str(exc)[:300] or "timed out"
+    return info
 
-    notebook_info: dict = {
+
+async def _probe_open_notebook() -> dict:
+    info: dict = {
         "configured": open_notebook.configured,
         "reachable": False,
         "default_notebook_id": settings.open_notebook_notebook_id or None,
         "ui_url": settings.open_notebook_ui_url.strip().rstrip("/") or None,
         "notebook_count": 0,
     }
-    if open_notebook.configured:
-        try:
-            # Reachability only; the picker fetches the live list on export.
-            notebook_info["notebook_count"] = len(await open_notebook.notebooks())
-            notebook_info["reachable"] = True
-        except (httpx.HTTPError, OSError, ValueError, OpenNotebookError) as exc:
-            notebook_info["error"] = str(exc)[:300]
+    if not open_notebook.configured:
+        return info
+    try:
+        # Reachability only; the picker fetches the live list on export.
+        notebooks = await asyncio.wait_for(open_notebook.notebooks(), timeout=STATUS_TIMEOUT_SECONDS)
+        info["notebook_count"] = len(notebooks)
+        info["reachable"] = True
+    except (asyncio.TimeoutError, httpx.HTTPError, OSError, ValueError, OpenNotebookError) as exc:
+        info["error"] = str(exc)[:300] or "timed out"
+    return info
+
+
+@router.get("/status")
+async def meeting_notes_status() -> dict:
+    # Both probes run at once and are capped, so an unreachable host shows as
+    # offline within a few seconds instead of holding the panel on "Checking".
+    llm_info, notebook_info = await asyncio.gather(_probe_llm(), _probe_open_notebook())
     return {"llm": llm_info, "open_notebook": notebook_info}
 
 

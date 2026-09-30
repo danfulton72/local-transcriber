@@ -79,6 +79,22 @@ async def startup() -> None:
 
 
 @app.middleware("http")
+async def revalidate_app_shell(request, call_next):
+    # StaticFiles sends an ETag but no Cache-Control, which lets browsers keep
+    # app.js/styles.css heuristically for hours after a deploy. "no-cache"
+    # makes them revalidate every load; unchanged files come back as a 304.
+    response = await call_next(request)
+    path = request.url.path
+    if (
+        request.method == "GET"
+        and not path.startswith("/api/")
+        and "cache-control" not in response.headers
+    ):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.middleware("http")
 async def authenticated_api(request, call_next):
     path = request.url.path
     if path.startswith("/api/") and not path.startswith("/api/auth/"):
