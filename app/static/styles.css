@@ -3120,3 +3120,9 @@ button.link-button{padding-left:0;padding-right:0}
 }
 .speaker-emptied{background:transparent;border:1px dashed var(--line);padding:6px 12px}
 .speaker-emptied .small-note{margin:0}
+
+/* Turn confidence */
+.turn-filters{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+.turn-confidence-hint{margin:0 0 4px}
+.turn-meta .chip{font-size:.7rem}
+.closest-voice{margin:0}

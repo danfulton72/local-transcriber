@@ -80,7 +80,7 @@
     meetings: {
       recordings: [], filter: 'todo', selectedId: null, analysis: null, notes: null,
       analysingId: null, analysisStage: '', analysisError: '', showTurns: false,
-      notesPolling: null, jobKind: null, turnFilter: '',
+      notesPolling: null, jobKind: null, turnFilter: '', turnConfidence: '',
     },
     speakerTurns: [],
     speakerProfiles: [],
@@ -3547,6 +3547,12 @@
     return button;
   }
 
+  function match_label(detection) {
+    if (detection.match_source === 'confirmed') return 'Confirmed by you';
+    if (detection.match_score != null) return 'Matched ' + percent(detection.match_score);
+    return 'Matched';
+  }
+
   function matchedSpeakerRow(analysis, detection, person) {
     const row = document.createElement('div'); row.className = 'speaker-row speaker-matched';
     const info = document.createElement('div'); info.className = 'speaker-row-info';
@@ -3554,7 +3560,8 @@
     const profile = (state.speakerProfiles || []).find((item) => item.id === detection.profile_id);
     const samples = profile ? profile.sample_count + '/' + profile.max_samples + ' samples' : '';
     const meta = document.createElement('span'); meta.className = 'muted small-note';
-    meta.textContent = ['Matched', speechLength(person ? person.seconds : detection.speech_seconds), samples].filter(Boolean).join(' · ');
+    const how = match_label(detection);
+    meta.textContent = [how, speechLength(person ? person.seconds : detection.speech_seconds), samples].filter(Boolean).join(' · ');
     info.append(name, meta);
 
     const actions = document.createElement('div'); actions.className = 'speaker-row-actions';
@@ -3615,6 +3622,13 @@
     meta.textContent = person && person.turns === 0 ? 'No turns left after corrections' : speechLength(person ? person.seconds : detection.speech_seconds);
     info.append(name, meta);
     top.append(info, hearButton(analysis, detection));
+
+    let closestNote = null;
+    if (detection.closest_profile_name && detection.closest_score > 0) {
+      closestNote = document.createElement('p'); closestNote.className = 'muted small-note closest-voice';
+      closestNote.textContent = 'Closest remembered voice: ' + detection.closest_profile_name + ' (' + percent(detection.closest_score)
+        + ', needs ' + percent(analysis.match_threshold || 0.78) + ' to match)';
+    }
 
     const pickId = 'voicePick-' + detection.id;
     const pickLabel = document.createElement('label'); pickLabel.className = 'admin-label'; pickLabel.htmlFor = pickId;
@@ -3684,7 +3698,7 @@
       }
     });
 
-    card.append(top, pickLabel, pick, newLabel, actions);
+    card.append(top, ...(closestNote ? [closestNote] : []), pickLabel, pick, newLabel, actions);
     return card;
   }
 
@@ -4071,6 +4085,37 @@
     }
   }
 
+  // Voice-match confidence. Scores are per detected speaker (the analyzer makes
+  // one voiceprint per speaker per meeting), so a speaker's turns share one score.
+  const STRONG_MATCH = 0.85;
+  const percent = (score) => Math.round(Number(score || 0) * 100) + '%';
+
+  function turnConfidence(turn) {
+    if (turn.match_source === 'corrected') return { band: 'human', chip: 'chip-analysed', text: 'Set by you' };
+    if (turn.match_source === 'confirmed') return { band: 'human', chip: 'chip-analysed', text: 'Confirmed by you' };
+    if (turn.match_source === 'matched') {
+      const strong = Number(turn.match_score || 0) >= STRONG_MATCH;
+      return {
+        band: strong ? 'strong' : 'weak',
+        chip: strong ? 'chip-analysed' : 'chip-notes',
+        text: 'Voice match ' + percent(turn.match_score) + (strong ? '' : ' · check'),
+      };
+    }
+    const closest = turn.closest_profile_name && turn.closest_score > 0
+      ? ' · closest ' + turn.closest_profile_name + ' ' + percent(turn.closest_score)
+      : '';
+    return { band: 'none', chip: 'chip-todo', text: 'No voice match' + closest };
+  }
+
+  const CONFIDENCE_FILTERS = [
+    ['', 'Any confidence', () => true],
+    ['check', 'Needs checking (weak or no match)', (band) => band === 'weak' || band === 'none'],
+    ['strong', 'Strong match (85%+)', (band) => band === 'strong'],
+    ['weak', 'Weak match (under 85%)', (band) => band === 'weak'],
+    ['none', 'No voice match', (band) => band === 'none'],
+    ['human', 'Set or confirmed by you', (band) => band === 'human'],
+  ];
+
   function turnSpeakerOptions(analysis, turn) {
     const select = document.createElement('select');
     select.setAttribute('aria-label', 'Who said this');
@@ -4135,10 +4180,36 @@
     filter.value = people.some((person) => nameKey(person.name) === state.meetings.turnFilter) ? state.meetings.turnFilter : '';
     filter.addEventListener('change', () => { state.meetings.turnFilter = filter.value; renderTurns(analysis); });
     filterLabel.appendChild(filter);
-    els.speakerAnalysisResult.appendChild(filterLabel);
+
+    const bands = new Map(analysis.turns.map((turn) => [turn.id, turnConfidence(turn).band]));
+    const confidenceLabel = document.createElement('label'); confidenceLabel.className = 'inline-select turns-filter';
+    confidenceLabel.textContent = 'Confidence';
+    const confidence = document.createElement('select');
+    for (const [value, text, test] of CONFIDENCE_FILTERS) {
+      const count = analysis.turns.filter((turn) => test(bands.get(turn.id))).length;
+      const option = document.createElement('option'); option.value = value;
+      option.textContent = text + ' (' + count + ')';
+      option.disabled = Boolean(value) && !count;
+      confidence.appendChild(option);
+    }
+    confidence.value = CONFIDENCE_FILTERS.some(([value]) => value === state.meetings.turnConfidence) ? state.meetings.turnConfidence : '';
+    confidence.addEventListener('change', () => { state.meetings.turnConfidence = confidence.value; renderTurns(analysis); });
+    confidenceLabel.appendChild(confidence);
+
+    const filters = document.createElement('div'); filters.className = 'turn-filters';
+    filters.append(filterLabel, confidenceLabel);
+    els.speakerAnalysisResult.appendChild(filters);
+    if (analysis.match_threshold) {
+      const hint = document.createElement('p'); hint.className = 'muted small-note turn-confidence-hint';
+      hint.textContent = 'Voice match is how closely a speaker\u2019s voice matches a remembered voice across the whole meeting (a speaker counts as matched at '
+        + percent(analysis.match_threshold) + '). Every turn from the same detected speaker shares that score.';
+      els.speakerAnalysisResult.appendChild(hint);
+    }
 
     const list = document.createElement('ol'); list.className = 'turn-list';
-    const shown = analysis.turns.filter((turn) => !filter.value || nameKey(turn.display_name) === filter.value);
+    const confidenceTest = (CONFIDENCE_FILTERS.find(([value]) => value === confidence.value) || CONFIDENCE_FILTERS[0])[2];
+    const shown = analysis.turns.filter((turn) => (!filter.value || nameKey(turn.display_name) === filter.value)
+      && confidenceTest(bands.get(turn.id)));
     for (const turn of shown) {
       const row = document.createElement('li'); row.className = 'turn-row';
       if (turn.identity_corrected) row.classList.add('identity-corrected');
@@ -4160,7 +4231,13 @@
       const who = document.createElement('strong'); who.textContent = turn.display_name;
       const when = document.createElement('span'); when.className = 'muted small-note';
       when.textContent = formatTime(turn.start_seconds) + ' · ' + speechLength(turn.end_seconds - turn.start_seconds);
-      meta.append(who, when);
+      const level = turnConfidence(turn);
+      const chip = document.createElement('span'); chip.className = 'chip ' + level.chip;
+      chip.textContent = level.text;
+      chip.title = level.band === 'human'
+        ? 'You set who said this.'
+        : 'Voice match for ' + turn.detected_display_name + ' across the whole meeting, not just this turn.';
+      meta.append(who, chip, when);
       if (turn.identity_corrected) {
         const was = document.createElement('span'); was.className = 'muted small-note';
         was.textContent = 'was ' + turn.detected_display_name;
@@ -4228,7 +4305,7 @@
       list.appendChild(row);
     }
     if (!shown.length) {
-      const li = document.createElement('li'); li.className = 'muted'; li.textContent = 'No turns for this person.';
+      const li = document.createElement('li'); li.className = 'muted'; li.textContent = 'No turns match these filters.';
       list.appendChild(li);
     }
     els.speakerAnalysisResult.appendChild(list);

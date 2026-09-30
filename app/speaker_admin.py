@@ -128,6 +128,42 @@ def profile_quality(sample_count: int) -> str:
     return "starter"
 
 
+def closest_profile(
+    embedding: list[float],
+    profiles: list[SpeakerProfile],
+    samples_by_profile: dict[uuid.UUID, list[SpeakerProfileSample]] | None = None,
+) -> tuple[SpeakerProfile | None, float | None]:
+    """The most similar remembered voice, whether or not it clears the match threshold."""
+    best = None
+    best_score = -1.0
+    for profile in profiles:
+        bank = (samples_by_profile or {}).get(profile.id, [])
+        sample_embeddings = [sample.embedding or [] for sample in bank]
+        score = (
+            robust_sample_score(embedding, sample_embeddings)
+            if sample_embeddings
+            else cosine_similarity(embedding, profile.embedding or [])
+        )
+        if score > best_score:
+            best, best_score = profile, score
+    if best is None or best_score < 0:
+        return None, None
+    return best, best_score
+
+
+def match_source(detection: SpeakerDetection | None, confirmed_ids: set[uuid.UUID]) -> str:
+    """How a detected speaker got its name.
+
+    "confirmed": a person saved this speaker's clip as a voice sample;
+    "matched": recognised automatically by voice; "unmatched": neither.
+    """
+    if detection is None or not detection.profile_id:
+        return "unmatched"
+    if detection.id in confirmed_ids:
+        return "confirmed"
+    return "matched"
+
+
 def best_profile(
     embedding: list[float],
     profiles: list[SpeakerProfile],
@@ -202,6 +238,18 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
     }
     profiles = (await db.execute(select(SpeakerProfile))).scalars().all()
     profiles_by_id = {item.id: item for item in profiles}
+    samples_by_profile: dict[uuid.UUID, list[SpeakerProfileSample]] = {}
+    confirmed_ids: set[uuid.UUID] = set()
+    for sample in (await db.execute(select(SpeakerProfileSample))).scalars().all():
+        samples_by_profile.setdefault(sample.profile_id, []).append(sample)
+        if sample.source_detection_id:
+            confirmed_ids.add(sample.source_detection_id)
+    # Closest remembered voice for every detected speaker, scored against today's
+    # voiceprints (unmatched speakers keep no score from analysis time).
+    closest: dict[uuid.UUID, tuple[SpeakerProfile | None, float | None]] = {
+        item.id: closest_profile(item.embedding or [], profiles, samples_by_profile)
+        for item in detections
+    }
     speech_by_detection: dict[uuid.UUID, float] = {}
     longest_turn_by_detection: dict[uuid.UUID, float] = {}
     for turn in turns:
@@ -225,6 +273,7 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
         "speaker_count": analysis.speaker_count,
         "processing_seconds": round(analysis.processing_seconds or 0, 2),
         "error": analysis.error,
+        "match_threshold": settings.speaker_match_threshold,
         "created_at": analysis.created_at.isoformat(),
         "completed_at": analysis.completed_at.isoformat() if analysis.completed_at else None,
         "detections": [
@@ -235,6 +284,9 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
                 "display_name": item.display_name,
                 "profile_id": str(item.profile_id) if item.profile_id else None,
                 "match_score": round(item.match_score, 3) if item.match_score is not None else None,
+                "match_source": match_source(item, confirmed_ids),
+                "closest_profile_name": closest[item.id][0].name if closest[item.id][0] else None,
+                "closest_score": round(closest[item.id][1], 3) if closest[item.id][1] is not None else None,
                 "speech_seconds": round(speech_by_detection.get(item.id, 0.0), 2),
                 "can_remember": speech_by_detection.get(item.id, 0.0) >= MIN_SAMPLE_SPEECH_SECONDS,
                 "preview_seconds": round(min(longest_turn_by_detection.get(item.id, 0.0), 8.0), 2),
@@ -295,6 +347,33 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
                 "text": turn.edited_text if turn.edited_text is not None else turn.text,
                 "original_text": turn.text,
                 "edited": turn.edited_text is not None,
+                # Confidence for this turn's speaker. A turn has no voiceprint of its
+                # own, so it carries its detected speaker's score.
+                "match_source": (
+                    "corrected"
+                    if (
+                        turn.identity_override_unknown
+                        or turn.identity_override_name
+                        or turn.identity_override_profile_id
+                        or turn.identity_override_detection_id
+                    )
+                    else match_source(by_id.get(turn.detection_id), confirmed_ids)
+                ),
+                "match_score": (
+                    round(by_id[turn.detection_id].match_score, 3)
+                    if turn.detection_id in by_id and by_id[turn.detection_id].match_score is not None
+                    else None
+                ),
+                "closest_profile_name": (
+                    closest[turn.detection_id][0].name
+                    if turn.detection_id in closest and closest[turn.detection_id][0]
+                    else None
+                ),
+                "closest_score": (
+                    round(closest[turn.detection_id][1], 3)
+                    if turn.detection_id in closest and closest[turn.detection_id][1] is not None
+                    else None
+                ),
                 "relabel_id": str(relabels[turn.id].id) if turn.id in relabels else None,
                 "relabel_status": relabels[turn.id].status if turn.id in relabels else None,
                 "can_preview": turn.end_seconds > turn.start_seconds,
