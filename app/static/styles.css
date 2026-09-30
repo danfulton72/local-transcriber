@@ -2851,6 +2851,14 @@ body.admin-user .non-admin-only{display:none}
   justify-content:start;
 }
 .meeting-notes-controls button{min-width:0}
+.export-badge{
+  display:flex;flex-wrap:wrap;align-items:center;gap:.35rem .75rem;
+  margin:.75rem 0 0;padding:.55rem .85rem;
+  border:1px solid #b9dcc6;border-radius:12px;
+  background:#dcefe3;color:#225c42;font-size:.9rem;font-weight:600;
+}
+.export-badge.outdated{border-color:#ecd29c;background:#f8e2b8;color:#704c13}
+.export-badge a{color:inherit}
 .meeting-notes-preview{
   margin:14px 0 0;
   padding:16px;

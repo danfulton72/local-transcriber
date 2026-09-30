@@ -271,6 +271,7 @@ class MeetingExport(Base):
     notes_markdown: Mapped[str | None] = mapped_column(Text, nullable=True)
     export_requested: Mapped[bool] = mapped_column(Boolean, default=True)
     open_notebook_notebook_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    open_notebook_notebook_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     open_notebook_source_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     open_notebook_note_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
     processing_seconds: Mapped[float] = mapped_column(Float, default=0.0)

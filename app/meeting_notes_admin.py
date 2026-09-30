@@ -78,6 +78,16 @@ def _payload(recording: Recording, export: MeetingExport | None) -> dict:
         "created_at": export.created_at.isoformat() if export.created_at else None,
         "notes_generated_at": export.notes_generated_at.isoformat() if export.notes_generated_at else None,
         "exported_at": export.exported_at.isoformat() if export.exported_at else None,
+        # A copy currently lives in Open Notebook.
+        "exported": bool(export.open_notebook_note_id and export.exported_at),
+        "open_notebook_notebook_name": export.open_notebook_notebook_name,
+        # Notes were regenerated after the last export, so Open Notebook is behind.
+        "export_outdated": bool(
+            export.open_notebook_note_id
+            and export.exported_at
+            and export.notes_generated_at
+            and export.notes_generated_at > export.exported_at
+        ),
     }
 
 
@@ -195,6 +205,7 @@ async def process_meeting_export(export_id: uuid.UUID, notebook_label: str | Non
                     notebook_id=notebook_id,
                 )
                 export.exported_at = utcnow()
+                export.open_notebook_notebook_name = notebook_label
 
             export.status = "completed"
             if export.export_requested:
