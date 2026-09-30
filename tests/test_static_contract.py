@@ -63,7 +63,8 @@ def test_admin_speaker_tools_show_recording_owners():
     javascript = (STATIC / "app.js").read_text()
 
     assert "recording.owner_display_name" in javascript
-    assert "analysis.recording_owner" in javascript
+    # The selected conversation's header names who recorded it.
+    assert "'Recorded by ' + recording.owner_display_name" in javascript
     assert "sample.source_recording_owner" in javascript
     assert "sample.recording_owner" in javascript
 

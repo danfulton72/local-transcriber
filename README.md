@@ -442,15 +442,16 @@ Open **Grown-up settings → Install on this device**. On browsers with a native
 
 ### Admin tools
 
-Admin accounts see separate **Progress** and **Tools** pages. Progress contains analytics for the signed-in admin account. Tools contains:
+Admin accounts see separate **Progress** and **Tools** pages. Progress contains analytics for the signed-in admin account. Tools is split into four tabs; a status line under the heading shows each service (speech gateway, database, speaker analyzer, notes model, Open Notebook), and tab badges show what needs attention:
 
-- **Users** — add accounts, change display names, reset passwords, grant/revoke admin access, and deactivate/reactivate accounts. A password or permission change revokes that user's existing sessions.
-
-- **Speakers** — analyse saved conversations, manage remembered voices, and review relabelled samples. The relabelled list opens on **Needs review**; approved or excluded samples move to **All history**, which can be filtered by date range and status, and **Back to review** returns one to the queue.
-- **Meeting notes & Open Notebook** — generate ordered notes from an analysed conversation and export them with the transcript to Open Notebook.
-- **Voice recording retention** — controls stored audio only; transcripts/history remain.
-- **Backup & status** — checks PostgreSQL, the speech gateway and local audio storage, and can download an application backup ZIP.
-- **Recycle bin** — restore soft-deleted work or permanently remove it.
+- **Meetings** (default) — the conversation strip across the top is searchable and filtered **To do / Sent / All**, sorted A–Z by title, with each conversation's stage. The selected conversation shows three steps side by side:
+  1. **Who spoke** — analyse the conversation (optionally with the expected number of speakers), hear each speaker, and name unnamed speakers from a dropdown of remembered voices or **New name…**; **Add to voiceprint** also saves the clip as a voice sample. **Review turns** opens turn-by-turn corrections; **Re-analyse** starts again.
+  2. **Meeting notes** — generate or regenerate notes, preview them and download Markdown.
+  3. **Open Notebook** — send, or re-send, the transcript and notes to a notebook you pick; shows where and when it was sent and warns when newer notes have not been sent.
+  The next step to do is outlined.
+- **Voices** — **Name corrections to review** opens on **Needs review**; approved or excluded samples move to **History**, which can be filtered by date range and status, and **Back to review** returns one to the queue. **Remembered voices** is a searchable table (samples out of 8, match quality, last updated) with per-voice samples, rename and forget.
+- **Users** — a table of people with **Edit** (display name, password, admin access), **Manage as user**, and deactivate/reactivate; **+ Add person** opens the add form. A password or permission change revokes that user's existing sessions.
+- **System** — health tiles for each service, storage figures and voice-recording retention (audio only; transcripts, notes and history remain), app backup ZIP download, and the recycle bin.
 
 Retention cleanup runs on application startup and whenever a recording finishes. Permanent delete removes the database history for that recording and its stored audio.
 

@@ -71,14 +71,17 @@
     programmaticScrollAt: 0,
     lastScrollY: window.scrollY,
     installPrompt: null,
-    currentSpeakerAnalysisId: null,
-    currentSpeakerAnalysisRecordingId: null,
     speakerPolling: false,
     relabelView: 'pending',
     meetingNotesStatus: null,
-    meetingNotesRecordingId: null,
-    meetingNotesPolling: false,
-    meetingNotesResult: null,
+    toolsTab: null,
+    toolsHealth: {},
+    voicesExpanded: new Set(),
+    meetings: {
+      recordings: [], filter: 'todo', selectedId: null, analysis: null, notes: null,
+      analysingId: null, analysisStage: '', analysisError: '', showTurns: false,
+      notesPolling: null, jobKind: null,
+    },
     speakerTurns: [],
     speakerProfiles: [],
     knownSpeakerProfiles: [],
@@ -121,27 +124,31 @@
     retentionDays: $('retentionDays'), deleteAudioImmediately: $('deleteAudioImmediately'),
     saveRetentionButton: $('saveRetentionButton'), applyRetentionButton: $('applyRetentionButton'), retentionMessage: $('retentionMessage'),
     systemStatus: $('systemStatus'), downloadBackupButton: $('downloadBackupButton'), refreshAdminButton: $('refreshAdminButton'),
-    recycleList: $('recycleList'), refreshRecycleButton: $('refreshRecycleButton'),
-    speakerServiceStatus: $('speakerServiceStatus'), speakerRecordingSelect: $('speakerRecordingSelect'),
-    speakerShowAllRecordings: $('speakerShowAllRecordings'),
-    speakerCountSelect: $('speakerCountSelect'), runSpeakerAnalysisButton: $('runSpeakerAnalysisButton'),
-    speakerAnalysisMessage: $('speakerAnalysisMessage'), speakerAnalysisResult: $('speakerAnalysisResult'),
-    speakerProfilesList: $('speakerProfilesList'), refreshSpeakerProfilesButton: $('refreshSpeakerProfilesButton'),
-    relabelSamplesList: $('relabelSamplesList'), refreshRelabelSamplesButton: $('refreshRelabelSamplesButton'),
+    recycleList: $('recycleList'), backupNotice: $('backupNotice'), systemHealthTiles: $('systemHealthTiles'),
+    toolsHealthList: $('toolsHealthList'), toolsRefreshButton: $('toolsRefreshButton'),
+    meetingsSearch: $('meetingsSearch'), meetingsList: $('meetingsList'),
+    meetingDetailTitle: $('meetingDetailTitle'), meetingDetailMeta: $('meetingDetailMeta'), meetingSteps: $('meetingSteps'),
+    stepSpeakersChip: $('stepSpeakersChip'), stepSpeakersBody: $('stepSpeakersBody'), stepSpeakersFoot: $('stepSpeakersFoot'),
+    stepNotesChip: $('stepNotesChip'), stepNotesHint: $('stepNotesHint'), meetingNotesEmpty: $('meetingNotesEmpty'),
+    meetingNotesModel: $('meetingNotesModel'), stepNotebookChip: $('stepNotebookChip'), stepNotebookFoot: $('stepNotebookFoot'),
+    meetingTurns: $('meetingTurns'), meetingTurnsCloseButton: $('meetingTurnsCloseButton'),
+    speakerAnalysisResult: $('speakerAnalysisResult'),
+    speakerProfilesList: $('speakerProfilesList'), voicesSearch: $('voicesSearch'),
+    relabelSamplesList: $('relabelSamplesList'),
     relabelPendingViewButton: $('relabelPendingViewButton'), relabelHistoryViewButton: $('relabelHistoryViewButton'),
     relabelHistoryFilters: $('relabelHistoryFilters'), relabelFromDate: $('relabelFromDate'),
     relabelToDate: $('relabelToDate'), relabelStatusFilter: $('relabelStatusFilter'),
     relabelClearFiltersButton: $('relabelClearFiltersButton'), relabelSamplesSummary: $('relabelSamplesSummary'),
-    meetingNotesServiceStatus: $('meetingNotesServiceStatus'),
     notebookPickerDialog: $('notebookPickerDialog'), notebookPickerForm: $('notebookPickerForm'),
     notebookPickerMessage: $('notebookPickerMessage'), notebookPickerList: $('notebookPickerList'),
     notebookPickerRefreshButton: $('notebookPickerRefreshButton'), notebookPickerConfirmButton: $('notebookPickerConfirmButton'),
-    meetingNotesExportButton: $('meetingNotesExportButton'), meetingNotesGenerateButton: $('meetingNotesGenerateButton'),
+    meetingNotesGenerateButton: $('meetingNotesGenerateButton'),
     meetingNotesResendButton: $('meetingNotesResendButton'), meetingNotesDownloadButton: $('meetingNotesDownloadButton'),
     meetingNotesMessage: $('meetingNotesMessage'), meetingNotesPreview: $('meetingNotesPreview'),
     meetingNotesLinkRow: $('meetingNotesLinkRow'), meetingNotesLink: $('meetingNotesLink'),
     meetingNotesExportBadgeText: $('meetingNotesExportBadgeText'),
-    userList: $('userList'), refreshUsersButton: $('refreshUsersButton'), createUserForm: $('createUserForm'),
+    userList: $('userList'), createUserForm: $('createUserForm'),
+    addUserToggleButton: $('addUserToggleButton'), cancelCreateUserButton: $('cancelCreateUserButton'),
     newUsername: $('newUsername'), newUserDisplayName: $('newUserDisplayName'), newUserPassword: $('newUserPassword'), newUserIsAdmin: $('newUserIsAdmin'),
     createUserButton: $('createUserButton'), userAdminMessage: $('userAdminMessage'),
   };
@@ -230,7 +237,10 @@
     state.actingAs = null;
     state.currentRecording = null;
     state.recoverableRecording = null;
-    state.currentSpeakerAnalysisId = null;
+    state.meetings.selectedId = null;
+    state.meetings.analysis = null;
+    state.meetings.notes = null;
+    state.toolsTab = null;
     document.body.classList.add('logged-out');
     els.currentUserLabel.textContent = '';
     els.loginMessage.textContent = message;
@@ -243,7 +253,6 @@
   function showLoggedIn(user, actingAs = null) {
     state.authUser = user;
     state.actingAs = actingAs;
-    state.currentSpeakerAnalysisId = userLocalGet('speakerAnalysisId') || null;
     document.body.classList.remove('logged-out');
     els.loginMessage.classList.add('hidden');
     applyRoleVisibility();
@@ -2368,8 +2377,102 @@
 
   async function loadTools() {
     if (!isAdmin()) return;
-    await Promise.allSettled([loadAdminStatus(), loadRecycleBin(), loadSpeakerTools(), loadUsers()]);
+    setToolsTab(state.toolsTab || userLocalGet('toolsTab') || 'meetings');
+    renderToolsHealth();
+    await Promise.allSettled([
+      loadAdminStatus(),
+      loadRecycleBin(),
+      loadUsers(),
+      loadSpeakerStatus(),
+      loadMeetingNotesStatus(),
+      loadSpeakerProfiles(),
+      loadRelabelSamples(),
+      loadMeetings(),
+    ]);
   }
+
+  // ---------------------------------------------------------------------
+  // Tools page: tabs, badges and service health
+  // ---------------------------------------------------------------------
+
+  const TOOLS_TABS = ['meetings', 'voices', 'users', 'system'];
+
+  function setToolsTab(name, focus = false) {
+    const tab = TOOLS_TABS.includes(name) ? name : 'meetings';
+    state.toolsTab = tab;
+    try { userLocalSet('toolsTab', tab); } catch {}
+    for (const item of TOOLS_TABS) {
+      const button = $('toolsTab-' + item);
+      const panel = $('toolsPanel-' + item);
+      const on = item === tab;
+      button.setAttribute('aria-selected', String(on));
+      button.tabIndex = on ? 0 : -1;
+      panel.hidden = !on;
+      if (on && focus) button.focus();
+    }
+  }
+
+  function setToolsBadge(name, value) {
+    const badge = $('toolsBadge-' + name);
+    if (!badge) return;
+    badge.hidden = !value;
+    if (value && name !== 'system') badge.textContent = String(value);
+  }
+
+  // Each service is { label, level: 'ok' | 'bad' | 'off' | 'checking', value, detail }.
+  // 'off' means not configured, which is not treated as a problem.
+  const HEALTH_ORDER = ['gateway', 'database', 'speaker', 'llm', 'notebook'];
+  const HEALTH_LABELS = {
+    gateway: 'Speech gateway',
+    database: 'Database',
+    speaker: 'Speaker analyzer',
+    llm: 'Notes model',
+    notebook: 'Open Notebook',
+  };
+
+  function setHealth(key, level, value, detail = '') {
+    state.toolsHealth[key] = { level, value, detail };
+    renderToolsHealth();
+  }
+
+  function renderToolsHealth() {
+    const health = state.toolsHealth;
+    els.toolsHealthList.replaceChildren();
+    els.systemHealthTiles.replaceChildren();
+    let problems = 0;
+    for (const key of HEALTH_ORDER) {
+      const item = health[key] || { level: 'checking', value: 'Checking…', detail: '' };
+      if (item.level === 'bad') problems += 1;
+
+      const li = document.createElement('li');
+      li.className = 'health-dot-item health-' + item.level;
+      const dot = document.createElement('span'); dot.className = 'health-dot'; dot.setAttribute('aria-hidden', 'true');
+      const label = item.level === 'bad' ? document.createElement('button') : document.createElement('span');
+      if (item.level === 'bad') {
+        label.type = 'button';
+        label.className = 'health-link';
+        label.addEventListener('click', () => setToolsTab('system', true));
+      }
+      label.textContent = HEALTH_LABELS[key];
+      label.title = item.value + (item.detail ? ' · ' + item.detail : '');
+      const status = document.createElement('span'); status.className = 'sr-only'; status.textContent = ': ' + item.value;
+      li.append(dot, label, status);
+      els.toolsHealthList.appendChild(li);
+
+      const tile = document.createElement('div');
+      tile.className = 'health-tile health-' + item.level;
+      const name = document.createElement('span'); name.className = 'health-tile-name'; name.textContent = HEALTH_LABELS[key];
+      const value = document.createElement('strong'); value.className = 'health-tile-value'; value.textContent = item.value;
+      const detail = document.createElement('span'); detail.className = 'muted small-note'; detail.textContent = item.detail || '';
+      tile.append(name, value, detail);
+      els.systemHealthTiles.appendChild(tile);
+    }
+    setToolsBadge('system', problems ? '!' : '');
+  }
+
+  // ---------------------------------------------------------------------
+  // Users
+  // ---------------------------------------------------------------------
 
   async function loadUsers() {
     try {
@@ -2377,49 +2480,86 @@
       renderUsers(users);
       renderActAsOptions(users);
     } catch (error) {
-      els.userList.replaceChildren();
-      const p = document.createElement('p'); p.className = 'error'; p.textContent = error.message;
-      els.userList.appendChild(p);
+      els.userList.replaceChildren(tableMessageRow(5, error.message, 'error'));
     }
+  }
+
+  function tableMessageRow(columns, message, className = 'muted') {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = columns;
+    cell.className = className;
+    cell.textContent = message;
+    row.appendChild(cell);
+    return row;
+  }
+
+  function toggleCreateUserForm(open) {
+    els.createUserForm.hidden = !open;
+    els.addUserToggleButton.setAttribute('aria-expanded', String(open));
+    if (open) els.newUsername.focus();
+    else els.createUserForm.reset();
   }
 
   function renderUsers(users) {
     els.userList.replaceChildren();
     for (const user of users) {
-      const row = document.createElement('div'); row.className = 'user-row';
+      const row = document.createElement('tr');
 
-      const main = document.createElement('div'); main.className = 'user-row-main';
-      const name = document.createElement('strong');
-      name.textContent = user.display_name + (user.is_current ? ' · current' : '');
-      const meta = document.createElement('span'); meta.className = 'user-row-meta';
-      meta.textContent = '@' + user.username + ' · ' + user.recordings + ' recording' + (user.recordings === 1 ? '' : 's') + (user.is_admin ? ' · admin' : '') + (user.is_active ? '' : ' · inactive');
-      main.append(name, meta);
+      const nameCell = document.createElement('td');
+      const name = document.createElement('strong'); name.textContent = user.display_name;
+      nameCell.appendChild(name);
+      if (user.is_current) {
+        const you = document.createElement('span'); you.className = 'chip chip-analysed chip-inline'; you.textContent = 'You';
+        nameCell.appendChild(you);
+      }
+      const handle = document.createElement('div'); handle.className = 'muted small-note'; handle.textContent = '@' + user.username;
+      nameCell.appendChild(handle);
 
-      const display = document.createElement('input');
-      display.value = user.display_name;
-      display.setAttribute('aria-label', 'Display name for ' + user.username);
+      const role = document.createElement('td'); role.textContent = user.is_admin ? 'Admin' : 'User';
+      const recordings = document.createElement('td'); recordings.textContent = String(user.recordings);
+      const status = document.createElement('td');
+      const statusText = document.createElement('span');
+      statusText.className = user.is_active ? 'status-good' : 'status-bad';
+      statusText.textContent = user.is_active ? 'Active' : 'Inactive';
+      status.appendChild(statusText);
 
-      const password = document.createElement('input');
-      password.type = 'password';
-      password.placeholder = 'New password (optional)';
-      password.autocomplete = 'new-password';
-      password.setAttribute('aria-label', 'New password for ' + user.username);
+      const actions = document.createElement('td'); actions.className = 'table-actions';
+      const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'quiet'; edit.textContent = 'Edit';
+      edit.setAttribute('aria-expanded', 'false');
 
-      const adminLabel = document.createElement('label');
-      adminLabel.className = 'check user-admin-toggle';
-      const adminToggle = document.createElement('input');
-      adminToggle.type = 'checkbox';
+      const editRow = document.createElement('tr'); editRow.className = 'table-expand-row'; editRow.hidden = true;
+      const editCell = document.createElement('td'); editCell.colSpan = 5;
+      const form = document.createElement('div'); form.className = 'user-edit-grid';
+      const displayLabel = document.createElement('label'); displayLabel.className = 'admin-label'; displayLabel.textContent = 'Display name';
+      const display = document.createElement('input'); display.value = user.display_name; displayLabel.appendChild(display);
+      const passwordLabel = document.createElement('label'); passwordLabel.className = 'admin-label'; passwordLabel.textContent = 'New password';
+      const password = document.createElement('input'); password.type = 'password'; password.placeholder = 'Leave blank to keep';
+      password.autocomplete = 'new-password'; passwordLabel.appendChild(password);
+      const adminLabel = document.createElement('label'); adminLabel.className = 'check admin-check';
+      const adminToggle = document.createElement('input'); adminToggle.type = 'checkbox';
       adminToggle.checked = Boolean(user.is_admin);
       adminToggle.disabled = Boolean(user.is_current && user.is_admin);
-      adminLabel.append(adminToggle, document.createTextNode(' Admin'));
+      adminLabel.append(adminToggle, document.createTextNode(' Admin access'));
+      const editButtons = document.createElement('div'); editButtons.className = 'button-row';
+      const cancel = document.createElement('button'); cancel.type = 'button'; cancel.textContent = 'Cancel';
+      const save = document.createElement('button'); save.type = 'button'; save.className = 'primary'; save.textContent = 'Save';
+      editButtons.append(cancel, save);
+      form.append(displayLabel, passwordLabel, adminLabel, editButtons);
+      editCell.appendChild(form); editRow.appendChild(editCell);
 
-      const actions = document.createElement('div'); actions.className = 'button-row';
-      const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Save';
+      const setEditing = (open) => {
+        editRow.hidden = !open;
+        edit.setAttribute('aria-expanded', String(open));
+        if (open) display.focus();
+      };
+      edit.addEventListener('click', () => setEditing(editRow.hidden));
+      cancel.addEventListener('click', () => {
+        display.value = user.display_name; password.value = ''; adminToggle.checked = Boolean(user.is_admin);
+        setEditing(false);
+      });
       save.addEventListener('click', async () => {
-        const body = {
-          display_name: display.value.trim(),
-          is_admin: adminToggle.checked,
-        };
+        const body = { display_name: display.value.trim(), is_admin: adminToggle.checked };
         if (password.value) body.password = password.value;
         try {
           await api('/api/admin/users/' + user.id, {
@@ -2427,21 +2567,29 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
           });
-          password.value = '';
-          showToast('User updated');
-          await loadUsers();
+          showToast('Person updated');
           if (user.is_current && body.display_name) {
             state.authUser.display_name = body.display_name;
             els.currentUserLabel.textContent = body.display_name;
           }
+          await loadUsers();
         } catch (error) {
           els.userAdminMessage.textContent = error.message;
         }
       });
+      actions.appendChild(edit);
+
+      if (user.is_active && !user.is_admin && !user.is_current) {
+        const manage = document.createElement('button'); manage.type = 'button'; manage.className = 'quiet';
+        manage.textContent = 'Manage as user';
+        manage.title = 'Open this person’s My words and Progress';
+        manage.addEventListener('click', () => switchActAs(user.id));
+        actions.appendChild(manage);
+      }
 
       const toggle = document.createElement('button'); toggle.type = 'button';
+      toggle.className = user.is_active ? 'quiet danger-text' : 'quiet';
       toggle.textContent = user.is_active ? 'Deactivate' : 'Reactivate';
-      toggle.className = user.is_active ? 'danger' : '';
       toggle.disabled = Boolean(user.is_current && user.is_active);
       if (toggle.disabled) toggle.title = 'You can’t deactivate the account you’re signed in with.';
       toggle.addEventListener('click', async () => {
@@ -2452,26 +2600,18 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ is_active: !user.is_active }),
           });
-          showToast(user.is_active ? 'User deactivated' : 'User reactivated');
+          showToast(user.is_active ? 'Person deactivated' : 'Person reactivated');
           await loadUsers();
         } catch (error) {
           els.userAdminMessage.textContent = error.message;
         }
       });
+      actions.appendChild(toggle);
 
-      if (user.is_active && !user.is_admin && !user.is_current) {
-        const manage = document.createElement('button');
-        manage.type = 'button';
-        manage.textContent = 'Manage as user';
-        manage.title = 'Open this user\'s My words and Progress';
-        manage.addEventListener('click', () => switchActAs(user.id));
-        actions.prepend(manage);
-      }
-
-      actions.append(save, toggle);
-      row.append(main, display, password, adminLabel, actions);
-      els.userList.appendChild(row);
+      row.append(nameCell, role, recordings, status, actions);
+      els.userList.append(row, editRow);
     }
+    if (!users.length) els.userList.appendChild(tableMessageRow(5, 'No people yet.'));
   }
 
   async function createUser(event) {
@@ -2489,8 +2629,8 @@
           is_admin: Boolean(els.newUserIsAdmin?.checked),
         }),
       });
-      els.createUserForm.reset();
-      els.userAdminMessage.textContent = 'User added.';
+      toggleCreateUserForm(false);
+      showToast('Person added');
       await loadUsers();
     } catch (error) {
       els.userAdminMessage.textContent = error.message;
@@ -2499,113 +2639,40 @@
     }
   }
 
-  async function loadSpeakerTools() {
-    await Promise.allSettled([
-      loadSpeakerStatusAndRecordings(),
-      loadSpeakerProfiles(),
-      loadRelabelSamples(),
-      loadMeetingNotesStatus(),
-    ]);
-    loadMeetingNotes();
-    if (state.currentSpeakerAnalysisId && !state.speakerPolling) {
-      pollSpeakerAnalysis(state.currentSpeakerAnalysisId, true);
-    }
-  }
+  // ---------------------------------------------------------------------
+  // Speaker analyzer status and remembered voices
+  // ---------------------------------------------------------------------
 
-  function setSpeakerServiceProblem(message) {
-    const problem = Boolean(message);
-    els.runSpeakerAnalysisButton.disabled = problem || state.speakerPolling;
-    els.speakerRecordingSelect.disabled = problem;
-    els.speakerCountSelect.disabled = problem;
-    els.speakerAnalysisMessage.classList.toggle('speaker-alert', problem);
-    if (!problem) return;
-    const text = document.createElement('span');
-    text.textContent = message;
-    const retry = document.createElement('button');
-    retry.type = 'button';
-    retry.className = 'small';
-    retry.textContent = 'Try again';
-    retry.addEventListener('click', () => {
-      retry.disabled = true;
-      loadSpeakerStatusAndRecordings();
-    });
-    els.speakerAnalysisMessage.replaceChildren(text, retry);
-  }
-
-  async function loadSpeakerStatusAndRecordings() {
+  async function loadSpeakerStatus() {
     try {
-      const [status, recordings] = await Promise.all([
-        api('/api/admin/speakers/status', { cache: 'no-store' }),
-        api('/api/admin/speakers/recordings?view=' + (els.speakerShowAllRecordings.checked ? 'all' : 'todo'), { cache: 'no-store' }),
-      ]);
-
+      const status = await api('/api/admin/speakers/status', { cache: 'no-store' });
       const service = status.service || {};
       if (!status.reachable) {
-        els.speakerServiceStatus.textContent = 'Unavailable';
-        els.speakerServiceStatus.className = 'pill speaker-warning';
-        setSpeakerServiceProblem('The speaker analyzer isn’t responding. Check that the speaker-analyzer container is running.');
+        setHealth('speaker', 'bad', 'Not reachable', 'Check the speaker-analyzer container');
       } else if (!service.configured) {
-        els.speakerServiceStatus.textContent = 'Needs HF token';
-        els.speakerServiceStatus.className = 'pill speaker-warning';
-        setSpeakerServiceProblem('Accept the pyannote Community-1 terms and add HF_TOKEN to .env.');
+        setHealth('speaker', 'bad', 'Needs HF token', 'Accept the pyannote terms and set HF_TOKEN');
       } else if (service.status === 'device_error') {
-        els.speakerServiceStatus.textContent = 'GPU problem';
-        els.speakerServiceStatus.className = 'pill speaker-warning';
-        setSpeakerServiceProblem(service.device_error || 'The selected GPU is not compatible with the speaker analyzer.');
+        setHealth('speaker', 'bad', 'GPU problem', service.device_error || 'Incompatible GPU');
       } else {
         const gpu = Array.isArray(service.gpus)
-          ? service.gpus.find((item) => String(service.device || '').endsWith(':' + item.index))
-            || service.gpus[0]
+          ? service.gpus.find((item) => String(service.device || '').endsWith(':' + item.index)) || service.gpus[0]
           : null;
-        const gpuText = gpu?.name ? ' · ' + gpu.name : '';
-        const swapText = service.arbitrated ? ' · managed by llama-swap' : '';
-        els.speakerServiceStatus.textContent = (service.loaded ? 'Ready' : 'Ready · model loads on first use') + gpuText + swapText;
-        els.speakerServiceStatus.className = 'pill speaker-ready';
-        setSpeakerServiceProblem('');
-        if (!state.speakerPolling) els.speakerAnalysisMessage.textContent = '';
-      }
-
-      const selected = els.speakerRecordingSelect.value;
-      els.speakerRecordingSelect.replaceChildren();
-      const placeholder = document.createElement('option');
-      placeholder.value = ''; placeholder.textContent = 'Choose a recording…';
-      els.speakerRecordingSelect.appendChild(placeholder);
-      for (const recording of recordings) {
-        const option = document.createElement('option');
-        option.value = recording.id;
-        const duration = recording.duration_seconds ? ' · ' + formatTime(recording.duration_seconds) : '';
-        const owner = recording.owner_display_name || recording.owner_username || 'Unknown user';
-        // Title first: the list is sorted A–Z, and titles start with yyyymmdd.
-        option.dataset.label = (recording.title || 'Recording') + ' · ' + owner + ' · ' + friendlyDate(recording.created_at) + duration;
-        option.dataset.analysed = recording.analysed ? 'true' : 'false';
-        option.dataset.exported = recording.open_notebook_exported ? 'true' : 'false';
-        renderRecordingOption(option);
-        els.speakerRecordingSelect.appendChild(option);
-      }
-      if (!recordings.length) {
-        placeholder.textContent = els.speakerShowAllRecordings.checked
-          ? 'No saved conversations yet'
-          : 'Nothing left to analyse or send';
-      }
-      if ([...els.speakerRecordingSelect.options].some((option) => option.value === selected)) {
-        els.speakerRecordingSelect.value = selected;
+        setHealth('speaker', 'ok', 'Ready', (gpu?.name || '') + (service.arbitrated ? ' · via llama-swap' : ''));
       }
     } catch (error) {
-      els.speakerServiceStatus.textContent = 'Unavailable';
-      els.speakerServiceStatus.className = 'pill speaker-warning';
-      setSpeakerServiceProblem(error.message || 'The speaker analyzer isn’t responding.');
+      setHealth('speaker', 'bad', 'Not reachable', error.message || '');
     }
+    if (state.meetings.selectedId) renderMeetingDetail();
   }
 
   async function loadSpeakerProfiles() {
     try {
       const profiles = await api('/api/admin/speakers/profiles', { cache: 'no-store' });
       state.speakerProfiles = profiles;
-      renderSpeakerProfiles(profiles);
+      renderSpeakerProfiles();
+      if (state.meetings.analysis) renderMeetingDetail();
     } catch (error) {
-      els.speakerProfilesList.replaceChildren();
-      const p = document.createElement('p'); p.className = 'error'; p.textContent = error.message;
-      els.speakerProfilesList.appendChild(p);
+      els.speakerProfilesList.replaceChildren(tableMessageRow(5, error.message, 'error'));
     }
   }
 
@@ -2622,7 +2689,7 @@
 
     stopSpeakerPreview();
     button.disabled = true;
-    button.textContent = 'Loading sample…';
+    button.textContent = 'Loading…';
 
     try {
       const response = await fetch(
@@ -2648,7 +2715,7 @@
       state.speakerPreviewButton = button;
 
       button.disabled = false;
-      button.textContent = '■ Stop sample';
+      button.textContent = '■ Stop';
       button.setAttribute('aria-pressed', 'true');
 
       audio.addEventListener('ended', () => {
@@ -2668,104 +2735,170 @@
     }
   }
 
-  function renderSpeakerProfiles(profiles) {
+  function sampleMeter(count, max) {
+    const meter = document.createElement('span');
+    meter.className = 'sample-meter';
+    meter.setAttribute('role', 'img');
+    meter.setAttribute('aria-label', count + ' of ' + max + ' samples');
+    for (let index = 0; index < max; index += 1) {
+      const cell = document.createElement('span');
+      if (index < count) cell.className = 'filled';
+      meter.appendChild(cell);
+    }
+    return meter;
+  }
+
+  async function afterProfileChange(message) {
+    showToast(message);
+    await loadSpeakerProfiles();
+    if (state.meetings.analysis) await refreshCurrentSpeakerAnalysis();
+  }
+
+  function renderSpeakerProfiles() {
     stopSpeakerPreview();
+    const profiles = state.speakerProfiles || [];
+    const query = (els.voicesSearch.value || '').trim().toLocaleLowerCase();
+    const shown = profiles.filter((profile) => !query || profile.name.toLocaleLowerCase().includes(query));
     els.speakerProfilesList.replaceChildren();
     if (!profiles.length) {
-      const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'No remembered speakers yet.';
-      els.speakerProfilesList.appendChild(p);
+      els.speakerProfilesList.appendChild(tableMessageRow(5, 'No remembered voices yet. Name a speaker in Meetings to start one.'));
       return;
     }
-    for (const profile of profiles) {
-      const row = document.createElement('div'); row.className = 'speaker-profile-row';
-      const input = document.createElement('input'); input.value = profile.name; input.setAttribute('aria-label', 'Remembered speaker name');
+    if (!shown.length) {
+      els.speakerProfilesList.appendChild(tableMessageRow(5, 'No voices match “' + els.voicesSearch.value.trim() + '”.'));
+      return;
+    }
 
-      const meta = document.createElement('span'); meta.className = 'muted';
-      meta.textContent =
-        profile.sample_count + '/' + profile.max_samples + ' voice samples · profile ' + profile.profile_quality;
+    for (const profile of shown) {
+      const row = document.createElement('tr');
+      const quality = String(profile.profile_quality || '');
 
-      const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Save name';
-      save.addEventListener('click', async () => {
-        const name = input.value.trim();
-        if (!name) return;
-        await api('/api/admin/speakers/profiles/' + profile.id, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name }),
+      const nameCell = document.createElement('td');
+      const name = document.createElement('strong'); name.textContent = profile.name;
+      nameCell.appendChild(name);
+
+      const samplesCell = document.createElement('td');
+      const samplesWrap = document.createElement('span'); samplesWrap.className = 'sample-meter-wrap';
+      const samplesText = document.createElement('span'); samplesText.className = 'muted small-note';
+      samplesText.textContent = profile.sample_count + '/' + profile.max_samples;
+      samplesWrap.append(sampleMeter(profile.sample_count, profile.max_samples), samplesText);
+      samplesCell.appendChild(samplesWrap);
+
+      const qualityCell = document.createElement('td');
+      const qualityChip = document.createElement('span');
+      qualityChip.className = 'chip ' + (quality === 'starter' ? 'chip-todo' : 'chip-analysed');
+      qualityChip.textContent = quality ? quality.charAt(0).toUpperCase() + quality.slice(1) : '—';
+      qualityCell.appendChild(qualityChip);
+
+      const updatedCell = document.createElement('td'); updatedCell.className = 'muted';
+      updatedCell.textContent = profile.updated_at ? friendlyDate(profile.updated_at) : '';
+
+      const actions = document.createElement('td'); actions.className = 'table-actions';
+      const samplesButton = document.createElement('button'); samplesButton.type = 'button'; samplesButton.className = 'quiet';
+      samplesButton.textContent = 'Samples'; samplesButton.setAttribute('aria-expanded', 'false');
+      const rename = document.createElement('button'); rename.type = 'button'; rename.className = 'quiet'; rename.textContent = 'Rename';
+      const forget = document.createElement('button'); forget.type = 'button'; forget.className = 'quiet danger-text'; forget.textContent = 'Forget';
+      actions.append(samplesButton, rename, forget);
+
+      // Rename in place
+      rename.addEventListener('click', () => {
+        const input = document.createElement('input'); input.value = profile.name;
+        input.setAttribute('aria-label', 'New name for ' + profile.name);
+        const saveName = document.createElement('button'); saveName.type = 'button'; saveName.className = 'primary small'; saveName.textContent = 'Save';
+        const cancelName = document.createElement('button'); cancelName.type = 'button'; cancelName.className = 'small'; cancelName.textContent = 'Cancel';
+        const editor = document.createElement('span'); editor.className = 'inline-rename';
+        editor.append(input, saveName, cancelName);
+        nameCell.replaceChildren(editor);
+        input.focus(); input.select();
+        const restore = () => nameCell.replaceChildren(name);
+        cancelName.addEventListener('click', restore);
+        const commit = async () => {
+          const value = input.value.trim();
+          if (!value || value === profile.name) { restore(); return; }
+          try {
+            await api('/api/admin/speakers/profiles/' + profile.id, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: value }),
+            });
+            await afterProfileChange('Voice renamed');
+          } catch (error) {
+            showToast(error.message);
+          }
+        };
+        saveName.addEventListener('click', commit);
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') { event.preventDefault(); commit(); }
+          if (event.key === 'Escape') restore();
         });
-        showToast('Speaker name saved');
-        await loadSpeakerProfiles();
-        if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
       });
 
-      const forget = document.createElement('button'); forget.type = 'button'; forget.className = 'danger'; forget.textContent = 'Forget voiceprint';
       forget.addEventListener('click', async () => {
-        if (!confirm('Forget the saved voiceprint for ' + profile.name + '? Past conversation labels will stay.')) return;
-        await api('/api/admin/speakers/profiles/' + profile.id, { method: 'DELETE' });
-        showToast('Voiceprint forgotten');
-        await loadSpeakerProfiles();
-        if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
+        if (!confirm('Forget the saved voice for ' + profile.name + '? Past conversation labels will stay.')) return;
+        try {
+          await api('/api/admin/speakers/profiles/' + profile.id, { method: 'DELETE' });
+          await afterProfileChange('Voice forgotten');
+        } catch (error) {
+          showToast(error.message);
+        }
       });
 
-      const samples = document.createElement('details'); samples.className = 'voice-sample-details';
-      const summary = document.createElement('summary');
-      summary.textContent = 'Review ' + profile.sample_count + ' voice sample' + (profile.sample_count === 1 ? '' : 's');
-      samples.appendChild(summary);
-
-      const list = document.createElement('div'); list.className = 'voice-sample-list';
+      // Samples expand below the row
+      const expandRow = document.createElement('tr'); expandRow.className = 'table-expand-row';
+      const expandedKey = profile.id;
+      expandRow.hidden = !state.voicesExpanded.has(expandedKey);
+      samplesButton.setAttribute('aria-expanded', String(!expandRow.hidden));
+      const expandCell = document.createElement('td'); expandCell.colSpan = 5;
+      const list = document.createElement('div'); list.className = 'voice-sample-grid';
       for (const sample of profile.samples || []) {
-        const sampleRow = document.createElement('div'); sampleRow.className = 'voice-sample-row';
+        const sampleRow = document.createElement('div'); sampleRow.className = 'voice-sample-card';
         const info = document.createElement('div');
         const title = document.createElement('strong'); title.textContent = sample.source_recording_title || 'Saved voice sample';
-        const detail = document.createElement('span'); detail.className = 'muted';
-        const speech = sample.speech_seconds == null ? 'legacy sample' : (sample.speech_seconds.toFixed(1) + 's speech');
-        const owner = sample.source_recording_owner ? (' · owner ' + sample.source_recording_owner) : '';
-        detail.textContent = speech + owner + ' · ' + friendlyDate(sample.created_at);
+        const detail = document.createElement('span'); detail.className = 'muted small-note';
+        const speech = sample.speech_seconds == null ? 'legacy sample' : (Number(sample.speech_seconds).toFixed(0) + 's');
+        detail.textContent = speech + (sample.source_recording_owner ? ' · owner ' + sample.source_recording_owner : '') + ' · ' + friendlyDate(sample.created_at);
         info.append(title, detail);
 
-        const sampleActions = document.createElement('div');
-        sampleActions.className = 'voice-sample-actions';
-
-        const preview = document.createElement('button');
-        preview.type = 'button';
-        preview.className = 'speaker-preview-button voice-sample-preview';
-        const previewSeconds = Number(sample.preview_seconds || 0);
-        preview.dataset.idleLabel = previewSeconds
-          ? ('▶ Hear · ' + previewSeconds.toFixed(1) + 's')
-          : '▶ Hear';
+        const sampleActions = document.createElement('div'); sampleActions.className = 'voice-sample-actions';
+        const preview = document.createElement('button'); preview.type = 'button'; preview.className = 'quiet speaker-preview-button voice-sample-preview';
+        preview.dataset.idleLabel = '▶ Hear';
         preview.textContent = preview.dataset.idleLabel;
         preview.disabled = !sample.can_preview;
-        preview.title = sample.can_preview
-          ? 'Play this remembered voice sample'
-          : 'The source audio for this sample is not available.';
+        preview.title = sample.can_preview ? 'Play this sample' : 'The source audio for this sample is not available.';
         preview.setAttribute('aria-pressed', 'false');
         preview.addEventListener('click', () => toggleRememberedSamplePreview(profile, sample, preview));
 
-        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'danger small'; remove.textContent = 'Remove sample';
+        const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'quiet danger-text'; remove.textContent = 'Remove';
         remove.disabled = profile.sample_count <= 1;
-        remove.title = profile.sample_count <= 1 ? 'Use Forget voiceprint to remove the final sample.' : 'Remove this sample from future matching';
+        remove.title = profile.sample_count <= 1 ? 'Use Forget to remove the final sample.' : 'Remove this sample from future matching';
         remove.addEventListener('click', async () => {
           if (!confirm('Remove this voice sample from ' + profile.name + '?')) return;
           try {
             stopSpeakerPreview();
-            await api('/api/admin/speakers/profiles/' + profile.id + '/samples/' + sample.id, {
-              method: 'DELETE', });
-            showToast('Voice sample removed');
-            await loadSpeakerProfiles();
-            if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
+            await api('/api/admin/speakers/profiles/' + profile.id + '/samples/' + sample.id, { method: 'DELETE' });
+            await afterProfileChange('Voice sample removed');
           } catch (error) {
             showToast(error.message);
           }
         });
-
         sampleActions.append(preview, remove);
         sampleRow.append(info, sampleActions);
         list.appendChild(sampleRow);
       }
-      samples.appendChild(list);
+      if (!(profile.samples || []).length) {
+        const none = document.createElement('p'); none.className = 'muted small-note'; none.textContent = 'No samples stored.';
+        list.appendChild(none);
+      }
+      expandCell.appendChild(list); expandRow.appendChild(expandCell);
+      samplesButton.addEventListener('click', () => {
+        expandRow.hidden = !expandRow.hidden;
+        if (expandRow.hidden) state.voicesExpanded.delete(expandedKey);
+        else state.voicesExpanded.add(expandedKey);
+        samplesButton.setAttribute('aria-expanded', String(!expandRow.hidden));
+      });
 
-      row.append(input, meta, save, forget, samples);
-      els.speakerProfilesList.appendChild(row);
+      row.append(nameCell, samplesCell, qualityCell, updatedCell, actions);
+      els.speakerProfilesList.append(row, expandRow);
     }
   }
 
@@ -2788,7 +2921,8 @@
           body: JSON.stringify(identityPayload(value, scope)),
         },
       );
-      renderSpeakerAnalysis(updated);
+      state.meetings.analysis = updated;
+      renderMeetingDetail();
       await loadRelabelSamples();
       showToast(scope === 'detection' ? 'Speaker identity corrected for matching turns' : 'Speaker identity corrected');
     } catch (error) {
@@ -2886,7 +3020,8 @@
         api('/api/admin/speakers/relabels/summary', { cache: 'no-store' }),
       ]);
       els.relabelPendingViewButton.textContent = 'Needs review (' + summary.pending + ')';
-      els.relabelHistoryViewButton.textContent = 'All history (' + summary.total + ')';
+      els.relabelHistoryViewButton.textContent = 'History (' + summary.total + ')';
+      setToolsBadge('voices', summary.pending);
       if (state.relabelView === 'history') {
         const filtered = Boolean(params.toString());
         els.relabelSamplesSummary.textContent = filtered
@@ -2895,7 +3030,7 @@
             summary.excluded + ' excluded · ' + summary.pending + ' waiting for review.';
       } else {
         els.relabelSamplesSummary.textContent = summary.pending
-          ? 'Approve or exclude each sample; reviewed samples move to All history.'
+          ? 'Approve or exclude each sample; reviewed samples move to History.'
           : '';
       }
       renderRelabelSamples(samples);
@@ -2913,7 +3048,7 @@
       const p = document.createElement('p'); p.className = 'muted';
       p.textContent = state.relabelView === 'history'
         ? 'No relabelled samples match these filters.'
-        : 'Nothing waiting for review. Reviewed samples are in All history.';
+        : 'Nothing waiting for review. Reviewed samples are in History.';
       els.relabelSamplesList.appendChild(p);
       return;
     }
@@ -2959,7 +3094,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'approved' }),
         });
-        if (state.relabelView === 'pending') showToast('Approved · moved to All history');
+        if (state.relabelView === 'pending') showToast('Approved · moved to History');
         await loadRelabelSamples();
       });
 
@@ -2972,7 +3107,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'excluded' }),
         });
-        if (state.relabelView === 'pending') showToast('Excluded · moved to All history');
+        if (state.relabelView === 'pending') showToast('Excluded · moved to History');
         await loadRelabelSamples();
       });
 
@@ -2984,7 +3119,7 @@
           method: 'DELETE',
           });
         await loadRelabelSamples();
-        if (state.currentSpeakerAnalysisId) await refreshCurrentSpeakerAnalysis();
+        await refreshCurrentSpeakerAnalysis();
       });
 
       const reopen = document.createElement('button'); reopen.type = 'button';
@@ -3006,78 +3141,598 @@
     }
   }
 
-  async function runSpeakerAnalysis() {
-    const recordingId = els.speakerRecordingSelect.value;
-    if (!recordingId) {
-      els.speakerAnalysisMessage.textContent = 'Choose a saved recording first.';
-      return;
-    }
-    const count = els.speakerCountSelect.value ? Number(els.speakerCountSelect.value) : null;
-    els.runSpeakerAnalysisButton.disabled = true;
-    els.speakerAnalysisMessage.textContent = 'Starting speaker analysis…';
-    els.speakerAnalysisResult.replaceChildren();
-    try {
-      const job = await api('/api/admin/speakers/analyze/' + recordingId, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ num_speakers: count }),
-      });
-      state.currentSpeakerAnalysisId = job.id;
-      userLocalSet('speakerAnalysisId', job.id);
-      await pollSpeakerAnalysis(job.id);
-    } catch (error) {
-      els.speakerAnalysisMessage.textContent = error.message;
-    } finally {
-      els.runSpeakerAnalysisButton.disabled = false;
-    }
+  // ---------------------------------------------------------------------
+  // Meetings: conversation strip and the three steps
+  // ---------------------------------------------------------------------
+
+  const ACTIVE_JOB = ['queued', 'processing'];
+
+  // A running notes job is either writing notes or only sending saved ones.
+  function sendingOnly(notes) {
+    if (!ACTIVE_JOB.includes(notes?.status)) return false;
+    return state.meetings.jobKind === 'send' || notes.stage === 'Sending to Open Notebook';
   }
 
-  async function pollSpeakerAnalysis(analysisId, quiet = false) {
-    if (state.speakerPolling) return;
-    state.speakerPolling = true;
+  function currentMeeting() {
+    return state.meetings.recordings.find((item) => item.id === state.meetings.selectedId) || null;
+  }
+
+  function meetingNotesRecordingId() {
+    return state.meetings.selectedId;
+  }
+
+  function meetingStage(recording) {
+    if (recording.open_notebook_exported && !recording.export_outdated) return 'sent';
+    if (recording.open_notebook_exported) return 'outdated';
+    if (recording.notes_ready) return 'notes';
+    if (recording.analysed) return 'analysed';
+    return 'todo';
+  }
+
+  const STAGE_CHIPS = {
+    sent: ['chip-sent', '✓ In Open Notebook'],
+    outdated: ['chip-notes', 'Newer notes not sent'],
+    notes: ['chip-notes', 'Notes not sent'],
+    analysed: ['chip-analysed', 'Analysed'],
+    todo: ['chip-todo', 'Not analysed'],
+  };
+
+  function speechLength(seconds) {
+    const value = Number(seconds || 0);
+    if (value < 60) return Math.round(value) + 's';
+    return Math.round(value / 60) + ' min';
+  }
+
+  function stepChip(element, className, text) {
+    element.className = 'chip step-chip ' + className;
+    element.textContent = text;
+  }
+
+  async function loadMeetings() {
     try {
-      for (let attempt = 0; attempt < 900; attempt += 1) {
-        const analysis = await api('/api/admin/speakers/analyses/' + analysisId, { cache: 'no-store' });
-        if (analysis.status === 'completed') {
-          state.currentSpeakerAnalysisId = analysis.id;
-          userLocalSet('speakerAnalysisId', analysis.id);
-          renderSpeakerAnalysis(analysis);
-          await loadSpeakerProfiles();
-          return;
-        }
-        if (analysis.status === 'error') {
-          els.speakerAnalysisMessage.textContent = analysis.error || 'Speaker analysis failed.';
-          return;
-        }
-        if (!quiet || attempt > 0) {
-          els.speakerAnalysisMessage.textContent = analysis.status === 'queued'
-            ? 'Speaker analysis is queued…'
-            : 'Finding speakers and transcribing their turns…';
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+      const recordings = await api('/api/admin/speakers/recordings?view=all', { cache: 'no-store' });
+      state.meetings.recordings = recordings;
+      if (!state.meetings.selectedId) {
+        try { state.meetings.selectedId = userLocalGet('meetingsSelected') || null; } catch {}
       }
-      els.speakerAnalysisMessage.textContent = 'Analysis is still running. Reload the parent area to check it again.';
+      if (state.meetings.selectedId && !recordings.some((item) => item.id === state.meetings.selectedId)) {
+        state.meetings.selectedId = null;
+      }
+      renderMeetingsList();
+      if (state.meetings.selectedId) await loadMeetingDetail();
+      else renderMeetingDetail();
     } catch (error) {
-      els.speakerAnalysisMessage.textContent = error.message;
-    } finally {
-      state.speakerPolling = false;
+      els.meetingsList.replaceChildren();
+      const li = document.createElement('li'); li.className = 'error'; li.textContent = error.message;
+      els.meetingsList.appendChild(li);
     }
   }
 
-  async function refreshCurrentSpeakerAnalysis() {
-    if (!state.currentSpeakerAnalysisId) return;
+  // Re-read list flags (analysed / notes / sent) without reloading the detail.
+  async function refreshMeetingsList() {
     try {
-      const analysis = await api('/api/admin/speakers/analyses/' + state.currentSpeakerAnalysisId, { cache: 'no-store' });
-      if (analysis.status === 'completed') renderSpeakerAnalysis(analysis);
+      state.meetings.recordings = await api('/api/admin/speakers/recordings?view=all', { cache: 'no-store' });
+      renderMeetingsList();
     } catch {}
   }
 
-  // ---------------------------------------------------------------------
-  // Meeting notes & Open Notebook export
-  // ---------------------------------------------------------------------
+  function renderMeetingsList() {
+    const { recordings, filter, selectedId } = state.meetings;
+    const query = (els.meetingsSearch.value || '').trim().toLocaleLowerCase();
+    const counts = { todo: 0, sent: 0, all: recordings.length };
+    for (const recording of recordings) {
+      if (meetingStage(recording) === 'sent') counts.sent += 1; else counts.todo += 1;
+    }
+    for (const name of ['todo', 'sent', 'all']) {
+      const button = $('meetingsFilter-' + name);
+      const label = { todo: 'To do', sent: 'Sent', all: 'All' }[name];
+      button.textContent = label + ' (' + counts[name] + ')';
+      button.setAttribute('aria-pressed', String(filter === name));
+    }
+    setToolsBadge('meetings', counts.todo);
 
-  function meetingNotesRecordingId() {
-    return els.speakerRecordingSelect.value || state.currentSpeakerAnalysisRecordingId || null;
+    const shown = recordings.filter((recording) => {
+      const stage = meetingStage(recording);
+      if (filter === 'todo' && stage === 'sent') return false;
+      if (filter === 'sent' && stage !== 'sent') return false;
+      return !query || (recording.title || '').toLocaleLowerCase().includes(query);
+    });
+
+    els.meetingsList.replaceChildren();
+    for (const recording of shown) {
+      const li = document.createElement('li');
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'meeting-card';
+      if (recording.id === selectedId) card.setAttribute('aria-current', 'true');
+      const title = document.createElement('span'); title.className = 'meeting-card-title'; title.textContent = recording.title || 'Recording';
+      const meta = document.createElement('span'); meta.className = 'meeting-card-meta';
+      const who = document.createElement('span'); who.className = 'muted';
+      const owner = recording.owner_display_name || recording.owner_username || '';
+      who.textContent = [owner, recording.duration_seconds ? speechLength(recording.duration_seconds) : ''].filter(Boolean).join(' · ');
+      const [chipClass, chipText] = STAGE_CHIPS[meetingStage(recording)];
+      const chip = document.createElement('span'); chip.className = 'chip ' + chipClass; chip.textContent = chipText;
+      meta.append(who, chip);
+      card.append(title, meta);
+      card.addEventListener('click', () => selectMeeting(recording.id));
+      li.appendChild(card);
+      els.meetingsList.appendChild(li);
+    }
+    if (!shown.length) {
+      const li = document.createElement('li'); li.className = 'meetings-empty muted';
+      li.textContent = query
+        ? 'No conversations match “' + els.meetingsSearch.value.trim() + '”.'
+        : filter === 'todo' ? 'Nothing left to do. Every conversation is in Open Notebook.'
+          : filter === 'sent' ? 'Nothing sent to Open Notebook yet.'
+            : 'No saved conversations with voice audio yet.';
+      els.meetingsList.appendChild(li);
+    }
+  }
+
+  function setMeetingsFilter(filter) {
+    state.meetings.filter = filter;
+    renderMeetingsList();
+  }
+
+  async function selectMeeting(recordingId) {
+    if (state.meetings.selectedId === recordingId) return;
+    stopSpeakerPreview();
+    state.meetings.selectedId = recordingId;
+    state.meetings.analysis = null;
+    state.meetings.notes = null;
+    state.meetings.analysisError = '';
+    state.meetings.showTurns = false;
+    try { userLocalSet('meetingsSelected', recordingId); } catch {}
+    renderMeetingsList();
+    renderMeetingDetail();
+    await loadMeetingDetail();
+  }
+
+  async function loadMeetingDetail() {
+    const recording = currentMeeting();
+    if (!recording) { renderMeetingDetail(); return; }
+    const [analysis, notes] = await Promise.all([
+      recording.latest_analysis_id
+        ? api('/api/admin/speakers/analyses/' + recording.latest_analysis_id, { cache: 'no-store' }).catch(() => null)
+        : Promise.resolve(null),
+      api('/api/admin/meeting-notes/recordings/' + recording.id, { cache: 'no-store' }).catch(() => null),
+    ]);
+    if (state.meetings.selectedId !== recording.id) return;
+    state.meetings.analysis = analysis;
+    state.meetings.notes = notes;
+    renderMeetingDetail();
+    if (notes && ACTIVE_JOB.includes(notes.status)) pollMeetingNotes(recording.id);
+  }
+
+  async function refreshCurrentSpeakerAnalysis() {
+    const analysis = state.meetings.analysis;
+    if (!analysis) return;
+    try {
+      const fresh = await api('/api/admin/speakers/analyses/' + analysis.id, { cache: 'no-store' });
+      if (state.meetings.analysis?.id !== fresh.id) return;
+      state.meetings.analysis = fresh;
+      renderMeetingDetail();
+    } catch {}
+  }
+
+  // Speakers still called "Person N": notes can't give their action items an owner.
+  // Named-but-not-remembered speakers keep their edit card but aren't counted.
+  function unnamedDetections(analysis) {
+    return (analysis?.detections || []).filter(
+      (detection) => !detection.profile_id && /^Person \d+$/.test(detection.display_name),
+    );
+  }
+
+  function renderMeetingDetail() {
+    const recording = currentMeeting();
+    if (!recording) {
+      els.meetingDetailTitle.textContent = 'Choose a conversation';
+      els.meetingDetailMeta.textContent = 'Pick one from the list above to analyse speakers, write notes and send them to Open Notebook.';
+      els.meetingSteps.hidden = true;
+      els.meetingTurns.hidden = true;
+      return;
+    }
+    const { analysis, notes } = state.meetings;
+    els.meetingDetailTitle.textContent = recording.title || 'Recording';
+    const when = new Date(recording.created_at);
+    const whenText = Number.isNaN(when.getTime())
+      ? ''
+      : when.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    els.meetingDetailMeta.textContent = [
+      recording.owner_display_name ? 'Recorded by ' + recording.owner_display_name : '',
+      whenText,
+      recording.duration_seconds ? speechLength(recording.duration_seconds) : '',
+      analysis ? analysis.speaker_count + ' speaker' + (analysis.speaker_count === 1 ? '' : 's') : '',
+    ].filter(Boolean).join(' · ');
+    els.meetingSteps.hidden = false;
+
+    renderSpeakersStep(recording, analysis);
+    renderNotesStep(recording, analysis, notes);
+    renderNotebookStep(notes);
+
+    // Outline the next thing to do.
+    const hasNotes = Boolean(notes?.has_notes);
+    const next = !analysis ? 'stepSpeakers'
+      : !hasNotes ? 'stepNotes'
+        : (!notes.exported || notes.export_outdated) ? 'stepNotebook' : '';
+    for (const id of ['stepSpeakers', 'stepNotes', 'stepNotebook']) {
+      $(id).classList.toggle('is-next', id === next);
+    }
+
+    els.meetingTurns.hidden = !(state.meetings.showTurns && analysis);
+    if (state.meetings.showTurns && analysis) renderTurns(analysis);
+  }
+
+  function speakerCountSelect(id) {
+    const label = document.createElement('label'); label.className = 'inline-select';
+    label.textContent = 'Expected speakers';
+    const select = document.createElement('select'); select.id = id;
+    for (const [value, text] of [['', 'Auto'], ['2', '2'], ['3', '3'], ['4', '4'], ['5', '5'], ['6', '6']]) {
+      const option = document.createElement('option'); option.value = value; option.textContent = text;
+      select.appendChild(option);
+    }
+    label.appendChild(select);
+    return { label, select };
+  }
+
+  function renderSpeakersStep(recording, analysis) {
+    const body = els.stepSpeakersBody;
+    const foot = els.stepSpeakersFoot;
+    body.replaceChildren();
+    foot.replaceChildren();
+    const speakerHealth = state.toolsHealth.speaker;
+    const analyserDown = speakerHealth?.level === 'bad';
+
+    if (state.meetings.analysingId === recording.id) {
+      stepChip(els.stepSpeakersChip, 'chip-todo', 'Analysing…');
+      const p = document.createElement('p'); p.className = 'muted';
+      p.textContent = state.meetings.analysisStage || 'Finding speakers and transcribing their turns…';
+      body.appendChild(p);
+      return;
+    }
+
+    if (!analysis) {
+      stepChip(els.stepSpeakersChip, 'chip-notes', 'To do');
+      const p = document.createElement('p'); p.className = 'muted small-note';
+      p.textContent = 'Not analysed yet. Analysis works out who spoke when and matches remembered voices.';
+      body.appendChild(p);
+      if (state.meetings.analysisError) {
+        const error = document.createElement('p'); error.className = 'speaker-alert small-note'; error.textContent = state.meetings.analysisError;
+        body.appendChild(error);
+      }
+      if (analyserDown) {
+        const warn = document.createElement('p'); warn.className = 'speaker-alert small-note';
+        warn.textContent = 'Speaker analyzer: ' + speakerHealth.value + (speakerHealth.detail ? ' · ' + speakerHealth.detail : '');
+        body.appendChild(warn);
+      }
+      const { label, select } = speakerCountSelect('meetingSpeakerCount');
+      const run = document.createElement('button'); run.type = 'button'; run.className = 'primary'; run.textContent = 'Analyse conversation';
+      run.disabled = analyserDown;
+      run.addEventListener('click', () => runSpeakerAnalysis(select.value ? Number(select.value) : null));
+      body.append(label, run);
+      return;
+    }
+
+    const unnamed = unnamedDetections(analysis);
+    if (unnamed.length) stepChip(els.stepSpeakersChip, 'chip-notes', unnamed.length + ' unnamed');
+    else stepChip(els.stepSpeakersChip, 'chip-analysed', 'Done');
+
+    const detections = [...analysis.detections].sort((a, b) => a.person_index - b.person_index);
+    for (const detection of detections) {
+      body.appendChild(detection.profile_id
+        ? matchedSpeakerRow(analysis, detection)
+        : unnamedSpeakerCard(analysis, detection));
+    }
+    if (!detections.length) {
+      const p = document.createElement('p'); p.className = 'muted small-note'; p.textContent = 'No speakers were found in this recording.';
+      body.appendChild(p);
+    }
+
+    const review = document.createElement('button'); review.type = 'button'; review.className = 'quiet link-button';
+    const turns = (analysis.turns || []).filter((turn) => turn.text).length;
+    review.textContent = state.meetings.showTurns ? 'Hide turns' : 'Review ' + turns + ' turns →';
+    review.setAttribute('aria-expanded', String(Boolean(state.meetings.showTurns)));
+    review.setAttribute('aria-controls', 'meetingTurns');
+    review.addEventListener('click', () => {
+      state.meetings.showTurns = !state.meetings.showTurns;
+      renderMeetingDetail();
+      if (state.meetings.showTurns) els.meetingTurns.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    const { label, select } = speakerCountSelect('meetingReanalyseCount');
+    const rerun = document.createElement('button'); rerun.type = 'button'; rerun.textContent = 'Re-analyse';
+    rerun.disabled = analyserDown;
+    rerun.addEventListener('click', () => {
+      if (!confirm('Re-analyse this conversation? Speaker labels and turn corrections start again from a fresh analysis.')) return;
+      runSpeakerAnalysis(select.value ? Number(select.value) : null);
+    });
+    const rerunGroup = document.createElement('span'); rerunGroup.className = 'reanalyse-group';
+    rerunGroup.append(label, rerun);
+    foot.append(review, rerunGroup);
+  }
+
+  function hearButton(analysis, detection) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'quiet speaker-preview-button';
+    button.dataset.idleLabel = '▶ Hear';
+    button.textContent = button.dataset.idleLabel;
+    button.setAttribute('aria-label', 'Hear ' + detection.display_name);
+    button.setAttribute('aria-pressed', 'false');
+    button.disabled = !detection.can_preview;
+    button.title = detection.can_preview
+      ? 'Play the longest continuous section attributed to this speaker'
+      : 'No playable speech is available for this speaker.';
+    button.addEventListener('click', () => toggleSpeakerPreview(analysis, detection, button));
+    return button;
+  }
+
+  function matchedSpeakerRow(analysis, detection) {
+    const row = document.createElement('div'); row.className = 'speaker-row';
+    const info = document.createElement('div'); info.className = 'speaker-row-info';
+    const name = document.createElement('strong'); name.textContent = detection.display_name;
+    const meta = document.createElement('span'); meta.className = 'muted small-note';
+    meta.textContent = 'Matched · ' + speechLength(detection.speech_seconds);
+    info.append(name, meta);
+    row.append(info, hearButton(analysis, detection));
+    return row;
+  }
+
+  function unnamedSpeakerCard(analysis, detection) {
+    const card = document.createElement('div'); card.className = 'speaker-row speaker-unnamed';
+    const top = document.createElement('div'); top.className = 'speaker-unnamed-top';
+    const info = document.createElement('div'); info.className = 'speaker-row-info';
+    const name = document.createElement('strong'); name.textContent = detection.display_name;
+    const isDefaultName = /^Person \d+$/.test(detection.display_name);
+    const chip = document.createElement('span'); chip.className = 'chip chip-notes chip-inline';
+    chip.textContent = isDefaultName ? 'Unnamed' : 'Not remembered';
+    name.appendChild(chip);
+    const meta = document.createElement('span'); meta.className = 'muted small-note'; meta.textContent = speechLength(detection.speech_seconds);
+    info.append(name, meta);
+    top.append(info, hearButton(analysis, detection));
+
+    const pickId = 'voicePick-' + detection.id;
+    const pickLabel = document.createElement('label'); pickLabel.className = 'admin-label'; pickLabel.htmlFor = pickId;
+    pickLabel.textContent = 'Who is this?';
+    const pick = document.createElement('select'); pick.id = pickId;
+    const blank = document.createElement('option'); blank.value = ''; blank.textContent = 'Choose a remembered voice…';
+    pick.appendChild(blank);
+    const profiles = [...(state.speakerProfiles || [])].sort((a, b) => a.name.localeCompare(b.name));
+    for (const profile of profiles) {
+      const option = document.createElement('option'); option.value = profile.name; option.textContent = profile.name;
+      pick.appendChild(option);
+    }
+    const newOption = document.createElement('option'); newOption.value = '__new'; newOption.textContent = 'New name…';
+    pick.appendChild(newOption);
+
+    const newId = 'voiceNew-' + detection.id;
+    const newLabel = document.createElement('label'); newLabel.className = 'admin-label'; newLabel.htmlFor = newId;
+    newLabel.textContent = 'New name'; newLabel.hidden = true;
+    const newName = document.createElement('input'); newName.id = newId; newName.type = 'text'; newName.placeholder = 'e.g. Jordan';
+    newName.autocomplete = 'off';
+    if (!isDefaultName) newName.value = detection.display_name;
+    newLabel.appendChild(newName);
+    pick.addEventListener('change', () => {
+      newLabel.hidden = pick.value !== '__new';
+      if (!newLabel.hidden) newName.focus();
+    });
+
+    const actions = document.createElement('div'); actions.className = 'speaker-unnamed-actions';
+    const apply = document.createElement('button'); apply.type = 'button'; apply.className = 'primary small'; apply.textContent = 'Apply name';
+    const rememberLabel = document.createElement('label'); rememberLabel.className = 'check small-note';
+    const remember = document.createElement('input'); remember.type = 'checkbox';
+    remember.checked = Boolean(detection.can_remember);
+    remember.disabled = !detection.can_remember;
+    rememberLabel.append(remember, document.createTextNode(' Add to voiceprint'));
+    if (!detection.can_remember) rememberLabel.title = 'Needs at least 3 seconds of this person speaking.';
+    actions.append(apply, rememberLabel);
+
+    apply.addEventListener('click', async () => {
+      const chosen = pick.value === '__new' ? newName.value.trim() : pick.value;
+      if (!chosen) {
+        showToast(pick.value === '__new' ? 'Type the new name first' : 'Choose a voice or New name…');
+        return;
+      }
+      apply.disabled = true;
+      const base = '/api/admin/speakers/analyses/' + analysis.id + '/detections/' + encodeURIComponent(detection.speaker_key);
+      try {
+        if (remember.checked && detection.can_remember) {
+          const saved = await api(base + '/remember', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: chosen }),
+          });
+          showToast(saved.already_saved ? chosen + ' already has this sample' : chosen + ' · voice sample ' + saved.sample_count + '/8 saved');
+          await loadSpeakerProfiles();
+        } else {
+          await api(base, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ display_name: chosen }),
+          });
+          showToast('Named ' + chosen);
+        }
+        await refreshCurrentSpeakerAnalysis();
+      } catch (error) {
+        showToast(error.message);
+        apply.disabled = false;
+      }
+    });
+
+    card.append(top, pickLabel, pick, newLabel, actions);
+    return card;
+  }
+
+  function renderNotesStep(recording, analysis, notes) {
+    const llmConfigured = Boolean(state.meetingNotesStatus?.llm?.configured);
+    const busy = ACTIVE_JOB.includes(notes?.status);
+    const regenerating = busy && !sendingOnly(notes);
+    const hasNotes = Boolean(notes?.has_notes);
+    const unnamed = unnamedDetections(analysis).length;
+
+    if (regenerating) stepChip(els.stepNotesChip, 'chip-todo', 'Working…');
+    else if (hasNotes) stepChip(els.stepNotesChip, 'chip-analysed', 'Ready');
+    else if (analysis) stepChip(els.stepNotesChip, 'chip-notes', 'Next');
+    else stepChip(els.stepNotesChip, 'chip-todo', 'Waiting');
+
+    els.stepNotesHint.textContent = !llmConfigured
+      ? 'Set LLM_BASE_URL to your llama-server to generate notes.'
+      : !analysis
+        ? 'No speaker analysis yet: lines will say Unidentified and action items won’t have owners.'
+        : unnamed
+          ? 'Name the unnamed speaker' + (unnamed === 1 ? '' : 's') + ' first so their action items have an owner.'
+          : 'Uses the names from step 1.';
+    els.meetingNotesGenerateButton.textContent = hasNotes ? 'Regenerate notes' : 'Generate notes';
+    els.meetingNotesGenerateButton.disabled = !llmConfigured || busy;
+    els.meetingNotesGenerateButton.classList.toggle('primary', !hasNotes);
+
+    let message = '';
+    if (regenerating) message = (notes.stage || 'Queued') + '…';
+    else if (busy) message = 'Notes are being sent to Open Notebook…';
+    else if (notes?.status === 'error') message = 'Failed: ' + (notes.error || 'unknown error');
+    else if (hasNotes && notes.notes_generated_at) {
+      message = 'Generated ' + friendlyDate(notes.notes_generated_at) + (notes.processing_seconds ? ' · ' + notes.processing_seconds + 's' : '');
+    }
+    els.meetingNotesMessage.textContent = message;
+    els.meetingNotesMessage.classList.toggle('speaker-alert', notes?.status === 'error');
+
+    els.meetingNotesPreview.textContent = notes?.notes_markdown || '';
+    els.meetingNotesPreview.hidden = !hasNotes;
+    els.meetingNotesEmpty.hidden = hasNotes;
+    els.meetingNotesModel.textContent = notes?.model || state.meetingNotesStatus?.llm?.model || '';
+    els.meetingNotesDownloadButton.disabled = !hasNotes;
+  }
+
+  function renderNotebookStep(notes) {
+    const configured = Boolean(state.meetingNotesStatus?.open_notebook?.configured);
+    const busy = ACTIVE_JOB.includes(notes?.status);
+    const hasNotes = Boolean(notes?.has_notes);
+    const exported = Boolean(notes?.exported);
+    const outdated = Boolean(notes?.export_outdated);
+
+    if (sendingOnly(notes)) stepChip(els.stepNotebookChip, 'chip-todo', 'Sending…');
+    else if (exported && outdated) stepChip(els.stepNotebookChip, 'chip-notes', 'Out of date');
+    else if (exported) stepChip(els.stepNotebookChip, 'chip-sent', 'Sent');
+    else if (hasNotes) stepChip(els.stepNotebookChip, 'chip-notes', 'Next');
+    else stepChip(els.stepNotebookChip, 'chip-todo', 'Waiting');
+
+    const where = notes?.open_notebook_notebook_name ? ' · ' + notes.open_notebook_notebook_name : '';
+    const when = notes?.exported_at ? ' · sent ' + friendlyDate(notes.exported_at) : '';
+    els.meetingNotesLinkRow.classList.toggle('is-sent', exported && !outdated);
+    els.meetingNotesLinkRow.classList.toggle('outdated', exported && outdated);
+    els.meetingNotesExportBadgeText.textContent = exported
+      ? (outdated ? '⚠ In Open Notebook' + where + when + ' · newer notes not sent yet' : '✓ In Open Notebook' + where + when)
+      : 'Not sent yet';
+    const uiUrl = state.meetingNotesStatus?.open_notebook?.ui_url;
+    const notebookId = notes?.open_notebook_notebook_id;
+    els.meetingNotesLink.hidden = !(exported && uiUrl && notebookId);
+    if (uiUrl && notebookId) els.meetingNotesLink.href = uiUrl + '/notebooks/' + encodeURIComponent(notebookId);
+
+    els.meetingNotesResendButton.textContent = exported ? 'Re-send to notebook…' : 'Send to notebook…';
+    els.meetingNotesResendButton.disabled = !configured || !hasNotes || busy;
+    els.meetingNotesResendButton.classList.toggle('primary', hasNotes && (!exported || outdated));
+    els.stepNotebookFoot.textContent = !configured
+      ? 'Set OPEN_NOTEBOOK_URL to enable sending.'
+      : !hasNotes ? 'Available once notes are ready.' : '';
+  }
+
+  async function runSpeakerAnalysis(numSpeakers) {
+    const recording = currentMeeting();
+    if (!recording || state.meetings.analysingId) return;
+    state.meetings.analysingId = recording.id;
+    state.meetings.analysisError = '';
+    state.meetings.analysisStage = 'Starting speaker analysis…';
+    state.meetings.showTurns = false;
+    renderMeetingDetail();
+    try {
+      const job = await api('/api/admin/speakers/analyze/' + recording.id, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ num_speakers: numSpeakers }),
+      });
+      for (let attempt = 0; attempt < 900; attempt += 1) {
+        const analysis = await api('/api/admin/speakers/analyses/' + job.id, { cache: 'no-store' });
+        if (analysis.status === 'completed') {
+          Object.assign(recording, {
+            analysed: true,
+            latest_analysis_id: analysis.id,
+            speaker_count: analysis.speaker_count,
+          });
+          if (state.meetings.selectedId === recording.id) state.meetings.analysis = analysis;
+          showToast(analysis.speaker_count + ' speaker' + (analysis.speaker_count === 1 ? '' : 's') + ' found');
+          return;
+        }
+        if (analysis.status === 'error') throw new Error(analysis.error || 'Speaker analysis failed.');
+        state.meetings.analysisStage = analysis.status === 'queued'
+          ? 'Waiting for the speaker analyzer…'
+          : 'Finding speakers and transcribing their turns…';
+        if (state.meetings.selectedId === recording.id) renderMeetingDetail();
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      throw new Error('Analysis is still running. Come back to this conversation shortly.');
+    } catch (error) {
+      if (state.meetings.selectedId === recording.id) state.meetings.analysisError = error.message;
+    } finally {
+      state.meetings.analysingId = null;
+      renderMeetingsList();
+      if (state.meetings.selectedId === recording.id) renderMeetingDetail();
+    }
+  }
+
+  async function pollMeetingNotes(recordingId) {
+    if (state.meetings.notesPolling === recordingId) return;
+    state.meetings.notesPolling = recordingId;
+    try {
+      for (let attempt = 0; attempt < 900; attempt += 1) {
+        const result = await api('/api/admin/meeting-notes/recordings/' + recordingId, { cache: 'no-store' });
+        if (state.meetings.selectedId === recordingId) {
+          state.meetings.notes = result;
+          renderMeetingDetail();
+        }
+        if (!ACTIVE_JOB.includes(result.status)) {
+          if (result.status === 'completed') {
+            showToast(result.export_requested ? 'Sent to Open Notebook' : 'Meeting notes ready');
+          }
+          state.meetings.jobKind = null;
+          await refreshMeetingsList();
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    } catch (error) {
+      if (state.meetings.selectedId === recordingId) els.meetingNotesMessage.textContent = error.message;
+    } finally {
+      if (state.meetings.notesPolling === recordingId) state.meetings.notesPolling = null;
+    }
+  }
+
+  async function startMeetingNotes({ regenerate, exportToNotebook }) {
+    const recordingId = meetingNotesRecordingId();
+    if (!recordingId) return;
+    const body = { regenerate_notes: regenerate, export: exportToNotebook };
+    if (exportToNotebook) {
+      const notebook = await chooseNotebook();
+      if (!notebook) return;
+      body.notebook_id = notebook.id;
+      body.notebook_name = notebook.name;
+    }
+    if (regenerate && state.meetings.analysis?.recording_id === recordingId) {
+      body.analysis_id = state.meetings.analysis.id;
+    }
+    state.meetings.jobKind = regenerate ? 'notes' : 'send';
+    try {
+      const job = await api('/api/admin/meeting-notes/recordings/' + recordingId, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (state.meetings.selectedId === recordingId) {
+        state.meetings.notes = { ...(state.meetings.notes || {}), ...job };
+        renderMeetingDetail();
+      }
+      await pollMeetingNotes(recordingId);
+    } catch (error) {
+      els.meetingNotesMessage.textContent = error.message;
+    }
   }
 
   async function loadMeetingNotesStatus() {
@@ -3086,210 +3741,19 @@
       state.meetingNotesStatus = status;
       const llmInfo = status.llm || {};
       const notebook = status.open_notebook || {};
-      const parts = [];
-      let ok = true;
-      if (!llmInfo.configured) { parts.push('Model not set'); ok = false; }
-      else if (!llmInfo.reachable) { parts.push('Model offline'); ok = false; }
-      else if (llmInfo.model_available === false) { parts.push('Model ' + llmInfo.model + ' not loaded'); ok = false; }
-      else parts.push('Model ready');
-      if (!notebook.configured) parts.push('Open Notebook not set');
-      else if (!notebook.reachable) { parts.push('Open Notebook offline'); ok = false; }
-      else parts.push('Open Notebook ready');
-      els.meetingNotesServiceStatus.textContent = parts.join(' · ');
-      els.meetingNotesServiceStatus.className = 'pill ' + (ok ? 'speaker-ready' : 'speaker-warning');
-
+      if (!llmInfo.configured) setHealth('llm', 'off', 'Not set up', 'Set LLM_BASE_URL');
+      else if (!llmInfo.reachable) setHealth('llm', 'bad', 'Not reachable', llmInfo.error || '');
+      else if (llmInfo.model_available === false) setHealth('llm', 'bad', 'Model not loaded', llmInfo.model + ' is not on the server');
+      else setHealth('llm', 'ok', 'Ready', llmInfo.model || '');
+      if (!notebook.configured) setHealth('notebook', 'off', 'Not set up', 'Set OPEN_NOTEBOOK_URL');
+      else if (!notebook.reachable) setHealth('notebook', 'bad', 'Not reachable', notebook.error || '');
+      else setHealth('notebook', 'ok', 'Ready', notebook.notebook_count + ' notebook' + (notebook.notebook_count === 1 ? '' : 's'));
     } catch (error) {
       state.meetingNotesStatus = null;
-      els.meetingNotesServiceStatus.textContent = 'Unavailable';
-      els.meetingNotesServiceStatus.className = 'pill speaker-warning';
+      setHealth('llm', 'bad', 'Unknown', error.message || '');
+      setHealth('notebook', 'bad', 'Unknown', error.message || '');
     }
-    updateMeetingNotesButtons();
-  }
-
-  function updateMeetingNotesButtons() {
-    const status = state.meetingNotesStatus || {};
-    const llmReady = Boolean(status.llm?.configured);
-    const notebookReady = Boolean(status.open_notebook?.configured);
-    const recordingId = meetingNotesRecordingId();
-    const result = state.meetingNotesResult;
-    const busy = state.meetingNotesPolling || ['queued', 'processing'].includes(result?.status);
-    const hasNotes = Boolean(result?.has_notes);
-    const matches = result && result.recording_id === recordingId;
-
-    const exported = Boolean(matches && result.exported);
-
-    // Once a conversation is in Open Notebook, re-sending becomes the main
-    // action; regenerating is still available (e.g. after fixing names).
-    els.meetingNotesExportButton.textContent = exported ? 'Regenerate & replace' : 'Generate notes & export';
-    els.meetingNotesResendButton.textContent = exported ? 'Re-send saved notes' : 'Export saved notes';
-    els.meetingNotesExportButton.classList.toggle('primary', !exported);
-    els.meetingNotesResendButton.classList.toggle('primary', exported);
-    els.meetingNotesResendButton.hidden = !(matches && hasNotes);
-
-    els.meetingNotesExportButton.disabled = !recordingId || busy || !llmReady || !notebookReady;
-    els.meetingNotesGenerateButton.disabled = !recordingId || busy || !llmReady;
-    els.meetingNotesResendButton.disabled = !recordingId || busy || !notebookReady || !(matches && hasNotes);
-    els.meetingNotesDownloadButton.disabled = !(matches && hasNotes);
-    els.meetingNotesExportButton.title = !llmReady
-      ? 'Set LLM_BASE_URL to your llama-server'
-      : !notebookReady ? 'Set OPEN_NOTEBOOK_URL to export'
-        : exported ? 'Run the model again and replace the copy in Open Notebook' : '';
-    els.meetingNotesResendButton.title = exported
-      ? 'Send the saved transcript and notes again without re-running the model, replacing the copy in Open Notebook'
-      : 'Send the saved transcript and notes to Open Notebook without re-running the model';
-  }
-
-  function renderMeetingNotes(result) {
-    state.meetingNotesResult = result;
-    const notesText = result?.notes_markdown || '';
-    els.meetingNotesPreview.textContent = notesText;
-    els.meetingNotesPreview.hidden = !notesText;
-
-    let message = '';
-    if (!result || result.status === 'none') {
-      message = 'No notes yet for this conversation.';
-    } else if (result.status === 'queued' || result.status === 'processing') {
-      message = (result.stage || 'Queued') + '…';
-    } else if (result.status === 'error') {
-      message = 'Failed: ' + (result.error || 'unknown error') + (notesText ? ' The last saved notes are shown below.' : '');
-    } else {
-      const when = result.exported_at || result.notes_generated_at;
-      message = (result.stage || 'Notes ready') + (when ? ' · ' + friendlyDate(when) : '') +
-        (result.model ? ' · ' + result.model : '') +
-        (result.processing_seconds ? ' · ' + result.processing_seconds + 's' : '') +
-        (result.analysis_id ? '' : ' · no speaker labels (run speaker analysis for named owners)');
-    }
-    els.meetingNotesMessage.textContent = message;
-    els.meetingNotesMessage.classList.toggle('speaker-alert', result?.status === 'error');
-
-    const uiUrl = state.meetingNotesStatus?.open_notebook?.ui_url;
-    const notebookId = result?.open_notebook_notebook_id;
-    const exported = Boolean(result?.exported);
-    els.meetingNotesLinkRow.hidden = !exported;
-    els.meetingNotesLinkRow.classList.toggle('outdated', Boolean(result?.export_outdated));
-    if (exported) {
-      const where = result.open_notebook_notebook_name ? ' · ' + result.open_notebook_notebook_name : '';
-      const when = result.exported_at ? ' · sent ' + friendlyDate(result.exported_at) : '';
-      els.meetingNotesExportBadgeText.textContent = result.export_outdated
-        ? '⚠ In Open Notebook' + where + when + ' · newer notes not sent yet'
-        : '✓ In Open Notebook' + where + when;
-    }
-    els.meetingNotesLink.hidden = !(uiUrl && notebookId && exported);
-    if (uiUrl && notebookId) {
-      els.meetingNotesLink.href = uiUrl + '/notebooks/' + encodeURIComponent(notebookId);
-    }
-    markRecordingExported(result);
-    updateMeetingNotesButtons();
-  }
-
-  // Keep the conversation list's "✓ Open Notebook" marker in step with the
-  // latest result without reloading the whole list.
-  function renderRecordingOption(option) {
-    const stage = option.dataset.exported === 'true'
-      ? ' · ✓ Open Notebook'
-      : option.dataset.analysed === 'true' ? ' · analysed' : '';
-    option.textContent = option.dataset.label + stage;
-  }
-
-  function recordingOption(recordingId) {
-    return [...els.speakerRecordingSelect.options].find((item) => item.value === recordingId && item.dataset.label);
-  }
-
-  function markRecordingExported(result) {
-    const option = result?.recording_id ? recordingOption(result.recording_id) : null;
-    if (!option) return;
-    option.dataset.exported = result.exported ? 'true' : 'false';
-    renderRecordingOption(option);
-  }
-
-  function markRecordingAnalysed(recordingId) {
-    const option = recordingId ? recordingOption(recordingId) : null;
-    if (!option) return;
-    option.dataset.analysed = 'true';
-    renderRecordingOption(option);
-  }
-
-  async function loadMeetingNotes() {
-    const recordingId = meetingNotesRecordingId();
-    state.meetingNotesRecordingId = recordingId;
-    if (!recordingId) {
-      state.meetingNotesResult = null;
-      els.meetingNotesPreview.hidden = true;
-      els.meetingNotesLinkRow.hidden = true;
-      els.meetingNotesMessage.textContent = 'Choose a conversation above.';
-      updateMeetingNotesButtons();
-      return;
-    }
-    try {
-      const result = await api('/api/admin/meeting-notes/recordings/' + recordingId, { cache: 'no-store' });
-      if (meetingNotesRecordingId() !== recordingId) return;
-      renderMeetingNotes(result);
-      if (['queued', 'processing'].includes(result.status)) pollMeetingNotes(recordingId);
-    } catch (error) {
-      els.meetingNotesMessage.textContent = error.message;
-    }
-  }
-
-  async function pollMeetingNotes(recordingId) {
-    if (state.meetingNotesPolling) return;
-    state.meetingNotesPolling = true;
-    updateMeetingNotesButtons();
-    try {
-      for (let attempt = 0; attempt < 900; attempt += 1) {
-        const result = await api('/api/admin/meeting-notes/recordings/' + recordingId, { cache: 'no-store' });
-        if (meetingNotesRecordingId() === recordingId) renderMeetingNotes(result);
-        if (!['queued', 'processing'].includes(result.status)) {
-          if (result.status === 'completed') {
-            showToast(result.export_requested ? 'Notes exported to Open Notebook' : 'Meeting notes ready');
-          }
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-    } catch (error) {
-      els.meetingNotesMessage.textContent = error.message;
-    } finally {
-      state.meetingNotesPolling = false;
-      updateMeetingNotesButtons();
-    }
-  }
-
-  async function startMeetingNotes({ regenerate, exportToNotebook }) {
-    const recordingId = meetingNotesRecordingId();
-    if (!recordingId) {
-      els.meetingNotesMessage.textContent = 'Choose a conversation above first.';
-      return;
-    }
-    const body = { regenerate_notes: regenerate, export: exportToNotebook };
-    if (exportToNotebook) {
-      const notebook = await chooseNotebook();
-      if (!notebook) return;
-      body.notebook_id = notebook.id;
-      body.notebook_name = notebook.name;
-    }
-    if (
-      regenerate &&
-      state.currentSpeakerAnalysisId &&
-      state.currentSpeakerAnalysisRecordingId === recordingId
-    ) {
-      body.analysis_id = state.currentSpeakerAnalysisId;
-    }
-    els.meetingNotesMessage.textContent = regenerate ? 'Starting notes…' : 'Sending to Open Notebook…';
-    els.meetingNotesExportButton.disabled = true;
-    els.meetingNotesGenerateButton.disabled = true;
-    els.meetingNotesResendButton.disabled = true;
-    try {
-      const job = await api('/api/admin/meeting-notes/recordings/' + recordingId, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      renderMeetingNotes(job);
-      await pollMeetingNotes(recordingId);
-    } catch (error) {
-      els.meetingNotesMessage.textContent = error.message;
-      updateMeetingNotesButtons();
-    }
+    if (state.meetings.selectedId) renderMeetingDetail();
   }
 
   let notebookPickerNotebooks = [];
@@ -3345,9 +3809,7 @@
 
   function chooseNotebook() {
     const dialog = els.notebookPickerDialog;
-    const preferredId = state.meetingNotesResult?.recording_id === meetingNotesRecordingId()
-      ? state.meetingNotesResult?.open_notebook_notebook_id
-      : null;
+    const preferredId = state.meetings.notes?.open_notebook_notebook_id || null;
     return new Promise((resolve) => {
       const onClose = () => {
         dialog.removeEventListener('close', onClose);
@@ -3448,95 +3910,9 @@
     }
   }
 
-  function renderSpeakerAnalysis(analysis) {
+  function renderTurns(analysis) {
     stopSpeakerPreview();
-    state.currentSpeakerAnalysisRecordingId = analysis.recording_id;
-    markRecordingAnalysed(analysis.recording_id);
-    if (!els.speakerRecordingSelect.value && state.meetingNotesRecordingId !== analysis.recording_id) {
-      loadMeetingNotes();
-    }
-    const owner = analysis.recording_owner || analysis.recording_owner_username || 'Unknown user';
-    const recordingTitle = analysis.recording_title || 'Recording';
-    els.speakerAnalysisMessage.textContent =
-      owner + ' · ' + recordingTitle + ' · ' +
-      analysis.speaker_count + ' speaker' + (analysis.speaker_count === 1 ? '' : 's') +
-      ' found · processed in ' + analysis.processing_seconds + 's';
     els.speakerAnalysisResult.replaceChildren();
-
-    const speakerHeading = document.createElement('h4'); speakerHeading.textContent = 'Speaker labels';
-    const speakerGrid = document.createElement('div'); speakerGrid.className = 'speaker-detection-grid';
-
-    for (const detection of analysis.detections) {
-      const card = document.createElement('div'); card.className = 'speaker-detection-card';
-      const top = document.createElement('div'); top.className = 'speaker-detection-top';
-      const title = document.createElement('strong'); title.textContent = 'Person ' + detection.person_index;
-      const badge = document.createElement('span'); badge.className = detection.profile_id ? 'speaker-match matched' : 'speaker-match';
-      badge.textContent = detection.profile_id
-        ? ('Recognised · similarity ' + Number(detection.match_score || 0).toFixed(2))
-        : 'Not remembered';
-      top.append(title, badge);
-
-      const input = document.createElement('input'); input.value = detection.display_name; input.setAttribute('aria-label', 'Speaker label');
-
-      const preview = document.createElement('button');
-      preview.type = 'button';
-      preview.className = 'speaker-preview-button';
-      const previewSeconds = Number(detection.preview_seconds || 0);
-      preview.dataset.idleLabel = previewSeconds
-        ? ('▶ Hear sample · ' + previewSeconds.toFixed(1) + 's')
-        : '▶ Hear sample';
-      preview.textContent = preview.dataset.idleLabel;
-      preview.disabled = !detection.can_preview;
-      preview.title = detection.can_preview
-        ? 'Play the longest continuous section attributed to this speaker'
-        : 'No playable attributed speech is available for this speaker.';
-      preview.setAttribute('aria-pressed', 'false');
-      preview.addEventListener('click', () => toggleSpeakerPreview(analysis, detection, preview));
-
-      const actions = document.createElement('div'); actions.className = 'button-row speaker-label-actions';
-      const save = document.createElement('button'); save.type = 'button'; save.textContent = 'Save tag';
-      save.addEventListener('click', async () => {
-        const name = input.value.trim();
-        if (!name) return;
-        await api('/api/admin/speakers/analyses/' + analysis.id + '/detections/' + encodeURIComponent(detection.speaker_key), {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ display_name: name }),
-        });
-        showToast('Speaker tag saved');
-        await refreshCurrentSpeakerAnalysis();
-      });
-      const remember = document.createElement('button'); remember.type = 'button'; remember.className = 'primary';
-      remember.textContent = detection.profile_id ? 'Add voice sample' : 'Remember this speaker';
-      remember.disabled = !detection.can_remember;
-      remember.title = detection.can_remember
-        ? 'Add this conversation as another confirmed voice sample'
-        : 'Need at least 3 seconds of this person speaking before learning their voice.';
-      const speechInfo = document.createElement('span'); speechInfo.className = 'muted small-note';
-      speechInfo.textContent = Number(detection.speech_seconds || 0).toFixed(1) + 's attributed speech';
-      remember.addEventListener('click', async () => {
-        const name = input.value.trim();
-        if (!name) return;
-        try {
-          const saved = await api('/api/admin/speakers/analyses/' + analysis.id + '/detections/' + encodeURIComponent(detection.speaker_key) + '/remember', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name }),
-          });
-          showToast(saved.already_saved
-            ? 'This voice sample was already saved'
-            : ('Voice sample added · ' + saved.sample_count + ' total'));
-          await Promise.all([loadSpeakerProfiles(), refreshCurrentSpeakerAnalysis()]);
-        } catch (error) {
-          showToast(error.message);
-        }
-      });
-      actions.append(save, remember);
-      card.append(top, input, speechInfo, preview, actions);
-      speakerGrid.appendChild(card);
-    }
-
-    const transcriptHeading = document.createElement('h4'); transcriptHeading.textContent = 'Conversation';
     const conversation = document.createElement('div'); conversation.className = 'speaker-conversation';
     for (const turn of analysis.turns) {
       if (!turn.text) continue;
@@ -3600,29 +3976,53 @@
       conversation.appendChild(p);
     }
 
-    els.speakerAnalysisResult.append(speakerHeading, speakerGrid, transcriptHeading, conversation);
+    els.speakerAnalysisResult.append(conversation);
   }
 
   async function loadAdminStatus() {
-    const status = await api('/api/admin/status', { cache: 'no-store' });
-    els.retentionDays.value = String(status.retention?.audio_retention_days || 0);
-    els.deleteAudioImmediately.checked = Boolean(status.retention?.delete_audio_after_transcription);
-    els.retentionDays.disabled = els.deleteAudioImmediately.checked;
+    try {
+      const status = await api('/api/admin/status', { cache: 'no-store' });
+      els.retentionDays.value = String(status.retention?.audio_retention_days || 0);
+      els.deleteAudioImmediately.checked = Boolean(status.retention?.delete_audio_after_transcription);
+      els.retentionDays.disabled = els.deleteAudioImmediately.checked;
 
-    const rows = [
-      ['Database', status.database ? 'Connected' : 'Problem', status.database],
-      ['Speech gateway', status.speech_gateway ? ('Ready' + (status.speech_gateway_version ? ' · v' + status.speech_gateway_version : '')) : 'Problem', status.speech_gateway],
-      ['Saved recordings', String(status.recordings), true],
-      ['Recycle bin', String(status.recycle_bin), true],
-      ['Voice files', status.audio_files + ' · ' + formatBytes(status.audio_bytes), true],
-      ['Last app backup', status.last_backup_at ? friendlyDate(status.last_backup_at) : 'Not downloaded yet', Boolean(status.last_backup_at)],
-    ];
-    els.systemStatus.replaceChildren();
-    for (const [label, value, good] of rows) {
-      const row = document.createElement('div'); row.className = 'status-row';
-      const name = document.createElement('span'); name.textContent = label;
-      const val = document.createElement('span'); val.className = good ? 'status-good' : 'status-bad'; val.textContent = value;
-      row.append(name, val); els.systemStatus.appendChild(row);
+      setHealth('database', status.database ? 'ok' : 'bad', status.database ? 'Connected' : 'Problem', 'PostgreSQL');
+      setHealth(
+        'gateway',
+        status.speech_gateway ? 'ok' : 'bad',
+        status.speech_gateway ? 'Ready' : 'Not reachable',
+        status.speech_gateway
+          ? (status.speech_gateway_version ? 'v' + status.speech_gateway_version : 'Whisper + Piper')
+          : 'Live transcription and read-aloud are down',
+      );
+
+      els.systemStatus.replaceChildren();
+      for (const [label, value] of [
+        ['Recordings', String(status.recordings)],
+        ['Voice files', formatBytes(status.audio_bytes)],
+        ['Recycle bin', String(status.recycle_bin)],
+      ]) {
+        const stat = document.createElement('div'); stat.className = 'storage-stat';
+        const name = document.createElement('span'); name.className = 'muted small-note'; name.textContent = label;
+        const val = document.createElement('strong'); val.textContent = value;
+        stat.append(name, val);
+        els.systemStatus.appendChild(stat);
+      }
+
+      els.backupNotice.replaceChildren();
+      const notice = document.createElement('p');
+      if (status.last_backup_at) {
+        notice.className = 'backup-ok';
+        notice.textContent = 'Last app backup downloaded ' + friendlyDate(status.last_backup_at) + '.';
+      } else {
+        notice.className = 'backup-warn';
+        const strong = document.createElement('strong'); strong.textContent = 'No app backup downloaded yet. ';
+        notice.append(strong, document.createTextNode('Your PostgreSQL backups still cover the database.'));
+      }
+      els.backupNotice.appendChild(notice);
+    } catch (error) {
+      setHealth('database', 'bad', 'Unknown', error.message || '');
+      setHealth('gateway', 'bad', 'Unknown', error.message || '');
     }
   }
 
@@ -3670,47 +4070,51 @@
   }
 
   async function loadRecycleBin() {
-    els.recycleList.innerHTML = '<p class="muted">Loading…</p>';
     try {
       const records = await api('/api/admin/recycle-bin', { cache: 'no-store' });
       renderRecycleBin(records);
     } catch (error) {
-      els.recycleList.innerHTML = '<p class="error">' + escapeHtml(error.message) + '</p>';
+      els.recycleList.replaceChildren(tableMessageRow(4, error.message, 'error'));
     }
   }
 
   function renderRecycleBin(records) {
     els.recycleList.replaceChildren();
     if (!records.length) {
-      els.recycleList.innerHTML = '<p class="muted">Recycle bin is empty.</p>';
+      els.recycleList.appendChild(tableMessageRow(4, 'Recycle bin is empty.'));
       return;
     }
     for (const record of records) {
-      const card = document.createElement('article'); card.className = 'recycle-card';
-      const title = document.createElement('h4'); title.textContent = record.title || 'Recording';
-      const meta = document.createElement('div'); meta.className = 'history-meta';
-      const deleted = document.createElement('span'); deleted.textContent = record.deleted_at ? 'Deleted ' + friendlyDate(record.deleted_at) : 'Deleted';
-      const words = document.createElement('span'); words.textContent = record.word_count + ' words';
-      meta.append(deleted, words);
-      const snippet = document.createElement('p'); snippet.className = 'snippet';
-      snippet.textContent = record.transcript.slice(0, 220) + (record.transcript.length > 220 ? '…' : '');
-      const actions = document.createElement('div'); actions.className = 'recycle-actions';
-      const restore = document.createElement('button'); restore.textContent = '↩ Restore';
+      const row = document.createElement('tr');
+      const titleCell = document.createElement('td');
+      const title = document.createElement('strong'); title.textContent = record.title || 'Recording';
+      const snippet = document.createElement('div'); snippet.className = 'muted small-note recycle-snippet';
+      snippet.textContent = record.transcript.slice(0, 120) + (record.transcript.length > 120 ? '…' : '');
+      titleCell.append(title, snippet);
+      const deleted = document.createElement('td'); deleted.className = 'muted';
+      deleted.textContent = record.deleted_at ? friendlyDate(record.deleted_at) : '';
+      const words = document.createElement('td'); words.textContent = String(record.word_count);
+      const actions = document.createElement('td'); actions.className = 'table-actions';
+      const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'quiet'; restore.textContent = 'Restore';
       restore.addEventListener('click', async () => {
         try {
           await api('/api/admin/recycle-bin/' + record.id + '/restore', { method: 'POST' });
-          await Promise.all([loadRecycleBin(), loadAdminStatus()]);
-        } catch (error) { alert(error.message); }
+          showToast('Recording restored');
+          await Promise.all([loadRecycleBin(), loadAdminStatus(), refreshMeetingsList()]);
+        } catch (error) { showToast(error.message); }
       });
-      const remove = document.createElement('button'); remove.className = 'danger'; remove.textContent = 'Permanently delete';
+      const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'quiet danger-text'; remove.textContent = 'Delete forever';
       remove.addEventListener('click', async () => {
-        if (!confirm('Permanently delete this recording, transcript history and any saved voice audio? This cannot be undone.')) return;
+        if (!confirm('Permanently delete this recording, its transcript history, saved voice audio and any Open Notebook copy? This cannot be undone.')) return;
         try {
           await api('/api/admin/recycle-bin/' + record.id, { method: 'DELETE' });
+          showToast('Recording deleted');
           await Promise.all([loadRecycleBin(), loadAdminStatus()]);
-        } catch (error) { alert(error.message); }
+        } catch (error) { showToast(error.message); }
       });
-      actions.append(restore, remove); card.append(title, meta, snippet, actions); els.recycleList.appendChild(card);
+      actions.append(restore, remove);
+      row.append(titleCell, deleted, words, actions);
+      els.recycleList.appendChild(row);
     }
   }
 
@@ -3833,7 +4237,30 @@
   els.actAsSelect?.addEventListener('change', () => switchActAs(els.actAsSelect.value));
   els.stopActAsButton?.addEventListener('click', () => switchActAs(''));
     els.progressDays.addEventListener('change', () => { if (isAdmin()) loadProgress(); });
-  els.runSpeakerAnalysisButton.addEventListener('click', runSpeakerAnalysis);
+  for (const tab of TOOLS_TABS) {
+    $('toolsTab-' + tab).addEventListener('click', () => setToolsTab(tab));
+  }
+  $('toolsTab-meetings').parentElement.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    const index = TOOLS_TABS.indexOf(state.toolsTab || 'meetings');
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? TOOLS_TABS.length - 1
+        : (index + (event.key === 'ArrowRight' ? 1 : -1) + TOOLS_TABS.length) % TOOLS_TABS.length;
+    event.preventDefault();
+    setToolsTab(TOOLS_TABS[next], true);
+  });
+  els.toolsRefreshButton.addEventListener('click', loadTools);
+  for (const filter of ['todo', 'sent', 'all']) {
+    $('meetingsFilter-' + filter).addEventListener('click', () => setMeetingsFilter(filter));
+  }
+  els.meetingsSearch.addEventListener('input', renderMeetingsList);
+  els.meetingTurnsCloseButton.addEventListener('click', () => {
+    state.meetings.showTurns = false;
+    renderMeetingDetail();
+  });
+  els.voicesSearch.addEventListener('input', renderSpeakerProfiles);
+  els.addUserToggleButton.addEventListener('click', () => toggleCreateUserForm(els.createUserForm.hidden));
+  els.cancelCreateUserButton.addEventListener('click', () => toggleCreateUserForm(false));
   els.relabelPendingViewButton.addEventListener('click', () => setRelabelView('pending'));
   els.relabelHistoryViewButton.addEventListener('click', () => setRelabelView('history'));
   for (const control of [els.relabelFromDate, els.relabelToDate, els.relabelStatusFilter]) {
@@ -3845,15 +4272,12 @@
     els.relabelStatusFilter.value = '';
     loadRelabelSamples();
   });
-  els.speakerRecordingSelect.addEventListener('change', () => loadMeetingNotes());
-  els.speakerShowAllRecordings.addEventListener('change', () => loadSpeakerStatusAndRecordings());
-  els.meetingNotesExportButton.addEventListener('click', () => startMeetingNotes({ regenerate: true, exportToNotebook: true }));
   els.meetingNotesGenerateButton.addEventListener('click', () => startMeetingNotes({ regenerate: true, exportToNotebook: false }));
   els.meetingNotesResendButton.addEventListener('click', () => startMeetingNotes({ regenerate: false, exportToNotebook: true }));
   els.meetingNotesDownloadButton.addEventListener('click', downloadMeetingNotes);
   els.notebookPickerRefreshButton.addEventListener('click', () => {
     const chosen = els.notebookPickerList.querySelector('input[name="notebookPickerChoice"]:checked');
-    loadNotebookPickerList(chosen?.value || state.meetingNotesResult?.open_notebook_notebook_id);
+    loadNotebookPickerList(chosen?.value || state.meetings.notes?.open_notebook_notebook_id);
   });
   document.addEventListener('click', (event) => {
     if (els.moreActions?.open && !els.moreActions.contains(event.target)) els.moreActions.open = false;
@@ -3867,14 +4291,12 @@
       els.moreActions.querySelector('summary')?.focus();
     }
   });
-  els.refreshSpeakerProfilesButton.addEventListener('click', loadSpeakerProfiles);
-  els.refreshRelabelSamplesButton?.addEventListener('click', loadRelabelSamples);
-  els.refreshUsersButton.addEventListener('click', loadUsers);
   els.createUserForm.addEventListener('submit', createUser);
   els.saveRetentionButton.addEventListener('click', saveRetention);
   els.applyRetentionButton.addEventListener('click', applyRetentionNow);
-  els.refreshAdminButton.addEventListener('click', loadAdminStatus);
-  els.refreshRecycleButton.addEventListener('click', loadRecycleBin);
+  els.refreshAdminButton.addEventListener('click', () => Promise.allSettled([
+    loadAdminStatus(), loadSpeakerStatus(), loadMeetingNotesStatus(),
+  ]));
   els.downloadBackupButton.addEventListener('click', downloadBackup);
   els.deleteAudioImmediately.addEventListener('change', () => {
     els.retentionDays.disabled = els.deleteAudioImmediately.checked;
