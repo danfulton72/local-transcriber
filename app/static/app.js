@@ -3467,13 +3467,57 @@
   }
 
   function matchedSpeakerRow(analysis, detection) {
-    const row = document.createElement('div'); row.className = 'speaker-row';
+    const row = document.createElement('div'); row.className = 'speaker-row speaker-matched';
     const info = document.createElement('div'); info.className = 'speaker-row-info';
     const name = document.createElement('strong'); name.textContent = detection.display_name;
+    const profile = (state.speakerProfiles || []).find((item) => item.id === detection.profile_id);
+    const samples = profile ? profile.sample_count + '/' + profile.max_samples + ' samples' : '';
     const meta = document.createElement('span'); meta.className = 'muted small-note';
-    meta.textContent = 'Matched · ' + speechLength(detection.speech_seconds);
+    meta.textContent = ['Matched', speechLength(detection.speech_seconds), samples].filter(Boolean).join(' · ');
     info.append(name, meta);
-    row.append(info, hearButton(analysis, detection));
+
+    const actions = document.createElement('div'); actions.className = 'speaker-row-actions';
+    actions.appendChild(hearButton(analysis, detection));
+    const saved = Boolean(profile?.samples?.some((sample) => sample.source_detection_id === detection.id));
+    if (saved) {
+      const done = document.createElement('span'); done.className = 'sample-saved small-note';
+      done.textContent = '✓ Sample saved';
+      done.title = 'This conversation is already one of ' + detection.display_name + '’s voice samples.';
+      actions.appendChild(done);
+    } else {
+      const add = document.createElement('button'); add.type = 'button'; add.className = 'quiet';
+      add.textContent = '+ Add sample';
+      const full = Boolean(profile && profile.sample_count >= profile.max_samples);
+      add.disabled = !detection.can_remember || full;
+      add.title = full
+        ? detection.display_name + ' already has ' + profile.max_samples + ' samples. Remove one under Voices first.'
+        : !detection.can_remember
+          ? 'Needs at least 3 seconds of this person speaking.'
+          : 'Add this conversation as another sample of ' + detection.display_name + '’s voice, so they are recognised more reliably.';
+      add.setAttribute('aria-label', 'Add this clip to ' + detection.display_name + '’s voice');
+      add.addEventListener('click', async () => {
+        add.disabled = true;
+        try {
+          const result = await api(
+            '/api/admin/speakers/analyses/' + analysis.id + '/detections/' + encodeURIComponent(detection.speaker_key) + '/remember',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: detection.display_name }),
+            },
+          );
+          showToast(result.already_saved
+            ? detection.display_name + ' already has this sample'
+            : detection.display_name + ' · voice sample ' + result.sample_count + '/' + (profile?.max_samples || 8) + ' saved');
+          await loadSpeakerProfiles();
+        } catch (error) {
+          showToast(error.message);
+          add.disabled = false;
+        }
+      });
+      actions.appendChild(add);
+    }
+    row.append(info, actions);
     return row;
   }
 

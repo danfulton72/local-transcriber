@@ -46,3 +46,21 @@ def test_conversation_list_hides_sent_and_sorts_by_title(services):  # noqa: F81
         assert next(row for row in everything if row["id"] == sent_id)["open_notebook_exported"] is True
 
         assert client.get("/api/admin/speakers/recordings?view=bogus").status_code == 422
+
+
+def test_voice_samples_report_their_source_detection():
+    from app.main import app
+
+    with TestClient(app) as client:
+        login_admin(client)
+        _, analysis_id = seed_analysed_recording(f"sample-source-{uuid.uuid4().hex[:6]}")
+        analysis = client.get(f"/api/admin/speakers/analyses/{analysis_id}").json()
+        dan = next(row for row in analysis["detections"] if row["display_name"] == "Dan")
+        name = f"Dan-{uuid.uuid4().hex[:6]}"
+        saved = client.post(
+            f"/api/admin/speakers/analyses/{analysis_id}/detections/{dan['speaker_key']}/remember",
+            json={"name": name},
+        )
+        assert saved.status_code == 200, saved.text
+        profile = next(row for row in client.get("/api/admin/speakers/profiles").json() if row["name"] == name)
+        assert [sample["source_detection_id"] for sample in profile["samples"]] == [dan["id"]]
