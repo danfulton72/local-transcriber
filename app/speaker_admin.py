@@ -442,33 +442,50 @@ async def speaker_recordings(
         )
     ).all()
     recording_ids = [recording.id for recording, _ in rows]
-    exported_ids: set[uuid.UUID] = set()
-    analysed_ids: set[uuid.UUID] = set()
+    exports: dict[uuid.UUID, MeetingExport] = {}
+    latest_analysis: dict[uuid.UUID, SpeakerAnalysis] = {}
     if recording_ids:
-        exported_ids = set(
-            (
-                await db.execute(
-                    select(MeetingExport.recording_id).where(
-                        MeetingExport.recording_id.in_(recording_ids),
-                        MeetingExport.open_notebook_note_id.is_not(None),
-                        MeetingExport.exported_at.is_not(None),
-                    )
-                )
+        exports = {
+            row.recording_id: row
+            for row in (
+                await db.execute(select(MeetingExport).where(MeetingExport.recording_id.in_(recording_ids)))
             ).scalars().all()
-        )
-        analysed_ids = set(
-            (
-                await db.execute(
-                    select(SpeakerAnalysis.recording_id).where(
-                        SpeakerAnalysis.recording_id.in_(recording_ids),
-                        SpeakerAnalysis.status == "completed",
-                    )
+        }
+        analyses = (
+            await db.execute(
+                select(SpeakerAnalysis)
+                .where(
+                    SpeakerAnalysis.recording_id.in_(recording_ids),
+                    SpeakerAnalysis.status == "completed",
                 )
-            ).scalars().all()
-        )
+                .order_by(SpeakerAnalysis.completed_at.asc(), SpeakerAnalysis.created_at.asc())
+            )
+        ).scalars().all()
+        for analysis in analyses:  # ascending, so the newest wins
+            latest_analysis[analysis.recording_id] = analysis
 
-    items = [
-        {
+    def export_state(recording_id: uuid.UUID) -> dict:
+        export = exports.get(recording_id)
+        exported = bool(export and export.open_notebook_note_id and export.exported_at)
+        outdated = bool(
+            exported
+            and export.notes_generated_at
+            and export.notes_generated_at > export.exported_at
+        )
+        return {
+            "notes_ready": bool(export and export.notes_markdown),
+            "open_notebook_exported": exported,
+            "export_outdated": outdated,
+        }
+
+    items = []
+    for recording, user in rows:
+        analysis = latest_analysis.get(recording.id)
+        state = export_state(recording.id)
+        # "Done" means in Open Notebook and up to date; everything else is to do.
+        if view == "todo" and state["open_notebook_exported"] and not state["export_outdated"]:
+            continue
+        items.append({
             "id": str(recording.id),
             "title": recording.title or "Recording",
             "created_at": recording.created_at.isoformat(),
@@ -477,12 +494,11 @@ async def speaker_recordings(
             "owner_id": str(user.id),
             "owner_username": user.username,
             "owner_display_name": user.display_name,
-            "analysed": recording.id in analysed_ids,
-            "open_notebook_exported": recording.id in exported_ids,
-        }
-        for recording, user in rows
-        if view == "all" or recording.id not in exported_ids
-    ]
+            "analysed": analysis is not None,
+            "latest_analysis_id": str(analysis.id) if analysis else None,
+            "speaker_count": analysis.speaker_count if analysis else None,
+            **state,
+        })
     items.sort(key=lambda item: (item["title"].casefold(), item["created_at"]))
     return items
 
