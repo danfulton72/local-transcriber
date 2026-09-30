@@ -56,6 +56,7 @@ from .services.progress import correction_pairs, top_corrections, word_count
 from .services.recording_audio import combine_wav_segments
 from .services.storage import save_bytes
 from .services.titles import dated_title, renamed_title
+from .services.whisper_guard import filter_transcript
 from .services.retention import cleanup_expired_audio, prune_finished_chunk_audio, prune_live_chunk_audio
 from .admin import router as admin_router
 from .speaker_admin import router as speaker_admin_router
@@ -808,6 +809,8 @@ async def transcribe_chunk(
         recording.status = "error"
         await db.commit()
         raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
+    # Whisper invents sign-offs ("Thank you.") for silent audio such as pauses.
+    transcript = filter_transcript(transcript, data, context=f"chunk {chunk_number}")
     processing = time.perf_counter() - started
     db.add(
         TranscriptionChunk(
@@ -892,6 +895,7 @@ async def transcribe_recording(
         recording.status = "error"
         await db.commit()
         raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
+    transcript = filter_transcript(transcript, data, context="uploaded recording")
     recording.processing_seconds += time.perf_counter() - started
     recording.transcript_original = transcript
     recording.duration_seconds = duration_seconds

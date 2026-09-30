@@ -102,3 +102,28 @@ assert.ok(cut > 1.0 * cutRate && cut < 1.1 * cutRate, `cut landed at ${cut / cut
 assert.equal(findQuietCut(gapped, cutRate, 100, 110), 110);
 
 console.log('resampler and quiet-cut tests passed');
+
+// --- Phantom-text guards -------------------------------------------------
+{
+  const { trimSilence } = globalThis.TalkToTypeAudio;
+  const rate = 16000;
+  const quiet = (seconds) => new Float32Array(Math.round(rate * seconds));
+  const clip = concat(quiet(2), sine(rate, 1, 0.3), quiet(2));
+
+  const [start, end] = trimSilence(clip, rate);
+  assert.ok(Math.abs(start - rate * 1.7) < rate * 0.05, 'keeps ~300 ms before speech');
+  assert.ok(Math.abs(end - rate * 3.3) < rate * 0.05, 'keeps ~300 ms after speech');
+
+  const [allStart, allEnd] = trimSilence(quiet(3), rate);
+  assert.deepEqual([allStart, allEnd], [0, rate * 3], 'silent clip is left whole');
+
+  const tight = concat(quiet(0.3), sine(rate, 1, 0.3), quiet(0.3));
+  assert.deepEqual(trimSilence(tight, rate), [0, tight.length], 'short edges are not trimmed');
+
+  // Regular chunks need a little more speech than the lenient final-tail check.
+  const blip = concat(quiet(2), sine(rate, 0.08, 0.3), quiet(2));
+  assert.equal(globalThis.TalkToTypeAudio.analyzeFinalTail(blip, rate).hasSpeech, true);
+  assert.equal(globalThis.TalkToTypeAudio.analyzeFinalTail(blip, rate, { minActiveMs: 100 }).hasSpeech, false);
+  const word = concat(quiet(2), sine(rate, 0.4, 0.3), quiet(2));
+  assert.equal(globalThis.TalkToTypeAudio.analyzeFinalTail(word, rate, { minActiveMs: 100 }).hasSpeech, true);
+}

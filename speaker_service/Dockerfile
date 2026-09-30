@@ -51,7 +51,7 @@ ctypes.CDLL(nvrtc)
 print("speaker CUDA runtime:", torch.__version__, torch.version.cuda, nvrtc)
 PY
 
-COPY app.py /service/app.py
+COPY app.py whisper_guard.py /service/
 
 EXPOSE 9000
 

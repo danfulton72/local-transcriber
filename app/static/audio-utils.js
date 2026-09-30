@@ -9,7 +9,11 @@
     return Math.sqrt(sum / (end - start));
   }
 
-  function analyzeFinalTail(samples, sampleRate) {
+  // Does this audio contain speech? Used before sending audio to Whisper,
+  // which invents text ("Thank you.") for silence. `minActiveMs` is how much
+  // speech-like energy is needed; the default is deliberately lenient.
+  function analyzeFinalTail(samples, sampleRate, options = {}) {
+    const minActiveMs = options.minActiveMs ?? 60;
     const durationMs = samples.length / sampleRate * 1000;
     if (!samples.length || !sampleRate) {
       return { hasSpeech: false, durationMs: 0, activeMs: 0, overallRms: 0, peakFrameRms: 0 };
@@ -45,7 +49,7 @@
     // speech-like energy and a clear peak. The full recording is always saved;
     // this gate only decides whether the short tail is worth sending to Whisper.
     const hasSpeech =
-      activeMs >= 60 &&
+      activeMs >= minActiveMs &&
       peakFrameRms >= peakThreshold &&
       overallRms >= 0.0035;
 
@@ -147,5 +151,35 @@
     return bestIndex;
   }
 
-  root.TalkToTypeAudio = { analyzeFinalTail, createResampler, findQuietCut, rms };
+  // Trim long silence from both ends of a clip, keeping `padMs` around the
+  // speech. Silence at the edges is where Whisper tends to add phantom
+  // sign-offs. Returns [start, end) sample indices; the whole clip when it
+  // has no clear speech or nothing worth trimming.
+  function trimSilence(samples, sampleRate, { padMs = 300, minTrimMs = 700 } = {}) {
+    const frame = Math.max(1, Math.round(sampleRate * 0.02));
+    const levels = [];
+    for (let start = 0; start < samples.length; start += frame) {
+      levels.push(rms(samples, start, Math.min(samples.length, start + frame)));
+    }
+    if (!levels.length) return [0, samples.length];
+    const sorted = [...levels].sort((a, b) => a - b);
+    const noiseFloor = sorted[Math.floor((sorted.length - 1) * 0.2)] || 0;
+    const peak = sorted[sorted.length - 1];
+    const usable = noiseFloor > 0 && noiseFloor < peak * 0.55;
+    const threshold = Math.max(0.0075, usable ? noiseFloor * 2.8 : 0);
+    const first = levels.findIndex((level) => level >= threshold);
+    if (first < 0) return [0, samples.length];
+    let last = levels.length - 1;
+    while (last > first && levels[last] < threshold) last -= 1;
+
+    const pad = Math.round(sampleRate * padMs / 1000);
+    const minTrim = Math.round(sampleRate * minTrimMs / 1000);
+    const speechStart = first * frame;
+    const speechEnd = Math.min(samples.length, (last + 1) * frame);
+    const start = speechStart >= minTrim ? Math.max(0, speechStart - pad) : 0;
+    const end = samples.length - speechEnd >= minTrim ? Math.min(samples.length, speechEnd + pad) : samples.length;
+    return [start, end];
+  }
+
+  root.TalkToTypeAudio = { analyzeFinalTail, createResampler, findQuietCut, rms, trimSilence };
 })(typeof window !== 'undefined' ? window : globalThis);

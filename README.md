@@ -399,6 +399,16 @@ POST /v1/audio/speech
 GET  /v1/voices
 ```
 
+## Phantom words from silence
+
+Whisper tends to invent sign-offs such as "Thank you." or "Thanks for watching!" when given silence, typically at the start or end of a recording and during pauses. The faster-whisper image used here has no silence (VAD) setting, so the app guards against it:
+
+- **In the browser**, each near-live chunk is checked for new speech before it is sent; silent chunks (pauses, lulls) are not transcribed, and long silence at the start and end of each chunk is trimmed off, keeping 0.3 s around the speech. The full recording is always saved as recorded.
+- **On the server**, Whisper's text for a live chunk or uploaded recording is dropped when the audio has no speech, and a text that is only a known phantom phrase is dropped unless there is enough speech (≥ 0.3 s) for someone to have really said it — a genuine "thank you" is kept.
+- **In speaker analysis**, the same check runs on every per-turn transcription, so coughs and "mm"s no longer come back as "Thank you."
+
+Dropped text is logged as `[whisper-guard] Dropped …` in `docker logs local-transcriber` and `docker logs speaker-analyzer`. The rules live in `app/services/whisper_guard.py`; `speaker_service/whisper_guard.py` is an identical copy (a test checks they match).
+
 ## Stored data
 
 PostgreSQL stores recording timestamps/duration/status, title/favourite state, original and edited transcripts, edit revisions, near-live chunk transcript metadata, and explicit usage events such as read-aloud and copy.
