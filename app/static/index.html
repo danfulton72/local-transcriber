@@ -331,6 +331,26 @@
           </div>
           <button id="refreshRelabelSamplesButton" class="heading-button" type="button">↻ Refresh</button>
         </div>
+        <div class="relabel-filters">
+          <div class="relabel-view-toggle" role="group" aria-label="Which samples to show">
+            <button id="relabelPendingViewButton" type="button" aria-pressed="true">Needs review</button>
+            <button id="relabelHistoryViewButton" type="button" aria-pressed="false">All history</button>
+          </div>
+          <div id="relabelHistoryFilters" class="relabel-history-filters" hidden>
+            <label class="admin-label">From<input id="relabelFromDate" type="date"></label>
+            <label class="admin-label">To<input id="relabelToDate" type="date"></label>
+            <label class="admin-label">Status
+              <select id="relabelStatusFilter">
+                <option value="">Any status</option>
+                <option value="approved">Approved</option>
+                <option value="excluded">Excluded</option>
+                <option value="pending">Needs review</option>
+              </select>
+            </label>
+            <button id="relabelClearFiltersButton" type="button">Clear</button>
+          </div>
+        </div>
+        <p id="relabelSamplesSummary" class="muted small-note" aria-live="polite"></p>
         <div id="relabelSamplesList" class="relabel-samples-list conversation-scroll"><p class="muted">No relabelled samples loaded yet.</p></div>
       </section>
 
