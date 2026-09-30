@@ -55,6 +55,7 @@ from .services.gateway import gateway
 from .services.progress import correction_pairs, top_corrections, word_count
 from .services.recording_audio import combine_wav_segments
 from .services.storage import save_bytes
+from .services.titles import dated_title, renamed_title
 from .services.retention import cleanup_expired_audio, prune_finished_chunk_audio, prune_live_chunk_audio
 from .admin import router as admin_router
 from .speaker_admin import router as speaker_admin_router
@@ -283,7 +284,7 @@ async def create_recording(payload: RecordingCreate, db: AsyncSession = Depends(
     recording = Recording(
         user_id=current_user_id(),
         language=payload.language or None,
-        title=payload.title,
+        title=dated_title(payload.title, utcnow()),
         status="recording",
         last_activity_at=utcnow(),
     )
@@ -696,7 +697,7 @@ async def update_recording_speaker_turn(
             recording.draft_text = None
             recording.last_activity_at = utcnow()
             if not recording.title or recording.title == "New recording":
-                recording.title = make_title(rebuilt)
+                recording.title = dated_title(make_title(rebuilt), recording.created_at)
 
         await db.commit()
         await db.refresh(turn)
@@ -717,7 +718,10 @@ async def update_recording_speaker_turn(
 async def update_recording(recording_id: uuid.UUID, payload: RecordingUpdate, db: AsyncSession = Depends(get_db)) -> RecordingOut:
     recording = await find_recording(recording_id, db)
     if payload.title is not None:
-        recording.title = payload.title.strip()[:240] or make_title(recording.transcript)
+        if payload.title.strip():
+            recording.title = renamed_title(payload.title, recording.title)
+        else:
+            recording.title = dated_title(make_title(recording.transcript), recording.created_at)
     if payload.is_favourite is not None:
         recording.is_favourite = payload.is_favourite
     if payload.transcript_edited is not None:
@@ -730,7 +734,7 @@ async def update_recording(recording_id: uuid.UUID, payload: RecordingUpdate, db
             recording.draft_text = None
             recording.last_activity_at = utcnow()
             if not recording.title or recording.title == "New recording":
-                recording.title = make_title(new_text)
+                recording.title = dated_title(make_title(new_text), recording.created_at)
     audit = admin_audit_event(
         recording.id,
         "recording_update",
@@ -895,7 +899,7 @@ async def transcribe_recording(
     recording.status = "ready"
     recording.draft_text = None
     recording.last_activity_at = utcnow()
-    recording.title = recording.title or make_title(transcript)
+    recording.title = recording.title or dated_title(make_title(transcript), recording.created_at)
     await db.commit()
     await cleanup_expired_audio(db)
     await db.refresh(recording)
@@ -923,7 +927,7 @@ async def finish_recording(recording_id: uuid.UUID, payload: RecordingFinish, db
     recording.status = "ready"
     recording.draft_text = None
     recording.last_activity_at = utcnow()
-    recording.title = recording.title or make_title(recording.transcript)
+    recording.title = recording.title or dated_title(make_title(recording.transcript), recording.created_at)
     await db.commit()
     await prune_live_chunk_audio(recording, db)
     await cleanup_expired_audio(db)
