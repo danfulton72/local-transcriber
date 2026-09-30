@@ -45,7 +45,7 @@ def test_upgrade_from_released_07_to_head(tmp_path):
     assert "is_admin" in user_columns
     assert "acting_as_user_id" in session_columns
     assert "meeting_exports" in tables
-    assert revision == "20260930_11"
+    assert revision == "20260930_12"
 
 
 

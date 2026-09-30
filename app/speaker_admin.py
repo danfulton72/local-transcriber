@@ -13,6 +13,7 @@ from .auth import actor_user_id, require_admin
 from .config import settings
 from .db import SessionLocal, get_db
 from .models import (
+    MeetingExport,
     Recording,
     User,
     SpeakerAnalysis,
@@ -417,9 +418,16 @@ async def speaker_status(
 
 @router.get("/recordings")
 async def speaker_recordings(
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=300, ge=1, le=1000),
+    view: str = Query(default="all", pattern="^(all|todo)$"),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
+    """Saved conversations for the Speakers tools, sorted by title (A–Z).
+
+    ``view=todo`` hides conversations already sent to Open Notebook, leaving
+    ones still to analyse or still to send. Titles start with yyyymmdd, so
+    A–Z is also oldest-first within a day-prefixed set.
+    """
     rows = (
         await db.execute(
             select(Recording, User)
@@ -433,7 +441,33 @@ async def speaker_recordings(
             .limit(limit)
         )
     ).all()
-    return [
+    recording_ids = [recording.id for recording, _ in rows]
+    exported_ids: set[uuid.UUID] = set()
+    analysed_ids: set[uuid.UUID] = set()
+    if recording_ids:
+        exported_ids = set(
+            (
+                await db.execute(
+                    select(MeetingExport.recording_id).where(
+                        MeetingExport.recording_id.in_(recording_ids),
+                        MeetingExport.open_notebook_note_id.is_not(None),
+                        MeetingExport.exported_at.is_not(None),
+                    )
+                )
+            ).scalars().all()
+        )
+        analysed_ids = set(
+            (
+                await db.execute(
+                    select(SpeakerAnalysis.recording_id).where(
+                        SpeakerAnalysis.recording_id.in_(recording_ids),
+                        SpeakerAnalysis.status == "completed",
+                    )
+                )
+            ).scalars().all()
+        )
+
+    items = [
         {
             "id": str(recording.id),
             "title": recording.title or "Recording",
@@ -443,9 +477,14 @@ async def speaker_recordings(
             "owner_id": str(user.id),
             "owner_username": user.username,
             "owner_display_name": user.display_name,
+            "analysed": recording.id in analysed_ids,
+            "open_notebook_exported": recording.id in exported_ids,
         }
         for recording, user in rows
+        if view == "all" or recording.id not in exported_ids
     ]
+    items.sort(key=lambda item: (item["title"].casefold(), item["created_at"]))
+    return items
 
 
 @router.post("/analyze/{recording_id}", status_code=202)

@@ -193,6 +193,7 @@ def seed_analysed_recording(title: str = "Budget review") -> tuple[str, str]:
                 title=title,
                 transcript_original="Morning. I'll send the figures by Friday.",
                 duration_seconds=65.0,
+                audio_path="seeded-for-list.wav",  # the admin list shows recordings with audio
             )
             db.add(recording)
             await db.flush()
@@ -254,6 +255,11 @@ def test_generate_and_export_meeting_notes_end_to_end(services):
         assert result["status"] == "completed", result
         assert result["analysis_id"] == analysis_id
         assert result["open_notebook_notebook_id"] == "notebook:atlas"
+        assert result["exported"] is True
+        assert result["export_outdated"] is False
+        assert result["open_notebook_notebook_name"] == "Atlas project"
+        listed = client.get("/api/admin/speakers/recordings?limit=200").json()
+        assert next(row for row in listed if row["id"] == recording_id)["open_notebook_exported"] is True
         assert result["stage"] == "Exported to Open Notebook · Atlas project"
         assert result["open_notebook_source_id"] == "source:s1"
         assert result["open_notebook_note_id"] == "note:n2"
@@ -437,3 +443,44 @@ def test_app_shell_is_revalidated_but_api_is_untouched():
             assert client.get(path).headers.get("cache-control") == "no-cache", path
         login_admin(client)
         assert client.get("/api/recordings").headers.get("cache-control") != "no-cache"
+
+
+def test_export_state_is_stored_and_flags_newer_unsent_notes(services):
+    from app.main import app
+
+    with TestClient(app) as client:
+        login_admin(client)
+        recording_id, _ = seed_analysed_recording("Stored export state")
+
+        # Notes only: nothing in Open Notebook yet
+        client.post(f"/api/admin/meeting-notes/recordings/{recording_id}", json={"export": False})
+        result = client.get(f"/api/admin/meeting-notes/recordings/{recording_id}").json()
+        assert result["exported"] is False
+        assert result["export_outdated"] is False
+
+        client.post(
+            f"/api/admin/meeting-notes/recordings/{recording_id}",
+            json={"regenerate_notes": False, "notebook_id": "notebook:meetings", "notebook_name": "Meetings"},
+        )
+
+    # A fresh app session reads the same state back from the database
+    with TestClient(app) as client:
+        login_admin(client)
+        result = client.get(f"/api/admin/meeting-notes/recordings/{recording_id}").json()
+        assert result["exported"] is True
+        assert result["open_notebook_notebook_name"] == "Meetings"
+        assert result["export_outdated"] is False
+
+        # Regenerating without exporting leaves Open Notebook behind
+        client.post(f"/api/admin/meeting-notes/recordings/{recording_id}", json={"export": False})
+        result = client.get(f"/api/admin/meeting-notes/recordings/{recording_id}").json()
+        assert result["exported"] is True
+        assert result["export_outdated"] is True
+
+        # Re-sending brings it back in step
+        client.post(
+            f"/api/admin/meeting-notes/recordings/{recording_id}",
+            json={"regenerate_notes": False, "notebook_id": "notebook:meetings", "notebook_name": "Meetings"},
+        )
+        result = client.get(f"/api/admin/meeting-notes/recordings/{recording_id}").json()
+        assert result["export_outdated"] is False

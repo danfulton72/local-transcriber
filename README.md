@@ -120,7 +120,7 @@ Each speaker turn can be edited directly in **Your words** while audio continues
 
 Speaker-name corrections in **My words** now start with a selector of remembered voices. Selecting **New name…** reveals a manual-name field, while **This turn**, **All matching turns**, **Unknown**, and **Reset** keep the correction scope explicit. Normal users see only remembered speaker names/IDs here; voiceprint metadata and source samples remain admin-only.
 
-Saved recordings also show an editable **Title** above the transcript. Titles can be renamed without changing the transcript or recording audio.
+Saved recordings also show an editable **Title** above the transcript. Titles can be renamed without changing the transcript or recording audio. New titles start with the recording's date as `yyyymmdd` (London time, from `NOTES_TIMEZONE`), whether typed or generated from the transcript, so titles sort by date. Renaming keeps that date unless the new title starts with its own 8-digit date. Recordings titled before this change are not renamed.
 
 ### Responsive workspace
 
@@ -154,6 +154,8 @@ The CUDA 12.6 speaker image is retained because it works on the T4 and also leav
 
 Open **Tools** as an admin, then use the **Speakers** section:
 
+The **Conversation** list is sorted A–Z by title and hides conversations already sent to Open Notebook; tick **Include conversations already sent to Open Notebook** to see them. Each entry notes whether it has been analysed or sent.
+
 1. Choose a saved recording.
 2. Optionally specify the expected number of speakers.
 3. Press **Analyse conversation**.
@@ -186,6 +188,8 @@ Record ─► Whisper ─► Tools → Speakers: analyse, then fix names
 1. Analyse the conversation in **Tools → Speakers** and correct any speaker names. Notes use the corrected names and corrected turn text, so owners of action items come out right. Recordings with no speaker analysis still work, but every line is marked *Unidentified*.
 2. In **Meeting notes & Open Notebook**, with the same conversation selected, press **Generate notes & export**. A picker loads the current list of notebooks live from Open Notebook; the default notebook (or the one this recording was last exported to) is preselected. Choose one and press **Export**. Progress is shown while each part is processed.
 3. **Generate notes only** keeps the notes in this app. **Re-send saved notes** opens the same picker and pushes the saved transcript and notes again without re-running the model, replacing the earlier copies (including when you pick a different notebook). **Download .md** saves the notes as Markdown.
+
+Export state is stored in the database. Conversations already in Open Notebook are marked **✓ Open Notebook** in the conversation list, and the panel shows which notebook they went to and when. For these, **Re-send saved notes** becomes the main button and **Generate notes & export** becomes **Regenerate & replace**. If you regenerate notes without exporting, the panel warns that newer notes have not been sent yet.
 
 Permanently deleting a recording from the recycle bin also deletes its source and note from Open Notebook (best effort). Soft-deleting, audio retention and audio deletion leave exported notes alone.
 

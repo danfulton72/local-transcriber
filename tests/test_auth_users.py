@@ -1,3 +1,4 @@
+import re
 import uuid
 
 from fastapi.testclient import TestClient
@@ -164,11 +165,11 @@ def test_recording_title_can_be_renamed():
             json={"title": new_title},
         )
         assert renamed.status_code == 200
-        assert renamed.json()["title"] == new_title
+        assert re.fullmatch(r"\d{8} " + re.escape(new_title), renamed.json()["title"])
 
         reloaded = client.get(f"/api/recordings/{recording_id}")
         assert reloaded.status_code == 200
-        assert reloaded.json()["title"] == new_title
+        assert reloaded.json()["title"] == renamed.json()["title"]
 
 
 
@@ -249,7 +250,7 @@ def test_admin_can_act_as_non_admin_for_saved_work_and_progress():
             json={"title": "Reviewed by admin"},
         )
         assert renamed.status_code == 200
-        assert renamed.json()["title"] == "Reviewed by admin"
+        assert re.fullmatch(r"\d{8} Reviewed by admin", renamed.json()["title"])
 
         edited = client.patch(
             f"/api/recordings/{recording_id}",
