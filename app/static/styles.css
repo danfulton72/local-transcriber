@@ -3091,3 +3091,32 @@ button.link-button{padding-left:0;padding-right:0}
 .speaker-row-actions{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0}
 .speaker-row-actions button.quiet{min-height:34px;padding:.25rem .5rem}
 .sample-saved{margin:0;padding:.25rem .5rem;color:#1f5e44;font-weight:700;white-space:nowrap}
+
+/* Who spoke: people from corrections, per-turn review */
+.person-turns-link{align-self:flex-start;min-height:30px!important;padding:.1rem 0!important;font-size:.8rem}
+.speaker-corrected{background:#eef6f1;border:1px dashed #b9dcc6}
+.speaker-unnamed > .speaker-row-info,.speaker-unnamed-top .speaker-row-info{min-width:0}
+.turns-filter{margin:4px 0 6px}
+.turn-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.turn-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:start;padding:12px;border:1px solid #efe7d6;border-radius:14px;background:#fff}
+.turn-row.identity-corrected{border-color:#b9dcc6;background:#f6fbf8}
+.turn-play{width:44px;height:44px;min-height:44px;padding:0;border-radius:50%;font-size:1rem;display:inline-flex;align-items:center;justify-content:center}
+.turn-play[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
+.turn-main{display:flex;flex-direction:column;gap:6px;min-width:0}
+.turn-meta{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.turn-meta .small-note{margin:0}
+.turn-text{margin:0;line-height:1.5}
+.turn-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.turn-controls select{width:auto;min-width:200px;min-height:40px}
+.turn-controls input[type="text"]{width:180px;min-height:40px}
+.turn-controls input[hidden]{display:none}
+.turn-controls .check{margin:0}
+.turn-training{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted)}
+.turn-training[hidden]{display:none}
+.turn-training.is-approved{color:#1f5e44;font-weight:700}
+@media (max-width:600px){
+  .turn-row{grid-template-columns:1fr}
+  .turn-controls select,.turn-controls input[type="text"]{width:100%;min-width:0}
+}
+.speaker-emptied{background:transparent;border:1px dashed var(--line);padding:6px 12px}
+.speaker-emptied .small-note{margin:0}

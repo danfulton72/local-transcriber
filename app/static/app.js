@@ -80,7 +80,7 @@
     meetings: {
       recordings: [], filter: 'todo', selectedId: null, analysis: null, notes: null,
       analysingId: null, analysisStage: '', analysisError: '', showTurns: false,
-      notesPolling: null, jobKind: null,
+      notesPolling: null, jobKind: null, turnFilter: '',
     },
     speakerTurns: [],
     speakerProfiles: [],
@@ -2902,29 +2902,31 @@
     }
   }
 
-  function identityPayload(value, scope) {
-    const payload = { scope };
+  function identityPayload(value, scope, addToTraining = false) {
+    const payload = { scope, add_to_training: Boolean(addToTraining) };
     if (value === 'clear') payload.clear = true;
+    else if (value.startsWith('name:')) payload.name = value.slice(5);
     else if (value === 'unknown') payload.unknown = true;
     else if (value.startsWith('profile:')) payload.target_profile_id = value.slice(8);
     else if (value.startsWith('detection:')) payload.target_detection_id = value.slice(10);
     return payload;
   }
 
-  async function applyTurnIdentityCorrection(analysis, turn, value, scope) {
+  async function applyTurnIdentityCorrection(analysis, turn, value, scope, addToTraining = false) {
     try {
       const updated = await api(
         '/api/admin/speakers/analyses/' + analysis.id + '/turns/' + turn.id + '/identity',
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(identityPayload(value, scope)),
+          body: JSON.stringify(identityPayload(value, scope, addToTraining)),
         },
       );
       state.meetings.analysis = updated;
       renderMeetingDetail();
       await loadRelabelSamples();
-      showToast(scope === 'detection' ? 'Speaker identity corrected for matching turns' : 'Speaker identity corrected');
+      const training = addToTraining && value !== 'unknown' && value !== 'clear' ? ' · added to training data' : '';
+      showToast((scope === 'detection' ? 'Reassigned matching turns' : 'Turn reassigned') + training);
     } catch (error) {
       showToast(error.message);
     }
@@ -3315,11 +3317,43 @@
     } catch {}
   }
 
-  // Speakers still called "Person N": notes can't give their action items an owner.
-  // Named-but-not-remembered speakers keep their edit card but aren't counted.
+  const nameKey = (name) => String(name || '').trim().toLocaleLowerCase();
+
+  // Everyone who speaks in this meeting after corrections: the detected
+  // speakers plus anyone turns were reassigned to (remembered or new names).
+  function meetingPeople(analysis) {
+    const people = new Map();
+    for (const detection of analysis?.detections || []) {
+      people.set(nameKey(detection.display_name), {
+        name: detection.display_name, detection, profileId: detection.profile_id,
+        seconds: 0, turns: 0, corrected: 0,
+      });
+    }
+    for (const turn of analysis?.turns || []) {
+      const key = nameKey(turn.display_name);
+      let person = people.get(key);
+      if (!person) {
+        person = {
+          name: turn.display_name, detection: null, profileId: turn.effective_profile_id,
+          seconds: 0, turns: 0, corrected: 0,
+        };
+        people.set(key, person);
+      }
+      person.seconds += Math.max(0, turn.end_seconds - turn.start_seconds);
+      person.turns += 1;
+      if (turn.identity_corrected) person.corrected += 1;
+    }
+    return [...people.values()]
+      .filter((person) => person.detection || person.turns)
+      .sort((a, b) => (a.name === 'Unknown') - (b.name === 'Unknown') || b.seconds - a.seconds);
+  }
+
+  // Speakers still called "Person N" who still have turns: notes can't give
+  // their action items an owner.
   function unnamedDetections(analysis) {
-    return (analysis?.detections || []).filter(
-      (detection) => !detection.profile_id && /^Person \d+$/.test(detection.display_name),
+    return meetingPeople(analysis).filter(
+      (person) => person.detection && !person.detection.profile_id
+        && /^Person \d+$/.test(person.name) && person.turns > 0,
     );
   }
 
@@ -3417,24 +3451,37 @@
     if (unnamed.length) stepChip(els.stepSpeakersChip, 'chip-notes', unnamed.length + ' unnamed');
     else stepChip(els.stepSpeakersChip, 'chip-analysed', 'Done');
 
-    const detections = [...analysis.detections].sort((a, b) => a.person_index - b.person_index);
-    for (const detection of detections) {
-      body.appendChild(detection.profile_id
-        ? matchedSpeakerRow(analysis, detection)
-        : unnamedSpeakerCard(analysis, detection));
+    const people = meetingPeople(analysis);
+    for (const person of people) {
+      let element;
+      if (person.detection && !person.detection.profile_id && person.turns === 0) {
+        // Every turn was reassigned: nothing left to name.
+        const row = document.createElement('div'); row.className = 'speaker-row speaker-emptied';
+        const note = document.createElement('span'); note.className = 'muted small-note';
+        note.textContent = person.name + ' · all turns reassigned';
+        row.appendChild(note);
+        body.appendChild(row);
+        continue;
+      }
+      if (!person.detection) element = correctedPersonRow(person);
+      else if (person.detection.profile_id) element = matchedSpeakerRow(analysis, person.detection, person);
+      else element = unnamedSpeakerCard(analysis, person.detection, person);
+      (element.querySelector('.speaker-row-info') || element).appendChild(personTurnsLink(person));
+      body.appendChild(element);
     }
-    if (!detections.length) {
+    if (!people.length) {
       const p = document.createElement('p'); p.className = 'muted small-note'; p.textContent = 'No speakers were found in this recording.';
       body.appendChild(p);
     }
 
     const review = document.createElement('button'); review.type = 'button'; review.className = 'quiet link-button';
-    const turns = (analysis.turns || []).filter((turn) => turn.text).length;
-    review.textContent = state.meetings.showTurns ? 'Hide turns' : 'Review ' + turns + ' turns →';
+    const turns = (analysis.turns || []).length;
+    review.textContent = state.meetings.showTurns ? 'Hide turns' : 'Listen & check all ' + turns + ' turns →';
     review.setAttribute('aria-expanded', String(Boolean(state.meetings.showTurns)));
     review.setAttribute('aria-controls', 'meetingTurns');
     review.addEventListener('click', () => {
       state.meetings.showTurns = !state.meetings.showTurns;
+      state.meetings.turnFilter = '';
       renderMeetingDetail();
       if (state.meetings.showTurns) els.meetingTurns.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
@@ -3448,6 +3495,40 @@
     const rerunGroup = document.createElement('span'); rerunGroup.className = 'reanalyse-group';
     rerunGroup.append(label, rerun);
     foot.append(review, rerunGroup);
+  }
+
+  function personTurnsLink(person) {
+    const link = document.createElement('button');
+    link.type = 'button';
+    link.className = 'quiet person-turns-link';
+    link.textContent = person.turns + ' turn' + (person.turns === 1 ? '' : 's') + ' · listen →';
+    link.disabled = !person.turns;
+    link.setAttribute('aria-controls', 'meetingTurns');
+    link.addEventListener('click', () => {
+      state.meetings.showTurns = true;
+      state.meetings.turnFilter = nameKey(person.name);
+      renderMeetingDetail();
+      els.meetingTurns.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return link;
+  }
+
+  function correctedPersonRow(person) {
+    const row = document.createElement('div'); row.className = 'speaker-row speaker-corrected';
+    const info = document.createElement('div'); info.className = 'speaker-row-info';
+    const name = document.createElement('strong'); name.textContent = person.name;
+    if (person.name !== 'Unknown') {
+      const chip = document.createElement('span'); chip.className = 'chip chip-analysed chip-inline';
+      chip.textContent = 'From corrections';
+      name.appendChild(chip);
+    }
+    const meta = document.createElement('span'); meta.className = 'muted small-note';
+    const kind = person.name === 'Unknown' ? 'Not identified'
+      : person.profileId ? 'Remembered voice' : 'New name';
+    meta.textContent = [kind, speechLength(person.seconds)].join(' · ');
+    info.append(name, meta);
+    row.appendChild(info);
+    return row;
   }
 
   function hearButton(analysis, detection) {
@@ -3466,14 +3547,14 @@
     return button;
   }
 
-  function matchedSpeakerRow(analysis, detection) {
+  function matchedSpeakerRow(analysis, detection, person) {
     const row = document.createElement('div'); row.className = 'speaker-row speaker-matched';
     const info = document.createElement('div'); info.className = 'speaker-row-info';
     const name = document.createElement('strong'); name.textContent = detection.display_name;
     const profile = (state.speakerProfiles || []).find((item) => item.id === detection.profile_id);
     const samples = profile ? profile.sample_count + '/' + profile.max_samples + ' samples' : '';
     const meta = document.createElement('span'); meta.className = 'muted small-note';
-    meta.textContent = ['Matched', speechLength(detection.speech_seconds), samples].filter(Boolean).join(' · ');
+    meta.textContent = ['Matched', speechLength(person ? person.seconds : detection.speech_seconds), samples].filter(Boolean).join(' · ');
     info.append(name, meta);
 
     const actions = document.createElement('div'); actions.className = 'speaker-row-actions';
@@ -3521,7 +3602,7 @@
     return row;
   }
 
-  function unnamedSpeakerCard(analysis, detection) {
+  function unnamedSpeakerCard(analysis, detection, person) {
     const card = document.createElement('div'); card.className = 'speaker-row speaker-unnamed';
     const top = document.createElement('div'); top.className = 'speaker-unnamed-top';
     const info = document.createElement('div'); info.className = 'speaker-row-info';
@@ -3530,7 +3611,8 @@
     const chip = document.createElement('span'); chip.className = 'chip chip-notes chip-inline';
     chip.textContent = isDefaultName ? 'Unnamed' : 'Not remembered';
     name.appendChild(chip);
-    const meta = document.createElement('span'); meta.className = 'muted small-note'; meta.textContent = speechLength(detection.speech_seconds);
+    const meta = document.createElement('span'); meta.className = 'muted small-note';
+    meta.textContent = person && person.turns === 0 ? 'No turns left after corrections' : speechLength(person ? person.seconds : detection.speech_seconds);
     info.append(name, meta);
     top.append(info, hearButton(analysis, detection));
 
@@ -3954,73 +4036,202 @@
     }
   }
 
+  async function toggleClipPreview(url, previewKey, button) {
+    if (state.speakerPreviewKey === previewKey && state.speakerPreviewAudio && !state.speakerPreviewAudio.paused) {
+      stopSpeakerPreview();
+      return;
+    }
+    stopSpeakerPreview();
+    button.disabled = true;
+    button.textContent = '…';
+    try {
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) {
+        let detail = 'Could not load this clip.';
+        try { detail = (await response.json()).detail || detail; } catch {}
+        throw new Error(detail);
+      }
+      const audioUrl = URL.createObjectURL(await response.blob());
+      const audio = new Audio(audioUrl);
+      state.speakerPreviewAudio = audio;
+      state.speakerPreviewUrl = audioUrl;
+      state.speakerPreviewKey = previewKey;
+      state.speakerPreviewButton = button;
+      button.disabled = false;
+      button.textContent = '■';
+      button.setAttribute('aria-pressed', 'true');
+      audio.addEventListener('ended', () => { if (state.speakerPreviewKey === previewKey) stopSpeakerPreview(); }, { once: true });
+      audio.addEventListener('error', () => {
+        if (state.speakerPreviewKey === previewKey) { stopSpeakerPreview(); showToast('Could not play this clip'); }
+      }, { once: true });
+      await audio.play();
+    } catch (error) {
+      stopSpeakerPreview();
+      showToast(error.message);
+    }
+  }
+
+  function turnSpeakerOptions(analysis, turn) {
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', 'Who said this');
+    const add = (parent, value, text) => {
+      const option = document.createElement('option'); option.value = value; option.textContent = text;
+      parent.appendChild(option);
+      return option;
+    };
+    const inMeeting = document.createElement('optgroup'); inMeeting.label = 'In this meeting';
+    const seen = new Set();
+    for (const detection of analysis.detections) {
+      const own = detection.id === turn.detection_id;
+      add(inMeeting, own ? 'clear' : 'detection:' + detection.id, detection.display_name + (own ? ' (detected)' : ''));
+      seen.add(nameKey(detection.display_name));
+    }
+    // Names given by corrections that aren't remembered voices.
+    for (const person of meetingPeople(analysis)) {
+      if (person.detection || person.profileId || person.name === 'Unknown' || seen.has(nameKey(person.name))) continue;
+      add(inMeeting, 'name:' + person.name, person.name);
+      seen.add(nameKey(person.name));
+    }
+    select.appendChild(inMeeting);
+
+    // Remembered voices not already listed as a speaker in this meeting.
+    const remembered = [...(state.speakerProfiles || [])]
+      .filter((profile) => !seen.has(nameKey(profile.name)))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (remembered.length) {
+      const group = document.createElement('optgroup'); group.label = 'Remembered voices';
+      for (const profile of remembered) add(group, 'profile:' + profile.id, profile.name);
+      select.appendChild(group);
+    }
+    const other = document.createElement('optgroup'); other.label = 'Other';
+    add(other, 'new', 'New name…');
+    add(other, 'unknown', 'Unknown');
+    select.appendChild(other);
+
+    if (turn.identity_override_unknown) select.value = 'unknown';
+    else if (turn.identity_override_profile_id) select.value = 'profile:' + turn.identity_override_profile_id;
+    else if (turn.identity_override_detection_id) select.value = 'detection:' + turn.identity_override_detection_id;
+    else if (turn.identity_override_name) select.value = 'name:' + turn.identity_override_name;
+    else select.value = 'clear';
+    return select;
+  }
+
   function renderTurns(analysis) {
     stopSpeakerPreview();
     els.speakerAnalysisResult.replaceChildren();
-    const conversation = document.createElement('div'); conversation.className = 'speaker-conversation';
-    for (const turn of analysis.turns) {
-      if (!turn.text) continue;
-      const row = document.createElement('div'); row.className = 'speaker-turn';
+
+    // Filter by person
+    const people = meetingPeople(analysis).filter((person) => person.turns);
+    const filterLabel = document.createElement('label'); filterLabel.className = 'inline-select turns-filter';
+    filterLabel.textContent = 'Show';
+    const filter = document.createElement('select');
+    const all = document.createElement('option'); all.value = ''; all.textContent = 'Everyone (' + analysis.turns.length + ' turns)';
+    filter.appendChild(all);
+    for (const person of people) {
+      const option = document.createElement('option'); option.value = nameKey(person.name);
+      option.textContent = person.name + ' (' + person.turns + ')';
+      filter.appendChild(option);
+    }
+    filter.value = people.some((person) => nameKey(person.name) === state.meetings.turnFilter) ? state.meetings.turnFilter : '';
+    filter.addEventListener('change', () => { state.meetings.turnFilter = filter.value; renderTurns(analysis); });
+    filterLabel.appendChild(filter);
+    els.speakerAnalysisResult.appendChild(filterLabel);
+
+    const list = document.createElement('ol'); list.className = 'turn-list';
+    const shown = analysis.turns.filter((turn) => !filter.value || nameKey(turn.display_name) === filter.value);
+    for (const turn of shown) {
+      const row = document.createElement('li'); row.className = 'turn-row';
       if (turn.identity_corrected) row.classList.add('identity-corrected');
-      const meta = document.createElement('div'); meta.className = 'speaker-turn-meta';
+
+      const play = document.createElement('button'); play.type = 'button'; play.className = 'turn-play';
+      play.dataset.idleLabel = '▶';
+      play.textContent = '▶';
+      play.disabled = !turn.can_preview;
+      play.setAttribute('aria-label', 'Play turn at ' + formatTime(turn.start_seconds));
+      play.setAttribute('aria-pressed', 'false');
+      play.addEventListener('click', () => toggleClipPreview(
+        '/api/admin/speakers/analyses/' + analysis.id + '/turns/' + turn.id + '/sample-audio',
+        'turn:' + turn.id,
+        play,
+      ));
+
+      const main = document.createElement('div'); main.className = 'turn-main';
+      const meta = document.createElement('div'); meta.className = 'turn-meta';
       const who = document.createElement('strong'); who.textContent = turn.display_name;
-      const when = document.createElement('span'); when.className = 'muted'; when.textContent = formatTime(turn.start_seconds);
+      const when = document.createElement('span'); when.className = 'muted small-note';
+      when.textContent = formatTime(turn.start_seconds) + ' · ' + speechLength(turn.end_seconds - turn.start_seconds);
       meta.append(who, when);
-      const text = document.createElement('p'); text.textContent = turn.text;
-
-      const correction = document.createElement('div'); correction.className = 'speaker-identity-correction';
-      const select = document.createElement('select');
-      select.setAttribute('aria-label', 'Correct speaker identity');
-      const detectedOption = document.createElement('option');
-      detectedOption.value = 'clear';
-      detectedOption.textContent = 'Detected: ' + (turn.detected_display_name || 'Speaker');
-      select.appendChild(detectedOption);
-      const unknownOption = document.createElement('option');
-      unknownOption.value = 'unknown'; unknownOption.textContent = 'Unknown speaker';
-      select.appendChild(unknownOption);
-
-      for (const detection of analysis.detections) {
-        if (detection.id === turn.detection_id) continue;
-        const option = document.createElement('option');
-        option.value = 'detection:' + detection.id;
-        option.textContent = 'Detected speaker: ' + detection.display_name;
-        select.appendChild(option);
+      if (turn.identity_corrected) {
+        const was = document.createElement('span'); was.className = 'muted small-note';
+        was.textContent = 'was ' + turn.detected_display_name;
+        meta.appendChild(was);
       }
-      for (const profile of state.speakerProfiles || []) {
-        const option = document.createElement('option');
-        option.value = 'profile:' + profile.id;
-        option.textContent = 'Remembered: ' + profile.name;
-        select.appendChild(option);
+      const text = document.createElement('p'); text.className = 'turn-text';
+      text.textContent = turn.text || '(no words transcribed)';
+
+      const controls = document.createElement('div'); controls.className = 'turn-controls';
+      const select = turnSpeakerOptions(analysis, turn);
+      const newName = document.createElement('input'); newName.type = 'text'; newName.placeholder = 'New name';
+      newName.setAttribute('aria-label', 'New speaker name'); newName.hidden = true;
+      select.addEventListener('change', () => { newName.hidden = select.value !== 'new'; if (!newName.hidden) newName.focus(); });
+
+      const trainingLabel = document.createElement('label'); trainingLabel.className = 'check small-note';
+      const training = document.createElement('input'); training.type = 'checkbox'; training.checked = true;
+      trainingLabel.append(training, document.createTextNode(' Add clip to training data'));
+
+      const value = () => {
+        if (select.value !== 'new') return select.value;
+        const typed = newName.value.trim();
+        return typed ? 'name:' + typed : '';
+      };
+      const apply = (scope) => {
+        const chosen = value();
+        if (!chosen) { showToast('Type the new name first'); newName.focus(); return; }
+        applyTurnIdentityCorrection(analysis, turn, chosen, scope, training.checked);
+      };
+      const applyTurn = document.createElement('button'); applyTurn.type = 'button'; applyTurn.className = 'primary small';
+      applyTurn.textContent = 'Reassign turn';
+      applyTurn.addEventListener('click', () => apply('turn'));
+      const applyAll = document.createElement('button'); applyAll.type = 'button'; applyAll.className = 'small';
+      applyAll.textContent = 'All ' + (turn.detected_display_name || 'matching') + ' turns';
+      applyAll.title = 'Reassign every turn originally detected as ' + turn.detected_display_name;
+      applyAll.addEventListener('click', () => apply('detection'));
+      controls.append(select, newName, applyTurn, applyAll, trainingLabel);
+
+      // Training status for corrected turns
+      const status = document.createElement('div'); status.className = 'turn-training small-note';
+      if (turn.relabel_status === 'approved') {
+        status.classList.add('is-approved');
+        status.textContent = '✓ In training data for ' + turn.display_name;
+      } else if (turn.relabel_id && turn.display_name !== 'Unknown') {
+        status.textContent = turn.relabel_status === 'excluded' ? 'Excluded from training data' : 'Correction not in training data yet';
+        const approve = document.createElement('button'); approve.type = 'button'; approve.className = 'quiet';
+        approve.textContent = 'Add to training data';
+        approve.addEventListener('click', async () => {
+          try {
+            await api('/api/admin/speakers/relabels/' + turn.relabel_id, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: 'approved' }),
+            });
+            showToast('Clip added to training data for ' + turn.display_name);
+            await Promise.all([refreshCurrentSpeakerAnalysis(), loadRelabelSamples()]);
+          } catch (error) { showToast(error.message); }
+        });
+        status.appendChild(approve);
+      } else {
+        status.hidden = true;
       }
 
-      if (turn.identity_override_unknown) select.value = 'unknown';
-      else if (turn.identity_override_profile_id) select.value = 'profile:' + turn.identity_override_profile_id;
-      else if (turn.identity_override_detection_id) select.value = 'detection:' + turn.identity_override_detection_id;
-      else select.value = 'clear';
-
-      const applyTurn = document.createElement('button'); applyTurn.type = 'button';
-      applyTurn.textContent = 'Apply to this turn';
-      applyTurn.addEventListener('click', () => applyTurnIdentityCorrection(analysis, turn, select.value, 'turn'));
-
-      const applySpeaker = document.createElement('button'); applySpeaker.type = 'button';
-      applySpeaker.textContent = 'Apply to all ' + (turn.detected_display_name || 'matching turns');
-      applySpeaker.title = 'Apply this correction to every turn from the same original diarized speaker';
-      applySpeaker.addEventListener('click', () => applyTurnIdentityCorrection(analysis, turn, select.value, 'detection'));
-
-      const correctedNote = document.createElement('span'); correctedNote.className = 'muted small-note';
-      correctedNote.textContent = turn.identity_corrected
-        ? 'Manually corrected; original detection retained.'
-        : 'Original detected identity.';
-
-      correction.append(select, applyTurn, applySpeaker, correctedNote);
-      row.append(meta, text, correction); conversation.appendChild(row);
+      main.append(meta, text, controls, status);
+      row.append(play, main);
+      list.appendChild(row);
     }
-    if (!conversation.children.length) {
-      const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'No spoken turns were transcribed.';
-      conversation.appendChild(p);
+    if (!shown.length) {
+      const li = document.createElement('li'); li.className = 'muted'; li.textContent = 'No turns for this person.';
+      list.appendChild(li);
     }
-
-    els.speakerAnalysisResult.append(conversation);
+    els.speakerAnalysisResult.appendChild(list);
   }
 
   async function loadAdminStatus() {
