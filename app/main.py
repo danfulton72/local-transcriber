@@ -58,11 +58,13 @@ from .services.storage import save_bytes
 from .services.retention import cleanup_expired_audio, prune_finished_chunk_audio, prune_live_chunk_audio
 from .admin import router as admin_router
 from .speaker_admin import router as speaker_admin_router
+from .meeting_notes_admin import mark_interrupted_exports, router as meeting_notes_router
 
-app = FastAPI(title="Local Transcriber", version="0.14.0")
+app = FastAPI(title="Local Transcriber", version="0.15.0")
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(speaker_admin_router)
+app.include_router(meeting_notes_router)
 
 
 @app.on_event("startup")
@@ -73,6 +75,7 @@ async def startup() -> None:
         await ensure_default_user(db)
         await cleanup_expired_audio(db)
         await prune_finished_chunk_audio(db)
+    await mark_interrupted_exports()
 
 
 @app.middleware("http")

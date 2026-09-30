@@ -23,6 +23,10 @@ services:
       SPEAKER_SERVICE_URL: http://speaker-analyzer:9000
       SPEAKER_SWAP_URL: ""
       SPEAKER_RESTORE_PREVIOUS: "false"
+    # Lets LLM_BASE_URL / OPEN_NOTEBOOK_URL use host.docker.internal when
+    # llama-server or Open Notebook run on this host outside the stack.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ${LOCAL_TRANSCRIBER_DIR:-/home/dan/voice/local-transcriber}/recordings:/data/recordings
     ports:

@@ -106,6 +106,21 @@ services:
       SPEAKER_SERVICE_URL: "http://speaker-analyzer:9000"
       SPEAKER_SWAP_URL: ""
       SPEAKER_RESTORE_PREVIOUS: "false"
+      # Meeting notes + Open Notebook export (optional; empty disables).
+      LLM_BASE_URL: "${LLM_BASE_URL:-}"
+      LLM_MODEL: "${LLM_MODEL:-meeting-llm}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_CONTEXT_TOKENS: "${LLM_CONTEXT_TOKENS:-32768}"
+      LLM_CHUNK_TOKENS: "${LLM_CHUNK_TOKENS:-12000}"
+      LLM_MAX_OUTPUT_TOKENS: "${LLM_MAX_OUTPUT_TOKENS:-4096}"
+      LLM_DISABLE_THINKING: "${LLM_DISABLE_THINKING:-true}"
+      NOTES_TIMEZONE: "${NOTES_TIMEZONE:-Europe/London}"
+      OPEN_NOTEBOOK_URL: "${OPEN_NOTEBOOK_URL:-}"
+      OPEN_NOTEBOOK_PASSWORD: "${OPEN_NOTEBOOK_PASSWORD:-}"
+      OPEN_NOTEBOOK_NOTEBOOK_ID: "${OPEN_NOTEBOOK_NOTEBOOK_ID:-}"
+      OPEN_NOTEBOOK_UI_URL: "${OPEN_NOTEBOOK_UI_URL:-}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /opt/stacks/voice/local-transcriber/recordings:/data/recordings
     ports:

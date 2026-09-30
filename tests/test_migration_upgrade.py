@@ -33,6 +33,10 @@ def test_upgrade_from_released_07_to_head(tmp_path):
             row[1]
             for row in connection.execute("PRAGMA table_info(user_sessions)")
         }
+        tables = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
         revision = connection.execute(
             "SELECT version_num FROM alembic_version"
         ).fetchone()[0]
@@ -40,7 +44,8 @@ def test_upgrade_from_released_07_to_head(tmp_path):
     assert "identity_override_name" in columns
     assert "is_admin" in user_columns
     assert "acting_as_user_id" in session_columns
-    assert revision == "20260924_10"
+    assert "meeting_exports" in tables
+    assert revision == "20260930_11"
 
 
 

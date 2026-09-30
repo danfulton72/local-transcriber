@@ -288,6 +288,37 @@
         </section>
       </div>
 
+      <section class="panel meeting-notes-panel">
+        <div class="section-heading compact-heading">
+          <div>
+            <h3>Meeting notes &amp; Open Notebook</h3>
+            <p class="muted">Turn the selected conversation into ordered notes with your local model, then send the transcript and notes to Open Notebook. Check speaker names first so owners are right.</p>
+          </div>
+          <span id="meetingNotesServiceStatus" class="pill">Checking…</span>
+        </div>
+        <div class="speaker-analysis-controls meeting-notes-controls">
+          <button id="meetingNotesExportButton" class="primary" type="button">Generate notes &amp; export</button>
+          <button id="meetingNotesGenerateButton" type="button">Generate notes only</button>
+          <button id="meetingNotesResendButton" type="button">Re-send saved notes</button>
+          <button id="meetingNotesDownloadButton" type="button">Download .md</button>
+        </div>
+        <p id="meetingNotesMessage" class="muted small-note" aria-live="polite">Choose a conversation above.</p>
+        <p id="meetingNotesLinkRow" class="small-note" hidden><a id="meetingNotesLink" href="#" target="_blank" rel="noopener">Open in Open Notebook ↗</a></p>
+        <pre id="meetingNotesPreview" class="meeting-notes-preview conversation-scroll" hidden></pre>
+        <dialog id="notebookPickerDialog" class="notebook-picker" aria-labelledby="notebookPickerTitle">
+          <form id="notebookPickerForm" method="dialog">
+            <h3 id="notebookPickerTitle">Export to which notebook?</h3>
+            <p id="notebookPickerMessage" class="muted small-note" aria-live="polite">Loading notebooks from Open Notebook…</p>
+            <div id="notebookPickerList" class="notebook-picker-list conversation-scroll" role="radiogroup" aria-labelledby="notebookPickerTitle"></div>
+            <div class="notebook-picker-actions">
+              <button id="notebookPickerRefreshButton" type="button">↻ Refresh</button>
+              <button id="notebookPickerCancelButton" type="submit" value="cancel" formnovalidate>Cancel</button>
+              <button id="notebookPickerConfirmButton" class="primary" type="submit" value="confirm" disabled>Export</button>
+            </div>
+          </form>
+        </dialog>
+      </section>
+
       <section class="panel relabel-panel">
         <div class="section-heading compact-heading">
           <div>
