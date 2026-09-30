@@ -1655,12 +1655,33 @@
         ? window.TalkToTypeAudio.findQuietCut(merged, state.sampleRate, searchFrom, target)
         : target);
     if (sendLength < Math.round(.25 * state.sampleRate)) return false;
-    const audio = merged.slice(0, sendLength);
+    // Audio carried over from the previous chunk (the overlap) was already
+    // heard; only the new part decides whether this chunk holds speech.
+    const carried = Math.max(0, merged.length - state.liveFreshSamples);
+    let audio = merged.slice(0, sendLength);
     const nextStart = finalChunk ? merged.length : Math.max(0, sendLength - overlap);
     const remainder = finalChunk ? new Float32Array(0) : merged.slice(nextStart);
     state.liveBuffers = remainder.length ? [remainder] : [];
     state.liveSampleCount = remainder.length;
     state.liveFreshSamples = finalChunk ? 0 : Math.max(0, remainder.length - overlap);
+
+    const utils = window.TalkToTypeAudio;
+    if (!finalChunk && utils?.analyzeFinalTail) {
+      // Pauses and lulls: Whisper turns silence into "Thank you.", so a chunk
+      // with no new speech is not sent. The full recording is still saved.
+      const fresh = audio.slice(Math.min(carried, audio.length));
+      const check = utils.analyzeFinalTail(fresh, state.sampleRate, { minActiveMs: 100 });
+      if (!check.hasSpeech) {
+        console.info('[Talk to Type] Skipped silent chunk before Whisper', {
+          durationMs: Math.round(check.durationMs), activeMs: Math.round(check.activeMs),
+        });
+        return true;
+      }
+    }
+    if (utils?.trimSilence) {
+      const [start, end] = utils.trimSilence(audio, state.sampleRate);
+      if (end - start >= Math.round(.25 * state.sampleRate)) audio = audio.slice(start, end);
+    }
     state.liveQueue.push({ index: ++state.liveChunkIndex, blob: encodeWav(audio, state.sampleRate), endedAt: Date.now() });
     processLiveQueue();
     return true;

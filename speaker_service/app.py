@@ -13,6 +13,8 @@ import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pyannote.audio import Pipeline
 
+from whisper_guard import filter_transcript
+
 
 app = FastAPI(title="Local Speaker Analyzer", version="0.1.4")
 
@@ -504,7 +506,11 @@ async def analyze(
                     turn["end_seconds"] + 0.03,
                 )
                 try:
-                    turn["text"] = await _transcribe_turn(client, wav_data, language)
+                    text = await _transcribe_turn(client, wav_data, language)
+                    # Short or silent turns (a cough, "mm") come back as "Thank you."
+                    turn["text"] = filter_transcript(
+                        text, wav_data, context=f"turn at {turn['start_seconds']:.1f}s"
+                    )
                 except httpx.HTTPError as exc:
                     raise HTTPException(
                         status_code=502,
