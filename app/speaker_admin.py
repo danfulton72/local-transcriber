@@ -52,11 +52,15 @@ class RenameProfileRequest(BaseModel):
 
 
 class TurnIdentityUpdate(BaseModel):
+    # A typed name: matched to a remembered voice by name, else kept as a new name.
+    name: str | None = Field(default=None, max_length=120)
     target_profile_id: uuid.UUID | None = None
     target_detection_id: uuid.UUID | None = None
     unknown: bool = False
     clear: bool = False
     scope: str = Field(default="turn", pattern="^(turn|detection)$")
+    # Mark the corrected clip(s) as approved training data straight away.
+    add_to_training: bool = False
 
 
 class RelabelStatusUpdate(BaseModel):
@@ -188,6 +192,14 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
         )
     ).scalars().all()
     by_id = {item.id: item for item in detections}
+    relabels = {
+        row.turn_id: row
+        for row in (
+            await db.execute(
+                select(SpeakerRelabelSample).where(SpeakerRelabelSample.analysis_id == analysis.id)
+            )
+        ).scalars().all()
+    }
     profiles = (await db.execute(select(SpeakerProfile))).scalars().all()
     profiles_by_id = {item.id: item for item in profiles}
     speech_by_detection: dict[uuid.UUID, float] = {}
@@ -283,6 +295,9 @@ async def _analysis_payload(analysis: SpeakerAnalysis, db: AsyncSession) -> dict
                 "text": turn.edited_text if turn.edited_text is not None else turn.text,
                 "original_text": turn.text,
                 "edited": turn.edited_text is not None,
+                "relabel_id": str(relabels[turn.id].id) if turn.id in relabels else None,
+                "relabel_status": relabels[turn.id].status if turn.id in relabels else None,
+                "can_preview": turn.end_seconds > turn.start_seconds,
             }
             for turn in turns
         ],
@@ -602,6 +617,54 @@ async def speaker_sample_audio(
     )
 
 
+TURN_CLIP_MAX_SECONDS = 30.0
+
+
+@router.get("/analyses/{analysis_id}/turns/{turn_id}/sample-audio")
+async def turn_sample_audio(
+    analysis_id: uuid.UUID,
+    turn_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Audio for one speaker turn (capped at 30 s) so a correction can be checked by ear."""
+    analysis = await admin_analysis(analysis_id, db)
+    turn = await db.get(SpeakerTurn, turn_id)
+    if not turn or turn.analysis_id != analysis.id:
+        raise HTTPException(status_code=404, detail="Speaker turn not found")
+    if turn.end_seconds <= turn.start_seconds:
+        raise HTTPException(status_code=404, detail="No playable speech is available for this turn.")
+
+    recording = await db.get(Recording, analysis.recording_id)
+    if not recording:
+        raise HTTPException(status_code=404, detail="Recording not found")
+
+    combined_path = None
+    delete_combined = False
+    try:
+        combined_path, delete_combined, _, _ = await build_combined_wav(recording, db)
+        clip, clip_start, clip_end = extract_wav_clip(
+            combined_path,
+            turn.start_seconds,
+            turn.end_seconds,
+            max_seconds=TURN_CLIP_MAX_SECONDS,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    finally:
+        if delete_combined and combined_path is not None:
+            combined_path.unlink(missing_ok=True)
+
+    return Response(
+        content=clip,
+        media_type="audio/wav",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Clip-Start": f"{clip_start:.3f}",
+            "X-Clip-End": f"{clip_end:.3f}",
+        },
+    )
+
+
 @router.patch("/analyses/{analysis_id}/detections/{speaker_key}")
 async def label_detection(
     analysis_id: uuid.UUID,
@@ -644,7 +707,9 @@ async def correct_turn_identity(
     if not turn or turn.analysis_id != analysis.id:
         raise HTTPException(status_code=404, detail="Speaker turn not found")
 
+    clean_name = (payload.name or "").strip()
     selected = sum(bool(value) for value in (
+        clean_name,
         payload.target_profile_id,
         payload.target_detection_id,
         payload.unknown,
@@ -662,10 +727,24 @@ async def correct_turn_identity(
 
     target_profile = None
     target_detection = None
+    free_name = None
     corrected_name = source_detection.display_name
     corrected_profile_id = source_detection.profile_id
 
-    if payload.target_profile_id:
+    if clean_name:
+        target_profile = (
+            await db.execute(
+                select(SpeakerProfile).where(func.lower(SpeakerProfile.name) == clean_name.casefold())
+            )
+        ).scalars().first()
+        if target_profile:
+            corrected_name = target_profile.name
+            corrected_profile_id = target_profile.id
+        else:
+            free_name = clean_name
+            corrected_name = clean_name
+            corrected_profile_id = None
+    elif payload.target_profile_id:
         target_profile = await db.get(SpeakerProfile, payload.target_profile_id)
         if not target_profile:
             raise HTTPException(status_code=404, detail="Remembered speaker not found")
@@ -705,9 +784,14 @@ async def correct_turn_identity(
             )
         ).scalar_one_or_none()
 
-        if payload.clear or (
-            target_detection is not None and target_detection.id == item.detection_id
-        ):
+        back_to_detected = (
+            payload.clear
+            or (target_detection is not None and target_detection.id == item.detection_id)
+            # Naming a turn as the speaker it was already detected as is a reset.
+            or (target_profile is not None and item_source.profile_id == target_profile.id)
+            or (free_name is not None and free_name.casefold() == item_source.display_name.casefold())
+        )
+        if back_to_detected:
             item.identity_override_profile_id = None
             item.identity_override_detection_id = None
             item.identity_override_unknown = False
@@ -721,9 +805,13 @@ async def correct_turn_identity(
         item.identity_override_profile_id = target_profile.id if target_profile else None
         item.identity_override_detection_id = target_detection.id if target_detection else None
         item.identity_override_unknown = bool(payload.unknown)
-        item.identity_override_name = None
+        item.identity_override_name = free_name
         item.identity_corrected_by_user_id = user_id
         item.identity_corrected_at = now
+        # "Unknown" is never training data; otherwise honour the request.
+        approved = bool(payload.add_to_training) and not payload.unknown
+        status = "approved" if approved else "pending"
+        reviewed_at = now if approved else None
 
         if existing is None:
             existing = SpeakerRelabelSample(
@@ -735,7 +823,8 @@ async def correct_turn_identity(
                 corrected_display_name=corrected_name,
                 corrected_profile_id=corrected_profile_id,
                 corrected_by_user_id=user_id,
-                status="pending",
+                status=status,
+                reviewed_at=reviewed_at,
                 created_at=now,
             )
             db.add(existing)
@@ -743,8 +832,8 @@ async def correct_turn_identity(
             existing.corrected_profile_id = corrected_profile_id
             existing.corrected_display_name = corrected_name
             existing.corrected_by_user_id = user_id
-            existing.status = "pending"
-            existing.reviewed_at = None
+            existing.status = status
+            existing.reviewed_at = reviewed_at
 
     await db.commit()
     return await _analysis_payload(analysis, db)
