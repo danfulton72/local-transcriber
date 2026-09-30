@@ -120,7 +120,7 @@ Each speaker turn can be edited directly in **Your words** while audio continues
 
 Speaker-name corrections in **My words** now start with a selector of remembered voices. Selecting **New name…** reveals a manual-name field, while **This turn**, **All matching turns**, **Unknown**, and **Reset** keep the correction scope explicit. Normal users see only remembered speaker names/IDs here; voiceprint metadata and source samples remain admin-only.
 
-Saved recordings also show an editable **Title** above the transcript. Titles can be renamed without changing the transcript or recording audio.
+Saved recordings also show an editable **Title** above the transcript. Titles can be renamed without changing the transcript or recording audio. New titles start with the recording's date as `yyyymmdd` (London time, from `NOTES_TIMEZONE`), whether typed or generated from the transcript, so titles sort by date. Renaming keeps that date unless the new title starts with its own 8-digit date. Recordings titled before this change are not renamed.
 
 ### Responsive workspace
 
@@ -153,6 +153,8 @@ The CUDA 12.6 speaker image is retained because it works on the T4 and also leav
 ### Workflow
 
 Open **Tools** as an admin, then use the **Speakers** section:
+
+The **Conversation** list is sorted A–Z by title and hides conversations already sent to Open Notebook; tick **Include conversations already sent to Open Notebook** to see them. Each entry notes whether it has been analysed or sent.
 
 1. Choose a saved recording.
 2. Optionally specify the expected number of speakers.

@@ -2900,3 +2900,5 @@ body.admin-user .non-admin-only{display:none}
 .notebook-picker-option .muted{margin-left:auto;font-size:.8rem}
 .notebook-picker-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}
 .notebook-picker-actions #notebookPickerRefreshButton{margin-right:auto}
+
+.speaker-list-toggle{margin:.6rem 0 0}
