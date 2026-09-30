@@ -1,3 +1,4 @@
+import pytest
 import io
 import uuid
 import wave
@@ -110,3 +111,75 @@ def test_turns_can_be_reassigned_heard_and_added_to_training(monkeypatch):
             json={"name": "Someone", "unknown": True},
         )
         assert bad.status_code == 400
+
+
+def test_turns_carry_voice_match_confidence(monkeypatch):
+    from app import speaker_admin
+    from app.main import app
+
+    voice_a = [0.2, 0.9, 0.1, 0.3, 0.05]
+    near_a = [0.25, 0.85, 0.2, 0.3, 0.1]      # ~0.99 similar to A: matched
+    partly_a = [0.9, 0.4, -0.2, 0.1, 0.0]     # ~0.5 similar to A: below the 0.78 threshold
+
+    embeddings = {"first": [voice_a, [0.0, 0.0, 1.0, 0.0, 0.0]], "second": [near_a, partly_a]}
+    calls = []
+
+    async def fake_analyze(path, language=None, num_speakers=None):
+        pair = embeddings["first" if not calls else "second"]
+        calls.append(1)
+        return {
+            "model": "fake",
+            "speakers": [
+                {"speaker_key": "S0", "embedding": pair[0]},
+                {"speaker_key": "S1", "embedding": pair[1]},
+            ],
+            "turns": [
+                {"speaker_key": "S0", "start_seconds": 0.0, "end_seconds": 4.0, "text": "One."},
+                {"speaker_key": "S1", "start_seconds": 4.0, "end_seconds": 8.0, "text": "Two."},
+            ],
+        }
+
+    monkeypatch.setattr(speaker_admin.speaker_service, "analyze", fake_analyze)
+    name = f"Asha {uuid.uuid4().hex[:6]}"
+
+    def analyse(client):
+        recording = client.post("/api/recordings", json={"language": "en"}).json()
+        client.post(f"/api/recordings/{recording['id']}/finish", json={"transcript": "x", "duration_seconds": 8})
+        client.post(
+            f"/api/recordings/{recording['id']}/audio",
+            files={"file": ("a.wav", make_wav(8), "audio/wav")},
+            data={"duration_seconds": "8"},
+        )
+        job = client.post(f"/api/admin/speakers/analyze/{recording['id']}", json={}).json()
+        return client.get(f"/api/admin/speakers/analyses/{job['id']}").json()
+
+    with TestClient(app) as client:
+        login_admin(client)
+        first = analyse(client)
+        assert first["match_threshold"] == pytest.approx(0.78)
+        saved = client.post(
+            f"/api/admin/speakers/analyses/{first['id']}/detections/S0/remember", json={"name": name}
+        )
+        assert saved.status_code == 200
+        first = client.get(f"/api/admin/speakers/analyses/{first['id']}").json()
+        assert first["turns"][0]["match_source"] == "confirmed"  # named by a person
+
+        second = analyse(client)
+        matched_turn, unmatched_turn = second["turns"]
+        assert matched_turn["display_name"] == name
+        assert matched_turn["match_source"] == "matched"
+        assert matched_turn["match_score"] > 0.9
+
+        assert unmatched_turn["match_source"] == "unmatched"
+        assert unmatched_turn["match_score"] is None
+        assert unmatched_turn["closest_profile_name"] == name
+        assert 0 < unmatched_turn["closest_score"] < 0.78
+
+        detection = next(row for row in second["detections"] if row["speaker_key"] == "S1")
+        assert detection["closest_profile_name"] == name and detection["match_source"] == "unmatched"
+
+        corrected = client.patch(
+            f"/api/admin/speakers/analyses/{second['id']}/turns/{unmatched_turn['id']}/identity",
+            json={"name": "Someone new", "scope": "turn"},
+        ).json()
+        assert next(row for row in corrected["turns"] if row["id"] == unmatched_turn["id"])["match_source"] == "corrected"
