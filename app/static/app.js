@@ -431,26 +431,6 @@
     return [String(left || '').trim(), String(right || '').trim()].filter(Boolean).join(' ').trim();
   }
 
-  function dedupeIncoming(existing, incoming) {
-    const current = String(existing || '').trim();
-    const next = String(incoming || '').trim();
-    if (!next) return '';
-    if (!current) return next;
-    const a = current.split(/\s+/);
-    const b = next.split(/\s+/);
-    let overlap = 0;
-    for (let size = Math.min(28, a.length, b.length); size >= 1; size -= 1) {
-      let matches = true;
-      for (let i = 0; i < size; i += 1) {
-        const left = normalizeToken(a[a.length - size + i]);
-        const right = normalizeToken(b[i]);
-        if (!left || !right || left !== right) { matches = false; break; }
-      }
-      if (matches) { overlap = size; break; }
-    }
-    return b.slice(overlap).join(' ').trim();
-  }
-
   function showToast(message) {
     els.toast.textContent = message;
     els.toast.classList.remove('hidden');
@@ -1004,15 +984,17 @@
     renderTranscript();
   }
 
-  function normalizeToken(token) {
-    return token.toLocaleLowerCase().replace(/[^\p{L}\p{N}']/gu, '');
-  }
-
   function acceptLiveTranscript(newText) {
     const incoming = String(newText || '').trim();
     if (!incoming) return;
     if (state.livePending) state.confirmedTranscript = joinText(state.confirmedTranscript, state.livePending);
-    state.livePending = dedupeIncoming(state.confirmedTranscript, incoming);
+    // Remove the words this chunk repeats from the end of the last one
+    // (chunks overlap by ~0.9 s). The merge may also fix a half word at the
+    // end of the confirmed text, so both parts are rebuilt.
+    const { keep, add } = window.TalkToTypeText.mergeOverlap(state.confirmedTranscript, incoming);
+    const confirmedWords = state.confirmedTranscript.trim().split(/\s+/).filter(Boolean);
+    if (keep < confirmedWords.length) state.confirmedTranscript = confirmedWords.slice(0, keep).join(' ');
+    state.livePending = add.join(' ');
     state.transcript = joinText(state.confirmedTranscript, state.livePending);
     if (state.currentRecording) {
       userLocalSet('activeRecordingId', state.currentRecording.id);

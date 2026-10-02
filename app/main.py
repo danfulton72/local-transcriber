@@ -57,6 +57,7 @@ from .services.recording_audio import combine_wav_segments
 from .services.storage import save_bytes
 from .services.titles import dated_title, renamed_title
 from .services.whisper_guard import filter_transcript
+from .services.transcript_merge import merge_transcripts
 from .services.retention import cleanup_expired_audio, prune_finished_chunk_audio, prune_live_chunk_audio
 from .admin import router as admin_router
 from .speaker_admin import router as speaker_admin_router
@@ -125,25 +126,14 @@ def make_title(transcript: str) -> str:
 
 
 def merge_overlapping_text(existing: str, incoming: str) -> str:
+    """Append a chunk, removing words it repeats from the end of the existing text."""
     existing = " ".join((existing or "").split()).strip()
     incoming = " ".join((incoming or "").split()).strip()
     if not incoming:
         return existing
     if not existing:
         return incoming
-
-    left = existing.split()
-    right = incoming.split()
-    overlap = 0
-    for size in range(min(28, len(left), len(right)), 0, -1):
-        a = [token.casefold().strip(".,!?;:\"'()[]{}") for token in left[-size:]]
-        b = [token.casefold().strip(".,!?;:\"'()[]{}") for token in right[:size]]
-        if a == b:
-            overlap = size
-            break
-
-    remainder = " ".join(right[overlap:]).strip()
-    return existing if not remainder else f"{existing} {remainder}".strip()
+    return merge_transcripts(existing, incoming)
 
 
 def recording_out(recording: Recording) -> RecordingOut:

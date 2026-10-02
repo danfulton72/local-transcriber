@@ -1,0 +1,19 @@
+[
+  {"note": "exact overlap", "existing": "We are going to the", "incoming": "going to the shop later.", "expected": "We are going to the shop later."},
+  {"note": "exact single word at the join", "existing": "We are going to the", "incoming": "the shop", "expected": "We are going to the shop"},
+  {"note": "clipped first word", "existing": "We are going to the", "incoming": "ing to the shop later.", "expected": "We are going to the shop later."},
+  {"note": "filler before the overlap", "existing": "We are going to the", "incoming": "Um, going to the shop.", "expected": "We are going to the shop."},
+  {"note": "capitalised restart", "existing": "so we agreed the budget", "incoming": "So we agreed the budget for next year.", "expected": "so we agreed the budget for next year."},
+  {"note": "half word at the old cut", "existing": "we need to update the spread", "incoming": "update the spreadsheet by Friday.", "expected": "we need to update the spreadsheet by Friday."},
+  {"note": "garbled last word", "existing": "send the revised figures Fri.", "incoming": "revised figures on Friday please.", "expected": "send the revised figures on Friday please."},
+  {"note": "clipped last word", "existing": "Marketing is ten percent ov", "incoming": "ten percent over plan.", "expected": "Marketing is ten percent over plan."},
+  {"note": "punctuation at the cut", "existing": "Right, let’s get going.", "incoming": "Let’s get going, shall we?", "expected": "Right, let’s get going, shall we?"},
+  {"note": "one-letter slip", "existing": "the quarterly forecast", "incoming": "quartely forecast looks fine", "expected": "the quarterly forecast looks fine"},
+  {"note": "no overlap", "existing": "I went to the", "incoming": "shop to buy milk.", "expected": "I went to the shop to buy milk."},
+  {"note": "common words only, must not merge", "existing": "That is the plan", "incoming": "Next item is the budget.", "expected": "That is the plan Next item is the budget."},
+  {"note": "unrelated", "existing": "we said yes", "incoming": "and then no", "expected": "we said yes and then no"},
+  {"note": "single word needs an exact match", "existing": "pass me the", "incoming": "a cup", "expected": "pass me the a cup"},
+  {"note": "single common word after filler", "existing": "it was the end", "incoming": "um the start", "expected": "it was the end um the start"},
+  {"note": "empty existing", "existing": "", "incoming": "Hello there", "expected": "Hello there"},
+  {"note": "empty incoming", "existing": "Hello there", "incoming": "", "expected": "Hello there"}
+]

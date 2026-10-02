@@ -1,5 +1,5 @@
-const CACHE = 'talk-to-type-v24';
-const APP_SHELL = ['/', '/styles.css', '/audio-utils.js', '/capture-worklet.js', '/app.js', '/manifest.webmanifest', '/icon.svg'];
+const CACHE = 'talk-to-type-v25';
+const APP_SHELL = ['/', '/styles.css', '/audio-utils.js', '/transcript-utils.js', '/capture-worklet.js', '/app.js', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
