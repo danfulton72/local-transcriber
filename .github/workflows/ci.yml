@@ -26,6 +26,8 @@ jobs:
       - run: node --check app/static/audio-utils.js
       - run: node --check app/static/app.js
       - run: node tests/test_audio_utils.js
+      - run: node --check app/static/transcript-utils.js
+      - run: node tests/test_transcript_utils.js
       - run: node --check app/static/sw.js
       - run: python -m json.tool app/static/manifest.webmanifest > /dev/null
       - run: python -m compileall -q app migrations speaker_service deploy/ai-stack deploy/voice-stack
