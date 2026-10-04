@@ -2901,6 +2901,43 @@ body.admin-user .non-admin-only{display:none}
 .notebook-picker-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}
 .notebook-picker-actions #notebookPickerRefreshButton{margin-right:auto}
 
+.reprocess-dialog{
+  width:min(980px,calc(100vw - 32px));
+  padding:22px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--card);
+  color:var(--ink);
+  box-shadow:var(--shadow);
+}
+.reprocess-dialog::backdrop{background:rgba(36,48,58,.45)}
+.reprocess-dialog-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.reprocess-dialog-head h3{margin:0}
+.reprocess-dialog-head .eyebrow{margin-bottom:.25rem}
+#reprocessCloseButton{min-width:44px;padding:.35rem .65rem;font-size:1.4rem;line-height:1}
+.reprocess-compare{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}
+.reprocess-compare section{min-width:0}
+.reprocess-compare h4{margin:0 0 8px}
+.reprocess-text{
+  margin:0;
+  min-height:14rem;
+  max-height:48vh;
+  padding:14px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:var(--bg);
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  font:inherit;
+  line-height:1.55;
+}
+.reprocess-actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+@media (max-width:700px){
+  .reprocess-compare{grid-template-columns:1fr}
+  .reprocess-text{min-height:10rem;max-height:30vh}
+}
+
+
 /* Relabelled voice samples: review queue and history */
 .relabel-filters{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin:.25rem 0 .5rem}
 .relabel-view-toggle{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:3px;background:var(--bg)}
