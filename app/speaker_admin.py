@@ -22,8 +22,10 @@ from .models import (
     SpeakerProfileSample,
     SpeakerRelabelSample,
     SpeakerTurn,
+    TranscriptionRun,
 )
 from .services.progress import word_count
+from .services.meeting_state import mark_meeting_notes_stale
 from .services.recording_audio import build_combined_wav, extract_wav_clip
 from .services.speaker_service import speaker_service
 
@@ -479,6 +481,7 @@ async def process_analysis(analysis_id: uuid.UUID, num_speakers: int | None) -> 
             analysis.processing_seconds = time.perf_counter() - started
             analysis.completed_at = datetime.now(timezone.utc)
             analysis.error = None
+            await mark_meeting_notes_stale(recording.id, db)
             await db.commit()
         except Exception as exc:
             analysis.status = "error"
@@ -566,10 +569,12 @@ async def speaker_recordings(
             and export.notes_generated_at
             and export.notes_generated_at > export.exported_at
         )
+        notes_stale = bool(export and export.notes_stale)
         return {
             "notes_ready": bool(export and export.notes_markdown),
+            "notes_stale": notes_stale,
             "open_notebook_exported": exported,
-            "export_outdated": outdated,
+            "export_outdated": outdated or notes_stale,
         }
 
     items = []
@@ -613,6 +618,19 @@ async def start_speaker_analysis(
         raise HTTPException(status_code=404, detail="Saved recording not found")
     if not recording.audio_path:
         raise HTTPException(status_code=400, detail="This recording has no retained voice audio.")
+
+    active_reprocess = (
+        await db.execute(
+            select(TranscriptionRun)
+            .where(TranscriptionRun.status.in_(["queued", "processing"]))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if active_reprocess is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Transcription reprocessing is using the speech GPU. Try again when it finishes.",
+        )
 
     analysis = SpeakerAnalysis(recording_id=recording.id, status="queued")
     db.add(analysis)
