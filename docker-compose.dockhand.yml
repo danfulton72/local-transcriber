@@ -22,7 +22,7 @@ services:
       TZ: Etc/UTC
       WHISPER_MODEL: distil-whisper/distil-large-v3.5-ct2
       WHISPER_LANG: en
-      WHISPER_BEAM: "1"
+      WHISPER_BEAM: "5"
       WHISPER_COMPUTE_TYPE: int8_float32
     volumes:
       - /opt/stacks/voice/whisper-data:/config
