@@ -194,6 +194,11 @@ def test_speaker_word_reprocess_preserves_manual_turn_edit(monkeypatch):
         assert analysis["turns"][0]["text"] == "human correction"
         assert analysis["turns"][0]["edited"] is True
 
+        recording = client.get(f"/api/recordings/{rid}").json()
+        assert recording["transcript_original"] == "new automatic turn words"
+        assert recording["transcript_edited"] == "human correction"
+        assert recording["transcript"] == "human correction"
+
         notes = client.get(f"/api/admin/meeting-notes/recordings/{rid}").json()
         assert notes["notes_stale"] is True
 
