@@ -714,11 +714,14 @@ async def update_recording_speaker_turn(
 @app.patch("/api/recordings/{recording_id}", response_model=RecordingOut)
 async def update_recording(recording_id: uuid.UUID, payload: RecordingUpdate, db: AsyncSession = Depends(get_db)) -> RecordingOut:
     recording = await find_recording(recording_id, db)
+    title_changed = False
     if payload.title is not None:
+        previous_title = recording.title
         if payload.title.strip():
             recording.title = renamed_title(payload.title, recording.title)
         else:
             recording.title = dated_title(make_title(recording.transcript), recording.created_at)
+        title_changed = recording.title != previous_title
     if payload.is_favourite is not None:
         recording.is_favourite = payload.is_favourite
     if payload.transcript_edited is not None:
@@ -732,7 +735,9 @@ async def update_recording(recording_id: uuid.UUID, payload: RecordingUpdate, db
             recording.last_activity_at = utcnow()
             if not recording.title or recording.title == "New recording":
                 recording.title = dated_title(make_title(new_text), recording.created_at)
-            await mark_meeting_notes_stale(recording.id, db)
+            await mark_meeting_notes_stale(recording.id, db, source="recording")
+    if title_changed:
+        await mark_meeting_notes_stale(recording.id, db)
     audit = admin_audit_event(
         recording.id,
         "recording_update",
@@ -901,7 +906,7 @@ async def transcribe_recording(
     recording.draft_text = None
     recording.last_activity_at = utcnow()
     recording.title = recording.title or dated_title(make_title(transcript), recording.created_at)
-    await mark_meeting_notes_stale(recording.id, db)
+    await mark_meeting_notes_stale(recording.id, db, source="recording")
     await db.commit()
     await cleanup_expired_audio(db)
     await db.refresh(recording)
