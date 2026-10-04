@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import actor_user_id, require_admin
@@ -67,6 +67,21 @@ class TurnIdentityUpdate(BaseModel):
 
 class RelabelStatusUpdate(BaseModel):
     status: str = Field(pattern="^(pending|approved|excluded)$")
+
+
+async def mark_interrupted_analyses() -> None:
+    """Speaker-analysis background tasks do not survive an app restart."""
+    async with SessionLocal() as db:
+        await db.execute(
+            update(SpeakerAnalysis)
+            .where(SpeakerAnalysis.status.in_(["queued", "processing"]))
+            .values(
+                status="error",
+                error="Interrupted by an app restart. Run the analysis again.",
+                completed_at=datetime.now(timezone.utc),
+            )
+        )
+        await db.commit()
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
