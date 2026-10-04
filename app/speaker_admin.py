@@ -769,7 +769,7 @@ async def label_detection(
     payload: DetectionLabelUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    await admin_analysis(analysis_id, db)
+    analysis = await admin_analysis(analysis_id, db)
     detection = (
         await db.execute(
             select(SpeakerDetection).where(
@@ -788,6 +788,7 @@ async def label_detection(
         if not profile or profile.name.casefold() != name.casefold():
             detection.profile_id = None
             detection.match_score = None
+    await mark_meeting_notes_stale(analysis.recording_id, db)
     await db.commit()
     return {"speaker_key": detection.speaker_key, "display_name": detection.display_name}
 
@@ -932,6 +933,7 @@ async def correct_turn_identity(
             existing.status = status
             existing.reviewed_at = reviewed_at
 
+    await mark_meeting_notes_stale(analysis.recording_id, db)
     await db.commit()
     return await _analysis_payload(analysis, db)
 
