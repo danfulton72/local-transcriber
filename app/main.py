@@ -61,7 +61,7 @@ from .services.whisper_guard import filter_transcript
 from .services.transcript_merge import merge_transcripts
 from .services.retention import cleanup_expired_audio, prune_finished_chunk_audio, prune_live_chunk_audio
 from .admin import router as admin_router
-from .speaker_admin import router as speaker_admin_router
+from .speaker_admin import mark_interrupted_analyses, router as speaker_admin_router
 from .meeting_notes_admin import mark_interrupted_exports, router as meeting_notes_router
 from .reprocess_admin import mark_interrupted_reprocesses, router as reprocess_router
 
@@ -82,6 +82,7 @@ async def startup() -> None:
         await cleanup_expired_audio(db)
         await prune_finished_chunk_audio(db)
     await mark_interrupted_exports()
+    await mark_interrupted_analyses()
     await mark_interrupted_reprocesses()
 
 
