@@ -305,6 +305,30 @@ async def process_speaker_turn_reprocess(run_id: uuid.UUID) -> None:
                 if turn.edited_text is not None:
                     edited_preserved += 1
 
+            machine_transcript = " ".join(
+                turn.text.strip()
+                for turn in turns
+                if turn.text.strip()
+            ).strip()
+            effective_transcript = " ".join(
+                (turn.edited_text if turn.edited_text is not None else turn.text).strip()
+                for turn in turns
+                if (turn.edited_text if turn.edited_text is not None else turn.text).strip()
+            ).strip()
+            previous_transcript = recording.transcript
+            if effective_transcript != previous_transcript:
+                db.add(
+                    TranscriptRevision(
+                        recording_id=recording.id,
+                        previous_text=previous_transcript,
+                        new_text=effective_transcript,
+                    )
+                )
+            recording.transcript_original = machine_transcript
+            recording.transcript_edited = effective_transcript if edited_preserved else None
+            recording.draft_text = None
+            recording.last_activity_at = utcnow()
+
             run.result_data = {
                 "turn_count": len(turns),
                 "changed_turns": changed,
