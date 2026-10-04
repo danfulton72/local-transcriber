@@ -471,7 +471,7 @@ async def accept_recording_reprocess(
             },
         )
     )
-    await mark_meeting_notes_stale(recording.id, db)
+    await mark_meeting_notes_stale(recording.id, db, source="recording")
     await db.commit()
     await db.refresh(run)
     await db.refresh(recording)
