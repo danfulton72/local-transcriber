@@ -461,6 +461,34 @@
       </div>
     </section>
   </main>
+  <dialog id="reprocessDialog" class="reprocess-dialog" aria-labelledby="reprocessDialogTitle">
+    <form method="dialog">
+      <div class="reprocess-dialog-head">
+        <div>
+          <p class="eyebrow">Retained audio</p>
+          <h3 id="reprocessDialogTitle">Review reprocessed transcript</h3>
+        </div>
+        <button id="reprocessCloseButton" type="submit" value="close" aria-label="Close">×</button>
+      </div>
+      <p id="reprocessDialogMessage" class="muted small-note"></p>
+      <p id="reprocessEditWarning" class="speaker-alert small-note" hidden>Manual transcript edits exist. Using the reprocessed version will replace the current edited text; revision history keeps the previous text.</p>
+      <div class="reprocess-compare">
+        <section>
+          <h4>Current transcript</h4>
+          <pre id="reprocessCurrentText" class="reprocess-text conversation-scroll"></pre>
+        </section>
+        <section>
+          <h4>Reprocessed transcript</h4>
+          <pre id="reprocessCandidateText" class="reprocess-text conversation-scroll"></pre>
+        </section>
+      </div>
+      <div class="reprocess-actions">
+        <button id="reprocessDiscardButton" type="button">Keep current</button>
+        <button id="reprocessAcceptButton" class="primary" type="button">Use reprocessed transcript</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <footer>Everything stays on your local services and database.</footer>
   <script src="/audio-utils.js" defer></script>
