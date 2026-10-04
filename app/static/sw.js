@@ -1,4 +1,4 @@
-const CACHE = 'talk-to-type-v25';
+const CACHE = 'talk-to-type-v26';
 const APP_SHELL = ['/', '/styles.css', '/audio-utils.js', '/transcript-utils.js', '/capture-worklet.js', '/app.js', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (event) => {

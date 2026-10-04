@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth import actor_user_id, require_admin
@@ -22,8 +22,10 @@ from .models import (
     SpeakerProfileSample,
     SpeakerRelabelSample,
     SpeakerTurn,
+    TranscriptionRun,
 )
 from .services.progress import word_count
+from .services.meeting_state import mark_meeting_notes_stale
 from .services.recording_audio import build_combined_wav, extract_wav_clip
 from .services.speaker_service import speaker_service
 
@@ -65,6 +67,21 @@ class TurnIdentityUpdate(BaseModel):
 
 class RelabelStatusUpdate(BaseModel):
     status: str = Field(pattern="^(pending|approved|excluded)$")
+
+
+async def mark_interrupted_analyses() -> None:
+    """Speaker-analysis background tasks do not survive an app restart."""
+    async with SessionLocal() as db:
+        await db.execute(
+            update(SpeakerAnalysis)
+            .where(SpeakerAnalysis.status.in_(["queued", "processing"]))
+            .values(
+                status="error",
+                error="Interrupted by an app restart. Run the analysis again.",
+                completed_at=datetime.now(timezone.utc),
+            )
+        )
+        await db.commit()
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -479,6 +496,7 @@ async def process_analysis(analysis_id: uuid.UUID, num_speakers: int | None) -> 
             analysis.processing_seconds = time.perf_counter() - started
             analysis.completed_at = datetime.now(timezone.utc)
             analysis.error = None
+            await mark_meeting_notes_stale(recording.id, db)
             await db.commit()
         except Exception as exc:
             analysis.status = "error"
@@ -566,10 +584,12 @@ async def speaker_recordings(
             and export.notes_generated_at
             and export.notes_generated_at > export.exported_at
         )
+        notes_stale = bool(export and export.notes_stale)
         return {
             "notes_ready": bool(export and export.notes_markdown),
+            "notes_stale": notes_stale,
             "open_notebook_exported": exported,
-            "export_outdated": outdated,
+            "export_outdated": outdated or notes_stale,
         }
 
     items = []
@@ -613,6 +633,19 @@ async def start_speaker_analysis(
         raise HTTPException(status_code=404, detail="Saved recording not found")
     if not recording.audio_path:
         raise HTTPException(status_code=400, detail="This recording has no retained voice audio.")
+
+    active_reprocess = (
+        await db.execute(
+            select(TranscriptionRun)
+            .where(TranscriptionRun.status.in_(["queued", "processing"]))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if active_reprocess is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Transcription reprocessing is using the speech GPU. Try again when it finishes.",
+        )
 
     analysis = SpeakerAnalysis(recording_id=recording.id, status="queued")
     db.add(analysis)
@@ -751,7 +784,7 @@ async def label_detection(
     payload: DetectionLabelUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    await admin_analysis(analysis_id, db)
+    analysis = await admin_analysis(analysis_id, db)
     detection = (
         await db.execute(
             select(SpeakerDetection).where(
@@ -770,6 +803,7 @@ async def label_detection(
         if not profile or profile.name.casefold() != name.casefold():
             detection.profile_id = None
             detection.match_score = None
+    await mark_meeting_notes_stale(analysis.recording_id, db)
     await db.commit()
     return {"speaker_key": detection.speaker_key, "display_name": detection.display_name}
 
@@ -914,6 +948,7 @@ async def correct_turn_identity(
             existing.status = status
             existing.reviewed_at = reviewed_at
 
+    await mark_meeting_notes_stale(analysis.recording_id, db)
     await db.commit()
     return await _analysis_payload(analysis, db)
 

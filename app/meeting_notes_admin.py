@@ -77,6 +77,7 @@ def _payload(recording: Recording, export: MeetingExport | None) -> dict:
         "processing_seconds": round(export.processing_seconds or 0, 1),
         "created_at": export.created_at.isoformat() if export.created_at else None,
         "notes_generated_at": export.notes_generated_at.isoformat() if export.notes_generated_at else None,
+        "notes_stale": bool(export.notes_stale),
         "exported_at": export.exported_at.isoformat() if export.exported_at else None,
         # A copy currently lives in Open Notebook.
         "exported": bool(export.open_notebook_note_id and export.exported_at),
@@ -175,6 +176,7 @@ async def process_meeting_export(export_id: uuid.UUID, notebook_label: str | Non
                 export.notes_markdown = await generate_notes(meta, lines, progress)
                 export.model = settings.llm_model
                 export.notes_generated_at = utcnow()
+                export.notes_stale = False
                 await db.commit()
 
             if export.export_requested:
@@ -314,6 +316,11 @@ async def start_meeting_notes(
         raise HTTPException(status_code=400, detail="Set LLM_BASE_URL to your llama-server to generate notes.")
     if not payload.regenerate_notes and not (export and export.notes_markdown and export.transcript_markdown):
         raise HTTPException(status_code=400, detail="Generate notes for this recording first.")
+    if not payload.regenerate_notes and export and export.notes_stale:
+        raise HTTPException(
+            status_code=409,
+            detail="The transcript or speaker labels changed. Regenerate the meeting notes before sending them.",
+        )
 
     notebook_id = None
     if payload.export:

@@ -33,6 +33,14 @@ def test_upgrade_from_released_07_to_head(tmp_path):
             row[1]
             for row in connection.execute("PRAGMA table_info(user_sessions)")
         }
+        export_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(meeting_exports)")
+        }
+        reprocess_columns = {
+            row[1]
+            for row in connection.execute("PRAGMA table_info(transcription_runs)")
+        }
         tables = {
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -45,7 +53,10 @@ def test_upgrade_from_released_07_to_head(tmp_path):
     assert "is_admin" in user_columns
     assert "acting_as_user_id" in session_columns
     assert "meeting_exports" in tables
-    assert revision == "20260930_12"
+    assert "transcription_runs" in tables
+    assert "notes_stale" in export_columns
+    assert {"recording_id", "mode", "status", "transcript_candidate", "result_data"} <= reprocess_columns
+    assert revision == "20261004_13"
 
 
 

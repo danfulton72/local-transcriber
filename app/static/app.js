@@ -72,6 +72,7 @@
     lastScrollY: window.scrollY,
     installPrompt: null,
     speakerPolling: false,
+    reprocessReview: null,
     relabelView: 'pending',
     meetingNotesStatus: null,
     toolsTab: null,
@@ -81,6 +82,7 @@
       recordings: [], filter: 'todo', selectedId: null, analysis: null, notes: null,
       analysingId: null, analysisStage: '', analysisError: '', showTurns: false,
       notesPolling: null, jobKind: null, turnFilter: '', turnConfidence: '',
+      reprocessingRunId: null, reprocessStage: '',
     },
     speakerTurns: [],
     speakerProfiles: [],
@@ -147,6 +149,11 @@
     meetingNotesMessage: $('meetingNotesMessage'), meetingNotesPreview: $('meetingNotesPreview'),
     meetingNotesLinkRow: $('meetingNotesLinkRow'), meetingNotesLink: $('meetingNotesLink'),
     meetingNotesExportBadgeText: $('meetingNotesExportBadgeText'),
+    reprocessDialog: $('reprocessDialog'), reprocessDialogTitle: $('reprocessDialogTitle'),
+    reprocessDialogMessage: $('reprocessDialogMessage'), reprocessEditWarning: $('reprocessEditWarning'),
+    reprocessCurrentText: $('reprocessCurrentText'), reprocessCandidateText: $('reprocessCandidateText'),
+    reprocessAcceptButton: $('reprocessAcceptButton'), reprocessDiscardButton: $('reprocessDiscardButton'),
+    reprocessCloseButton: $('reprocessCloseButton'),
     userList: $('userList'), createUserForm: $('createUserForm'),
     addUserToggleButton: $('addUserToggleButton'), cancelCreateUserButton: $('cancelCreateUserButton'),
     newUsername: $('newUsername'), newUserDisplayName: $('newUserDisplayName'), newUserPassword: $('newUserPassword'), newUserIsAdmin: $('newUserIsAdmin'),
@@ -2254,6 +2261,13 @@
       const snippet = document.createElement('p'); snippet.className = 'snippet'; snippet.textContent = record.transcript.slice(0, 260) + (record.transcript.length > 260 ? '…' : ''); card.appendChild(snippet);
       const actions = document.createElement('div'); actions.className = 'history-actions';
       const open = document.createElement('button'); open.textContent = 'Open'; open.addEventListener('click', () => openHistoryRecording(record)); actions.appendChild(open);
+      if (isAdmin() && record.has_audio) {
+        const reprocess = document.createElement('button');
+        reprocess.textContent = '↻ Reprocess audio';
+        reprocess.title = 'Run the retained recording through the currently configured Whisper service, then review the result before replacing anything.';
+        reprocess.addEventListener('click', () => startOrReviewRecordingReprocess(record, reprocess));
+        actions.appendChild(reprocess);
+      }
       const star = document.createElement('button'); star.textContent = record.is_favourite ? '★ Unfavourite' : '☆ Favourite'; star.addEventListener('click', async () => { await api('/api/recordings/' + record.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_favourite: !record.is_favourite }) }); loadHistory(); }); actions.appendChild(star);
       const del = document.createElement('button'); del.textContent = 'Move to bin';
       del.disabled = isActingAs();
@@ -2280,6 +2294,123 @@
       switchPage('talk');
     } catch (error) {
       setError(error.message);
+    }
+  }
+
+  function showReprocessReview(run) {
+    state.reprocessReview = run;
+    els.reprocessDialogTitle.textContent = 'Review reprocessed transcript';
+    els.reprocessDialogMessage.textContent = [
+      run.recording_title || 'Recording',
+      run.processing_seconds ? run.processing_seconds + 's processing' : '',
+      run.result_data?.window_count ? run.result_data.window_count + ' Whisper window' + (run.result_data.window_count === 1 ? '' : 's') : '',
+    ].filter(Boolean).join(' · ');
+    els.reprocessCurrentText.textContent = run.current_transcript || '';
+    els.reprocessCandidateText.textContent = run.candidate_transcript || '';
+    els.reprocessEditWarning.hidden = !run.has_manual_edits;
+    els.reprocessAcceptButton.disabled = false;
+    els.reprocessDiscardButton.disabled = false;
+    if (!els.reprocessDialog.open) els.reprocessDialog.showModal();
+  }
+
+  async function pollRecordingReprocess(runId, record, button) {
+    const idleLabel = '↻ Reprocess audio';
+    try {
+      for (let attempt = 0; attempt < 1800; attempt += 1) {
+        const run = await api('/api/admin/reprocess/runs/' + runId, { cache: 'no-store' });
+        if (button?.isConnected) {
+          button.disabled = true;
+          button.textContent = run.status === 'queued' ? 'Waiting…' : 'Reprocessing…';
+        }
+        if (run.status === 'completed') {
+          if (!run.decision) showReprocessReview(run);
+          else showToast('Reprocessing already reviewed');
+          await loadHistory();
+          return;
+        }
+        if (run.status === 'error') throw new Error(run.error || 'Reprocessing failed.');
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      throw new Error('Reprocessing is still running. You can return to My words later.');
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      if (button?.isConnected) {
+        button.disabled = false;
+        button.textContent = idleLabel;
+      }
+    }
+  }
+
+  async function startOrReviewRecordingReprocess(record, button) {
+    if (!isAdmin() || !record?.has_audio) return;
+    button.disabled = true;
+    try {
+      let run = await api('/api/admin/reprocess/recordings/' + record.id, { cache: 'no-store' });
+      if (run.status === 'completed' && !run.decision) {
+        showReprocessReview(run);
+        return;
+      }
+      if (ACTIVE_JOB.includes(run.status)) {
+        await pollRecordingReprocess(run.id, record, button);
+        return;
+      }
+      run = await api('/api/admin/reprocess/recordings/' + record.id, { method: 'POST' });
+      await pollRecordingReprocess(run.id, record, button);
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      if (button?.isConnected && !button.textContent.includes('Reprocessing')) button.disabled = false;
+    }
+  }
+
+  async function acceptReprocessReview() {
+    const run = state.reprocessReview;
+    if (!run) return;
+    const clearEdits = Boolean(run.has_manual_edits);
+    if (clearEdits && !confirm('This recording has manual transcript edits. Use the reprocessed transcript and replace the current edited text? The previous text stays in revision history.')) {
+      return;
+    }
+    els.reprocessAcceptButton.disabled = true;
+    els.reprocessDiscardButton.disabled = true;
+    try {
+      await api('/api/admin/reprocess/runs/' + run.id + '/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clear_edits: clearEdits }),
+      });
+      els.reprocessDialog.close();
+      state.reprocessReview = null;
+      showToast('Reprocessed transcript saved');
+      await loadHistory();
+      if (state.currentRecording?.id === run.recording_id) {
+        const fresh = await api('/api/recordings/' + run.recording_id, { cache: 'no-store' });
+        const speakerData = await api('/api/recordings/' + run.recording_id + '/speaker-turns', { cache: 'no-store' });
+        state.currentRecording = fresh;
+        setTranscript(fresh.transcript, speakerData?.turns || []);
+      }
+    } catch (error) {
+      setError(error.message);
+      els.reprocessAcceptButton.disabled = false;
+      els.reprocessDiscardButton.disabled = false;
+    }
+  }
+
+  async function discardReprocessReview() {
+    const run = state.reprocessReview;
+    if (!run) return;
+    els.reprocessAcceptButton.disabled = true;
+    els.reprocessDiscardButton.disabled = true;
+    try {
+      await api('/api/admin/reprocess/runs/' + run.id + '/discard', { method: 'POST' });
+      els.reprocessDialog.close();
+      state.reprocessReview = null;
+      showToast('Kept current transcript');
+      await loadHistory();
+    } catch (error) {
+      setError(error.message);
+      els.reprocessAcceptButton.disabled = false;
+      els.reprocessDiscardButton.disabled = false;
     }
   }
 
@@ -3167,6 +3298,7 @@
   }
 
   function meetingStage(recording) {
+    if (recording.notes_stale) return 'stale';
     if (recording.open_notebook_exported && !recording.export_outdated) return 'sent';
     if (recording.open_notebook_exported) return 'outdated';
     if (recording.notes_ready) return 'notes';
@@ -3176,6 +3308,7 @@
 
   const STAGE_CHIPS = {
     sent: ['chip-sent', '✓ In Open Notebook'],
+    stale: ['chip-notes', 'Transcript changed'],
     outdated: ['chip-notes', 'Newer notes not sent'],
     notes: ['chip-notes', 'Notes not sent'],
     analysed: ['chip-analysed', 'Analysed'],
@@ -3390,7 +3523,7 @@
     // Outline the next thing to do.
     const hasNotes = Boolean(notes?.has_notes);
     const next = !analysis ? 'stepSpeakers'
-      : !hasNotes ? 'stepNotes'
+      : (!hasNotes || notes?.notes_stale) ? 'stepNotes'
         : (!notes.exported || notes.export_outdated) ? 'stepNotebook' : '';
     for (const id of ['stepSpeakers', 'stepNotes', 'stepNotebook']) {
       $(id).classList.toggle('is-next', id === next);
@@ -3451,8 +3584,16 @@
     }
 
     const unnamed = unnamedDetections(analysis);
-    if (unnamed.length) stepChip(els.stepSpeakersChip, 'chip-notes', unnamed.length + ' unnamed');
+    if (state.meetings.reprocessingRunId) stepChip(els.stepSpeakersChip, 'chip-todo', 'Reprocessing words…');
+    else if (unnamed.length) stepChip(els.stepSpeakersChip, 'chip-notes', unnamed.length + ' unnamed');
     else stepChip(els.stepSpeakersChip, 'chip-analysed', 'Done');
+
+    if (state.meetings.reprocessingRunId) {
+      const progress = document.createElement('p');
+      progress.className = 'muted small-note';
+      progress.textContent = state.meetings.reprocessStage || 'Reprocessing speaker turns…';
+      body.appendChild(progress);
+    }
 
     const people = meetingPeople(analysis);
     for (const person of people) {
@@ -3488,16 +3629,23 @@
       renderMeetingDetail();
       if (state.meetings.showTurns) els.meetingTurns.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
+    const reprocessWords = document.createElement('button');
+    reprocessWords.type = 'button';
+    reprocessWords.textContent = state.meetings.reprocessingRunId ? 'Reprocessing words…' : '↻ Reprocess words';
+    reprocessWords.title = 'Keep the current speaker boundaries, names and manual turn corrections, but run each detected turn through the current Whisper service again.';
+    reprocessWords.disabled = Boolean(state.meetings.reprocessingRunId);
+    reprocessWords.addEventListener('click', runSpeakerWordReprocess);
+
     const { label, select } = speakerCountSelect('meetingReanalyseCount');
     const rerun = document.createElement('button'); rerun.type = 'button'; rerun.textContent = 'Re-analyse';
-    rerun.disabled = analyserDown;
+    rerun.disabled = analyserDown || Boolean(state.meetings.reprocessingRunId);
     rerun.addEventListener('click', () => {
       if (!confirm('Re-analyse this conversation? Speaker labels and turn corrections start again from a fresh analysis.')) return;
       runSpeakerAnalysis(select.value ? Number(select.value) : null);
     });
     const rerunGroup = document.createElement('span'); rerunGroup.className = 'reanalyse-group';
     rerunGroup.append(label, rerun);
-    foot.append(review, rerunGroup);
+    foot.append(review, reprocessWords, rerunGroup);
   }
 
   function personTurnsLink(person) {
@@ -3713,6 +3861,7 @@
     const unnamed = unnamedDetections(analysis).length;
 
     if (regenerating) stepChip(els.stepNotesChip, 'chip-todo', 'Working…');
+    else if (hasNotes && notes?.notes_stale) stepChip(els.stepNotesChip, 'chip-notes', 'Needs update');
     else if (hasNotes) stepChip(els.stepNotesChip, 'chip-analysed', 'Ready');
     else if (analysis) stepChip(els.stepNotesChip, 'chip-notes', 'Next');
     else stepChip(els.stepNotesChip, 'chip-todo', 'Waiting');
@@ -3726,12 +3875,13 @@
           : 'Uses the names from step 1.';
     els.meetingNotesGenerateButton.textContent = hasNotes ? 'Regenerate notes' : 'Generate notes';
     els.meetingNotesGenerateButton.disabled = !llmConfigured || busy;
-    els.meetingNotesGenerateButton.classList.toggle('primary', !hasNotes);
+    els.meetingNotesGenerateButton.classList.toggle('primary', !hasNotes || Boolean(notes?.notes_stale));
 
     let message = '';
     if (regenerating) message = (notes.stage || 'Queued') + '…';
     else if (busy) message = 'Notes are being sent to Open Notebook…';
     else if (notes?.status === 'error') message = 'Failed: ' + (notes.error || 'unknown error');
+    else if (hasNotes && notes?.notes_stale) message = 'Transcript or speaker labels changed · regenerate these notes before sending.';
     else if (hasNotes && notes.notes_generated_at) {
       message = 'Generated ' + friendlyDate(notes.notes_generated_at) + (notes.processing_seconds ? ' · ' + notes.processing_seconds + 's' : '');
     }
@@ -3750,7 +3900,8 @@
     const busy = ACTIVE_JOB.includes(notes?.status);
     const hasNotes = Boolean(notes?.has_notes);
     const exported = Boolean(notes?.exported);
-    const outdated = Boolean(notes?.export_outdated);
+    const notesStale = Boolean(notes?.notes_stale);
+    const outdated = Boolean(notes?.export_outdated || notesStale);
 
     if (sendingOnly(notes)) stepChip(els.stepNotebookChip, 'chip-todo', 'Sending…');
     else if (exported && outdated) stepChip(els.stepNotebookChip, 'chip-notes', 'Out of date');
@@ -3763,24 +3914,67 @@
     els.meetingNotesLinkRow.classList.toggle('is-sent', exported && !outdated);
     els.meetingNotesLinkRow.classList.toggle('outdated', exported && outdated);
     els.meetingNotesExportBadgeText.textContent = exported
-      ? (outdated ? '⚠ In Open Notebook' + where + when + ' · newer notes not sent yet' : '✓ In Open Notebook' + where + when)
-      : 'Not sent yet';
+      ? (notesStale
+          ? '⚠ In Open Notebook' + where + when + ' · transcript changed; regenerate notes'
+          : outdated ? '⚠ In Open Notebook' + where + when + ' · newer notes not sent yet' : '✓ In Open Notebook' + where + when)
+      : (notesStale ? 'Transcript changed · regenerate notes before sending' : 'Not sent yet');
     const uiUrl = state.meetingNotesStatus?.open_notebook?.ui_url;
     const notebookId = notes?.open_notebook_notebook_id;
     els.meetingNotesLink.hidden = !(exported && uiUrl && notebookId);
     if (uiUrl && notebookId) els.meetingNotesLink.href = uiUrl + '/notebooks/' + encodeURIComponent(notebookId);
 
     els.meetingNotesResendButton.textContent = exported ? 'Re-send to notebook…' : 'Send to notebook…';
-    els.meetingNotesResendButton.disabled = !configured || !hasNotes || busy;
+    els.meetingNotesResendButton.disabled = !configured || !hasNotes || busy || notesStale;
     els.meetingNotesResendButton.classList.toggle('primary', hasNotes && (!exported || outdated));
     els.stepNotebookFoot.textContent = !configured
       ? 'Set OPEN_NOTEBOOK_URL to enable sending.'
-      : !hasNotes ? 'Available once notes are ready.' : '';
+      : !hasNotes ? 'Available once notes are ready.'
+        : notesStale ? 'Regenerate the meeting notes from the updated transcript first.' : '';
+  }
+
+  async function runSpeakerWordReprocess() {
+    const recording = currentMeeting();
+    const analysis = state.meetings.analysis;
+    if (!recording || !analysis || state.meetings.reprocessingRunId) return;
+    if (!confirm('Reprocess the words in this speaker analysis with the current Whisper settings? Speaker boundaries, names and manual turn edits will be preserved. Live transcription may be slower while this runs.')) return;
+
+    state.meetings.reprocessStage = 'Starting…';
+    renderMeetingDetail();
+    try {
+      const job = await api('/api/admin/reprocess/analyses/' + analysis.id + '/speaker-turns', { method: 'POST' });
+      state.meetings.reprocessingRunId = job.id;
+      state.meetings.reprocessStage = 'Reprocessing speaker turns…';
+      renderMeetingDetail();
+
+      for (let attempt = 0; attempt < 1800; attempt += 1) {
+        const run = await api('/api/admin/reprocess/runs/' + job.id, { cache: 'no-store' });
+        if (run.status === 'completed') {
+          const changed = run.result_data?.changed_turns ?? 0;
+          const preserved = run.result_data?.manual_edits_preserved ?? 0;
+          showToast('Reprocessed ' + changed + ' turn' + (changed === 1 ? '' : 's') + (preserved ? ' · ' + preserved + ' manual edit' + (preserved === 1 ? '' : 's') + ' preserved' : ''));
+          state.meetings.reprocessingRunId = null;
+          state.meetings.reprocessStage = '';
+          await Promise.all([loadMeetingDetail(), refreshMeetingsList()]);
+          return;
+        }
+        if (run.status === 'error') throw new Error(run.error || 'Speaker-word reprocessing failed.');
+        state.meetings.reprocessStage = run.status === 'queued' ? 'Waiting for Whisper…' : 'Reprocessing speaker turns…';
+        renderMeetingDetail();
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      throw new Error('Speaker-word reprocessing is still running. Return to this meeting later.');
+    } catch (error) {
+      state.meetings.analysisError = error.message;
+    } finally {
+      state.meetings.reprocessingRunId = null;
+      state.meetings.reprocessStage = '';
+      renderMeetingDetail();
+    }
   }
 
   async function runSpeakerAnalysis(numSpeakers) {
     const recording = currentMeeting();
-    if (!recording || state.meetings.analysingId) return;
+    if (!recording || state.meetings.analysingId || state.meetings.reprocessingRunId) return;
     state.meetings.analysingId = recording.id;
     state.meetings.analysisError = '';
     state.meetings.analysisStage = 'Starting speaker analysis…';
@@ -4610,6 +4804,11 @@
   els.meetingNotesGenerateButton.addEventListener('click', () => startMeetingNotes({ regenerate: true, exportToNotebook: false }));
   els.meetingNotesResendButton.addEventListener('click', () => startMeetingNotes({ regenerate: false, exportToNotebook: true }));
   els.meetingNotesDownloadButton.addEventListener('click', downloadMeetingNotes);
+  els.reprocessAcceptButton.addEventListener('click', acceptReprocessReview);
+  els.reprocessDiscardButton.addEventListener('click', discardReprocessReview);
+  els.reprocessDialog.addEventListener('close', () => {
+    if (els.reprocessDialog.returnValue === 'close') state.reprocessReview = null;
+  });
   els.notebookPickerRefreshButton.addEventListener('click', () => {
     const chosen = els.notebookPickerList.querySelector('input[name="notebookPickerChoice"]:checked');
     loadNotebookPickerList(chosen?.value || state.meetings.notes?.open_notebook_notebook_id);

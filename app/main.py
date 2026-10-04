@@ -55,19 +55,22 @@ from .services.gateway import gateway
 from .services.progress import correction_pairs, top_corrections, word_count
 from .services.recording_audio import combine_wav_segments
 from .services.storage import save_bytes
+from .services.meeting_state import mark_meeting_notes_stale
 from .services.titles import dated_title, renamed_title
 from .services.whisper_guard import filter_transcript
 from .services.transcript_merge import merge_transcripts
 from .services.retention import cleanup_expired_audio, prune_finished_chunk_audio, prune_live_chunk_audio
 from .admin import router as admin_router
-from .speaker_admin import router as speaker_admin_router
+from .speaker_admin import mark_interrupted_analyses, router as speaker_admin_router
 from .meeting_notes_admin import mark_interrupted_exports, router as meeting_notes_router
+from .reprocess_admin import mark_interrupted_reprocesses, router as reprocess_router
 
-app = FastAPI(title="Local Transcriber", version="0.15.0")
+app = FastAPI(title="Local Transcriber", version="0.16.0")
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(speaker_admin_router)
 app.include_router(meeting_notes_router)
+app.include_router(reprocess_router)
 
 
 @app.on_event("startup")
@@ -79,6 +82,8 @@ async def startup() -> None:
         await cleanup_expired_audio(db)
         await prune_finished_chunk_audio(db)
     await mark_interrupted_exports()
+    await mark_interrupted_analyses()
+    await mark_interrupted_reprocesses()
 
 
 @app.middleware("http")
@@ -619,6 +624,7 @@ async def update_recording_speaker_identity(
             existing.status = "pending"
             existing.reviewed_at = None
 
+    await mark_meeting_notes_stale(recording.id, db)
     await db.commit()
     return await recording_speaker_turns(recording_id, db)
 
@@ -689,6 +695,7 @@ async def update_recording_speaker_turn(
             recording.last_activity_at = utcnow()
             if not recording.title or recording.title == "New recording":
                 recording.title = dated_title(make_title(rebuilt), recording.created_at)
+            await mark_meeting_notes_stale(recording.id, db)
 
         await db.commit()
         await db.refresh(turn)
@@ -708,11 +715,14 @@ async def update_recording_speaker_turn(
 @app.patch("/api/recordings/{recording_id}", response_model=RecordingOut)
 async def update_recording(recording_id: uuid.UUID, payload: RecordingUpdate, db: AsyncSession = Depends(get_db)) -> RecordingOut:
     recording = await find_recording(recording_id, db)
+    title_changed = False
     if payload.title is not None:
+        previous_title = recording.title
         if payload.title.strip():
             recording.title = renamed_title(payload.title, recording.title)
         else:
             recording.title = dated_title(make_title(recording.transcript), recording.created_at)
+        title_changed = recording.title != previous_title
     if payload.is_favourite is not None:
         recording.is_favourite = payload.is_favourite
     if payload.transcript_edited is not None:
@@ -726,6 +736,9 @@ async def update_recording(recording_id: uuid.UUID, payload: RecordingUpdate, db
             recording.last_activity_at = utcnow()
             if not recording.title or recording.title == "New recording":
                 recording.title = dated_title(make_title(new_text), recording.created_at)
+            await mark_meeting_notes_stale(recording.id, db, source="recording")
+    if title_changed:
+        await mark_meeting_notes_stale(recording.id, db)
     audit = admin_audit_event(
         recording.id,
         "recording_update",
@@ -894,6 +907,7 @@ async def transcribe_recording(
     recording.draft_text = None
     recording.last_activity_at = utcnow()
     recording.title = recording.title or dated_title(make_title(transcript), recording.created_at)
+    await mark_meeting_notes_stale(recording.id, db, source="recording")
     await db.commit()
     await cleanup_expired_audio(db)
     await db.refresh(recording)
@@ -922,6 +936,7 @@ async def finish_recording(recording_id: uuid.UUID, payload: RecordingFinish, db
     recording.draft_text = None
     recording.last_activity_at = utcnow()
     recording.title = recording.title or dated_title(make_title(recording.transcript), recording.created_at)
+    await mark_meeting_notes_stale(recording.id, db)
     await db.commit()
     await prune_live_chunk_audio(recording, db)
     await cleanup_expired_audio(db)

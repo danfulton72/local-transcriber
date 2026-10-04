@@ -24,6 +24,7 @@ A local-first, kid-friendly speech-to-text app for turning spoken ideas into edi
 - Captures at 16 kHz mono (Whisper/pyannote's native rate) using an AudioWorklet, and uploads full-quality audio in 60-second segments while recording, so long sessions never sit in browser memory
 - Near-live chunks are cut at the quietest moment near each boundary; their duplicate chunk WAVs are removed once a recording finishes with its full audio stored (set `KEEP_LIVE_CHUNK_AUDIO=true` to keep them for troubleshooting)
 - Keeps the original Whisper transcript separately from later edits
+- Admins can reprocess retained audio with the current Whisper settings, review the new transcript side by side before accepting it, and reprocess speaker-turn words without losing speaker labels or manual turn corrections
 - **My words** history with search, favourites, playback and soft-delete
 - Piper read-aloud for full transcripts or individual sentences
 - **Progress** page for grown-ups with:
