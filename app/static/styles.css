@@ -3022,6 +3022,8 @@ button.link-button{padding-left:0;padding-right:0}
 .meeting-step-body{display:flex;flex-direction:column;gap:10px;flex-grow:1;min-width:0}
 .meeting-step-body > button{align-self:flex-start}
 .meeting-step-body .small-note{margin:0}
+.notes-model-picker{max-width:520px}
+.notes-model-picker select{width:100%;min-width:0}
 .meeting-step-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding-top:10px;border-top:1px solid #efe7d6}
 .meeting-step-foot:empty{display:none}
 .inline-select{display:inline-flex;align-items:center;gap:8px;font-size:.85rem;color:var(--muted)}
