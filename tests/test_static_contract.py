@@ -88,3 +88,13 @@ def test_admin_act_as_controls_are_explicit_and_persistent():
     assert "Manage as user" in javascript
     assert "Recording disabled" in javascript
     assert "isActingAs()" in javascript
+
+
+def test_meeting_notes_model_selector_contract():
+    html = (STATIC / "index.html").read_text()
+    javascript = (STATIC / "app.js").read_text()
+
+    assert 'id="meetingNotesModelSelect"' in html
+    assert "default_model" in javascript
+    assert "body.model = state.meetings.notesModel" in javascript
+    assert "Generated with " in javascript
