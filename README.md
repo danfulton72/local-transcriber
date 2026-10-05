@@ -187,7 +187,7 @@ Record ─► Whisper ─► Tools → Speakers: analyse, then fix names
 ### Workflow
 
 1. Analyse the conversation in **Tools → Speakers** and correct any speaker names. Notes use the corrected names and corrected turn text, so owners of action items come out right. Recordings with no speaker analysis still work, but every line is marked *Unidentified*.
-2. In **Meeting notes & Open Notebook**, with the same conversation selected, press **Generate notes & export**. A picker loads the current list of notebooks live from Open Notebook; the default notebook (or the one this recording was last exported to) is preselected. Choose one and press **Export**. Progress is shown while each part is processed.
+2. In **Meeting notes & Open Notebook**, with the same conversation selected, choose the notes model and generate the notes. The model picker is populated from the configured OpenAI-compatible server's `/v1/models` endpoint; `LLM_MODEL` is marked as the default and is used whenever no per-generation model is selected. When exporting, a picker loads the current list of notebooks live from Open Notebook; the default notebook (or the one this recording was last exported to) is preselected. Progress is shown while each part is processed.
 3. **Generate notes only** keeps the notes in this app. **Re-send saved notes** opens the same picker and pushes the saved transcript and notes again without re-running the model, replacing the earlier copies (including when you pick a different notebook). **Download .md** saves the notes as Markdown.
 
 Export state is stored in the database. Conversations already in Open Notebook are marked **✓ Open Notebook** in the conversation list, and the panel shows which notebook they went to and when. For these, **Re-send saved notes** becomes the main button and **Generate notes & export** becomes **Regenerate & replace**. If you regenerate notes without exporting, the panel warns that newer notes have not been sent yet.
@@ -205,7 +205,7 @@ llama-server -m your-model.gguf --host 0.0.0.0 --port 8080 \
 
 - Keep `LLM_CONTEXT_TOKENS` equal to `-c`. The transcript is split into parts of at most `LLM_CHUNK_TOKENS` (default 12000), leaving room for the prompt and `LLM_MAX_OUTPUT_TOKENS`.
 - `LLM_DISABLE_THINKING=true` sends `chat_template_kwargs: {"enable_thinking": false}`, which switches off reasoning in Qwen3-style templates (needs `--jinja`). Any `<think>` block that still appears is stripped.
-- `LLM_MODEL` must match the model name the server reports (`--alias`); the Tools status pill warns if it does not.
+- `LLM_MODEL` sets the default meeting-notes model and should match a model name the server reports (`--alias`). Tools lists all models returned by `/v1/models`, so you can choose a different model for each generation without changing configuration or restarting the app.
 
 ### Open Notebook
 
