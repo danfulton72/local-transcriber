@@ -65,7 +65,7 @@ from .speaker_admin import mark_interrupted_analyses, router as speaker_admin_ro
 from .meeting_notes_admin import mark_interrupted_exports, router as meeting_notes_router
 from .reprocess_admin import mark_interrupted_reprocesses, router as reprocess_router
 
-app = FastAPI(title="Local Transcriber", version="0.16.0")
+app = FastAPI(title="Local Transcriber", version="0.17.0")
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(speaker_admin_router)

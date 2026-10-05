@@ -82,7 +82,7 @@
       recordings: [], filter: 'todo', selectedId: null, analysis: null, notes: null,
       analysingId: null, analysisStage: '', analysisError: '', showTurns: false,
       notesPolling: null, jobKind: null, turnFilter: '', turnConfidence: '',
-      reprocessingRunId: null, reprocessStage: '',
+      reprocessingRunId: null, reprocessStage: '', notesModel: null,
     },
     speakerTurns: [],
     speakerProfiles: [],
@@ -144,7 +144,7 @@
     notebookPickerDialog: $('notebookPickerDialog'), notebookPickerForm: $('notebookPickerForm'),
     notebookPickerMessage: $('notebookPickerMessage'), notebookPickerList: $('notebookPickerList'),
     notebookPickerRefreshButton: $('notebookPickerRefreshButton'), notebookPickerConfirmButton: $('notebookPickerConfirmButton'),
-    meetingNotesGenerateButton: $('meetingNotesGenerateButton'),
+    meetingNotesGenerateButton: $('meetingNotesGenerateButton'), meetingNotesModelSelect: $('meetingNotesModelSelect'),
     meetingNotesResendButton: $('meetingNotesResendButton'), meetingNotesDownloadButton: $('meetingNotesDownloadButton'),
     meetingNotesMessage: $('meetingNotesMessage'), meetingNotesPreview: $('meetingNotesPreview'),
     meetingNotesLinkRow: $('meetingNotesLinkRow'), meetingNotesLink: $('meetingNotesLink'),
@@ -3853,12 +3853,40 @@
     return card;
   }
 
+  function meetingNotesDefaultModel() {
+    const info = state.meetingNotesStatus?.llm || {};
+    return info.default_model || info.model || '';
+  }
+
+  function syncMeetingNotesModelSelect(busy = false) {
+    const select = els.meetingNotesModelSelect;
+    if (!select) return;
+    const info = state.meetingNotesStatus?.llm || {};
+    const defaultModel = meetingNotesDefaultModel();
+    const models = [...new Set([defaultModel, ...(info.models || [])].filter(Boolean))];
+    const preferred = state.meetings.notesModel || select.value || defaultModel || models[0] || '';
+
+    select.replaceChildren();
+    for (const model of models) {
+      const option = document.createElement('option');
+      option.value = model;
+      option.textContent = model + (model === defaultModel ? ' (default)' : '');
+      select.appendChild(option);
+    }
+
+    const selected = models.includes(preferred) ? preferred : (defaultModel || models[0] || '');
+    if (selected) select.value = selected;
+    state.meetings.notesModel = selected || null;
+    select.disabled = !info.configured || busy || models.length === 0;
+  }
+
   function renderNotesStep(recording, analysis, notes) {
     const llmConfigured = Boolean(state.meetingNotesStatus?.llm?.configured);
     const busy = ACTIVE_JOB.includes(notes?.status);
     const regenerating = busy && !sendingOnly(notes);
     const hasNotes = Boolean(notes?.has_notes);
     const unnamed = unnamedDetections(analysis).length;
+    syncMeetingNotesModelSelect(busy);
 
     if (regenerating) stepChip(els.stepNotesChip, 'chip-todo', 'Working…');
     else if (hasNotes && notes?.notes_stale) stepChip(els.stepNotesChip, 'chip-notes', 'Needs update');
@@ -3891,7 +3919,9 @@
     els.meetingNotesPreview.textContent = notes?.notes_markdown || '';
     els.meetingNotesPreview.hidden = !hasNotes;
     els.meetingNotesEmpty.hidden = hasNotes;
-    els.meetingNotesModel.textContent = notes?.model || state.meetingNotesStatus?.llm?.model || '';
+    els.meetingNotesModel.textContent = notes?.model
+      ? 'Generated with ' + notes.model
+      : 'Default: ' + (meetingNotesDefaultModel() || 'not set');
     els.meetingNotesDownloadButton.disabled = !hasNotes;
   }
 
@@ -4046,6 +4076,9 @@
     const recordingId = meetingNotesRecordingId();
     if (!recordingId) return;
     const body = { regenerate_notes: regenerate, export: exportToNotebook };
+    if (regenerate) {
+      body.model = state.meetings.notesModel || meetingNotesDefaultModel() || undefined;
+    }
     if (exportToNotebook) {
       const notebook = await chooseNotebook();
       if (!notebook) return;
@@ -4802,6 +4835,9 @@
     loadRelabelSamples();
   });
   els.meetingNotesGenerateButton.addEventListener('click', () => startMeetingNotes({ regenerate: true, exportToNotebook: false }));
+  els.meetingNotesModelSelect.addEventListener('change', () => {
+    state.meetings.notesModel = els.meetingNotesModelSelect.value || null;
+  });
   els.meetingNotesResendButton.addEventListener('click', () => startMeetingNotes({ regenerate: false, exportToNotebook: true }));
   els.meetingNotesDownloadButton.addEventListener('click', downloadMeetingNotes);
   els.reprocessAcceptButton.addEventListener('click', acceptReprocessReview);
