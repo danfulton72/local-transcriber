@@ -49,6 +49,8 @@ class MeetingNotesRequest(BaseModel):
     # Display name of the chosen notebook, shown in the export status.
     notebook_name: str | None = Field(default=None, max_length=120)
     analysis_id: uuid.UUID | None = None
+    # Optional per-generation override. LLM_MODEL remains the default.
+    model: str | None = Field(default=None, max_length=200)
 
 
 def utcnow() -> datetime:
@@ -173,8 +175,14 @@ async def process_meeting_export(export_id: uuid.UUID, notebook_label: str | Non
                     recording_id=str(recording.id),
                 )
                 export.transcript_markdown = transcript_document(meta, lines)
-                export.notes_markdown = await generate_notes(meta, lines, progress)
-                export.model = settings.llm_model
+                selected_model = (export.model or "").strip() or settings.llm_model
+                export.notes_markdown = await generate_notes(
+                    meta,
+                    lines,
+                    progress,
+                    model=selected_model,
+                )
+                export.model = selected_model
                 export.notes_generated_at = utcnow()
                 export.notes_stale = False
                 await db.commit()
@@ -230,7 +238,12 @@ async def process_meeting_export(export_id: uuid.UUID, notebook_label: str | Non
 
 
 async def _probe_llm() -> dict:
-    info: dict = {"configured": llm.configured, "reachable": False, "model": settings.llm_model}
+    info: dict = {
+        "configured": llm.configured,
+        "reachable": False,
+        "model": settings.llm_model,
+        "default_model": settings.llm_model,
+    }
     if not llm.configured:
         return info
     try:
@@ -347,6 +360,8 @@ async def start_meeting_notes(
     if export is None:
         export = MeetingExport(recording_id=recording.id)
         db.add(export)
+    if payload.regenerate_notes:
+        export.model = (payload.model or "").strip() or settings.llm_model
     export.status = "queued"
     # The worker reads this marker to decide whether to call the LLM.
     export.stage = "regenerate" if payload.regenerate_notes else "export"
