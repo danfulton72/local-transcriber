@@ -53,11 +53,17 @@ class ChatLLM:
         rows = payload.get("data", []) if isinstance(payload, dict) else []
         return [str(row.get("id")) for row in rows if isinstance(row, dict) and row.get("id")]
 
-    async def chat(self, messages: list[dict], *, max_tokens: int | None = None) -> str:
+    async def chat(
+        self,
+        messages: list[dict],
+        *,
+        max_tokens: int | None = None,
+        model: str | None = None,
+    ) -> str:
         if not self.configured:
             raise LLMError("LLM_BASE_URL is not set.")
         payload: dict = {
-            "model": settings.llm_model,
+            "model": (model or "").strip() or settings.llm_model,
             "messages": messages,
             "temperature": settings.llm_temperature,
             "max_tokens": max_tokens or settings.llm_max_output_tokens,
