@@ -19,7 +19,6 @@ RUN python -m pip install \
       "torchaudio==2.6.0+cpu"
 
 RUN python -m pip install \
-      "speech-to-speech==1.0.0" --no-deps \
       "anyio>=4,<5" \
       "fastapi>=0.115" \
       "huggingface-hub>=0.34" \
@@ -36,6 +35,11 @@ RUN python -m pip install \
       "transformers>=5.15.1,<6" \
       "uvicorn>=0.30" \
       "websockets>=12"
+
+# Skip only speech-to-speech's default local inference dependency set. This
+# service delegates STT, LLM and TTS, so packages such as nano-parakeet and
+# faster-qwen3-tts would add substantial image weight without being used.
+RUN python -m pip install "speech-to-speech==1.0.0" --no-deps
 
 # Catch missing runtime imports before the image reaches production.
 RUN speech-to-speech --help >/dev/null
