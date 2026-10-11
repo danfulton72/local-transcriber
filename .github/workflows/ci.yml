@@ -70,7 +70,11 @@ jobs:
           LLM_MODEL: voice-router
           LLM_API_KEY: sk-test
           COMPOSE_PROFILES: realtime
-        run: docker compose -f docker-compose.dockhand.yml config -q
+        run: |
+          docker compose -f docker-compose.dockhand.yml config -q
+          docker compose -f docker-compose.dockhand.yml config --services | grep -qx realtime-voice
+      - name: Build OpenWebUI realtime bridge image
+        run: docker build -t local-transcriber-realtime-ci realtime_bridge
       - run: docker build -t local-transcriber-ci .
       - name: Validate app image migrations
         run: |
