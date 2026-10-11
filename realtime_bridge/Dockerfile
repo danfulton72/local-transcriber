@@ -40,17 +40,29 @@ RUN python -m pip install \
 # Skip only speech-to-speech's default local inference dependency set. This
 # service delegates STT, LLM and TTS, so packages such as nano-parakeet and
 # faster-qwen3-tts would add substantial image weight without being used.
-RUN python -m pip install "speech-to-speech==1.0.0" --no-deps
+#
+# v1.0.0 rejects Open WebUI 0.12's chat_context_* conversation item IDs and
+# does not implement conversation.item.delete. Pin the upstream compatibility
+# fix until it is included in a released speech-to-speech version.
+ARG SPEECH_TO_SPEECH_REF=ee6b7a850f7833958b5101ebc22e5d084ea9be3f
+RUN python -m pip install \
+      "speech-to-speech @ git+https://github.com/huggingface/speech-to-speech.git@${SPEECH_TO_SPEECH_REF}" \
+      --no-deps
 
-# Catch missing runtime imports before the image reaches production.
+# Catch missing runtime imports and the Open WebUI 0.12 protocol requirements
+# before the image reaches production.
 RUN speech-to-speech --help >/dev/null \
     && python - <<'PY'
+from speech_to_speech.api.openai_realtime.service import _EVENT_TYPE_TO_MODEL
+from speech_to_speech.LLM.chat import _ensure_id
 from speech_to_speech.LLM.chat_completions_language_model import ChatCompletionsApiModelHandler
 from speech_to_speech.STT.openai_compatible_handler import OpenAICompatibleSTTHandler
 from speech_to_speech.TTS.openai_compatible_handler import OpenAICompatibleTTSHandler
 from speech_to_speech.VAD.vad_handler import VADHandler
 
-print("realtime bridge handlers import successfully")
+assert _ensure_id("chat_context_1", "sys") == "chat_context_1"
+assert "conversation.item.delete" in _EVENT_TYPE_TO_MODEL
+print("realtime bridge handlers and Open WebUI protocol compatibility verified")
 PY
 
 # Cache the only local model plus NLTK assets at build time so production
