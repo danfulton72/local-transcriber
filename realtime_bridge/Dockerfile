@@ -29,6 +29,7 @@ RUN python -m pip install \
       "openai==2.28.0" \
       "pillow>=10" \
       "pydantic>=2" \
+      "requests>=2.31" \
       "rich>=13" \
       "scipy>=1.10" \
       "soxr>=0.3.2" \
