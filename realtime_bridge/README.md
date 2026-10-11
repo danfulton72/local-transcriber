@@ -18,7 +18,10 @@ speech-to-speech bridge (CPU)
       '-- TTS --> Wyoming OpenAI Gateway --> Piper / CPU
 ```
 
-The bridge is based on Hugging Face `speech-to-speech==1.0.0`. Silero VAD
+The bridge is based on Hugging Face `speech-to-speech`, pinned to upstream commit
+`ee6b7a850f7833958b5101ebc22e5d084ea9be3f` because the released `1.0.0`
+rejects Open WebUI 0.12 `chat_context_*` item IDs and lacks
+`conversation.item.delete`. Silero VAD
 runs locally on CPU. Smart Turn is disabled, and progressive/live STT is
 disabled by default so one final Whisper request is made per spoken turn
 instead of repeatedly retranscribing the growing utterance.
