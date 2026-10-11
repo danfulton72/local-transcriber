@@ -1,0 +1,79 @@
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# The bridge only runs Silero VAD locally. STT, LLM and TTS are remote, so use
+# CPU PyTorch and avoid speech-to-speech's heavyweight local Parakeet/Qwen-TTS
+# dependencies.
+RUN python -m pip install \
+      --index-url https://download.pytorch.org/whl/cpu \
+      "torch==2.6.0+cpu" \
+      "torchaudio==2.6.0+cpu"
+
+RUN python -m pip install \
+      "anyio>=4,<5" \
+      "fastapi>=0.115" \
+      "huggingface-hub>=0.34" \
+      "httpx>=0.28" \
+      "jsonschema>=4" \
+      "nltk==3.10.0" \
+      "numpy>=1.26" \
+      "openai==2.28.0" \
+      "pillow>=10" \
+      "pydantic>=2" \
+      "requests>=2.31" \
+      "rich>=13" \
+      "scipy>=1.10" \
+      "soxr>=0.3.2" \
+      "transformers>=5.15.1,<6" \
+      "uvicorn>=0.30" \
+      "websockets>=12"
+
+# Skip only speech-to-speech's default local inference dependency set. This
+# service delegates STT, LLM and TTS, so packages such as nano-parakeet and
+# faster-qwen3-tts would add substantial image weight without being used.
+RUN python -m pip install "speech-to-speech==1.0.0" --no-deps
+
+# Catch missing runtime imports before the image reaches production.
+RUN speech-to-speech --help >/dev/null \
+    && python - <<'PY'
+from speech_to_speech.LLM.chat_completions_language_model import ChatCompletionsApiModelHandler
+from speech_to_speech.STT.openai_compatible_handler import OpenAICompatibleSTTHandler
+from speech_to_speech.TTS.openai_compatible_handler import OpenAICompatibleTTSHandler
+from speech_to_speech.VAD.vad_handler import VADHandler
+
+print("realtime bridge handlers import successfully")
+PY
+
+# Cache the only local model plus NLTK assets at build time so production
+# startup does not depend on GitHub/NLTK availability.
+RUN python - <<'PY'
+import nltk
+import torch
+
+nltk.download("punkt_tab", quiet=True)
+nltk.download("averaged_perceptron_tagger_eng", quiet=True)
+torch.hub.load(
+    "snakers4/silero-vad:master",
+    "silero_vad",
+    trust_repo=True,
+    skip_validation=True,
+)
+PY
+
+COPY launcher.py /app/launcher.py
+
+EXPOSE 8765
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=5 \
+  CMD python -c "import socket; s=socket.create_connection(('127.0.0.1',8765),5); s.close()"
+
+CMD ["python", "/app/launcher.py"]

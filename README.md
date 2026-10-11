@@ -169,6 +169,18 @@ Each remembered person keeps a small bank of up to 8 normalized speaker embeddin
 
 Remembered voiceprints are numeric speaker embeddings stored in your PostgreSQL database. The app does not expose voiceprint-management controls to non-admin users. Recognition is a similarity match, not proof of identity, so admin review remains authoritative.
 
+## Open WebUI 0.12 Realtime voice
+
+The Dockhand voice stack has an optional `realtime-voice` profile that
+exposes an OpenAI Realtime-compatible WebSocket for Open WebUI 0.12 voice
+calls. It keeps the existing hardware split: Faster Whisper remains on the P4,
+Piper remains CPU-side, and the bridge delegates LLM/tool calls to an
+OpenAI-compatible endpoint such as llama-swap.
+
+Enable `COMPOSE_PROFILES=realtime` and see
+[`deploy/dockhand/README.md`](deploy/dockhand/README.md) for the Open WebUI
+fields and optional `REALTIME_LLM_*` variables.
+
 ## Meeting notes and Open Notebook export
 
 Admin-only and post-recording, like speaker analysis. Nothing leaves your network: the notes model and Open Notebook are both services you run.

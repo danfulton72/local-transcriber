@@ -30,7 +30,7 @@ jobs:
       - run: node tests/test_transcript_utils.js
       - run: node --check app/static/sw.js
       - run: python -m json.tool app/static/manifest.webmanifest > /dev/null
-      - run: python -m compileall -q app migrations speaker_service deploy/ai-stack deploy/voice-stack
+      - run: python -m compileall -q app migrations speaker_service deploy/ai-stack deploy/voice-stack realtime_bridge
       - run: cp .env.example .env && docker compose config -q
       - name: Validate AI-stack integration overlay
         run: |
@@ -66,7 +66,15 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://transcriber:test@127.0.0.1:5432/transcriber
           DEFAULT_PASSWORD: test-password
           HF_TOKEN: hf_test
-        run: docker compose -f docker-compose.dockhand.yml config -q
+          LLM_BASE_URL: http://127.0.0.1:9292/v1
+          LLM_MODEL: voice-router
+          LLM_API_KEY: sk-test
+          COMPOSE_PROFILES: realtime
+        run: |
+          docker compose -f docker-compose.dockhand.yml config -q
+          docker compose -f docker-compose.dockhand.yml config --services | grep -qx realtime-voice
+      - name: Build OpenWebUI realtime bridge image
+        run: docker build -t local-transcriber-realtime-ci realtime_bridge
       - run: docker build -t local-transcriber-ci .
       - name: Validate app image migrations
         run: |
