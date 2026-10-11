@@ -20,6 +20,11 @@ Whisper remains the existing host-local
 `local/faster-whisper-p4:v2.4.0-ls71` image. Piper, the OpenAI-compatible
 Wyoming gateway and OpenWakeWord remain image-based services.
 
+An optional `realtime-voice` profile adds an OpenAI Realtime-compatible
+WebSocket bridge for Open WebUI 0.12 voice calls. It runs the protocol/VAD
+layer on CPU and delegates STT to the existing P4 Whisper service, TTS to
+Piper, and LLM/tool calls to an OpenAI-compatible model such as llama-swap.
+
 ## Dockhand Git stack settings
 
 Create the stack from the repository:
@@ -91,6 +96,73 @@ LAN address, or `host.docker.internal` for a service running directly on the
 Docker host. `LLM_MODEL` must match llama-server's `--alias`, and
 `LLM_CONTEXT_TOKENS` its `-c`.
 
+### Optional Open WebUI 0.12 Realtime voice
+
+Enable the profile with this Dockhand stack variable:
+
+```text
+COMPOSE_PROFILES=realtime
+```
+
+The bridge can reuse the same OpenAI-compatible LLM settings used for Meeting
+Notes. If `LLM_BASE_URL`, `LLM_MODEL` and `LLM_API_KEY` already point at
+the desired llama-swap model, no additional LLM variables are required.
+
+To use a separate/faster voice-router model, set:
+
+```text
+REALTIME_LLM_BASE_URL=http://<llama-swap-host>:<port>/v1
+REALTIME_LLM_MODEL=<fast-tool-calling-model-id>
+REALTIME_LLM_API_KEY=<llama-swap-api-key>
+REALTIME_TTS_VOICE=en_GB-northern_english_male-medium
+REALTIME_STT_LANGUAGE=en
+REALTIME_NUM_PIPELINES=1
+REALTIME_LIVE_TRANSCRIPTION=false
+REALTIME_DISABLE_THINKING=true
+REALTIME_LOG_LEVEL=info
+```
+
+`REALTIME_LLM_MODEL` should be a low-latency model that supports OpenAI-style
+function/tool calling. Open WebUI's Realtime client supplies a
+`generate_chat_completion` function so substantive requests can still be
+handed to the model selected in the Open WebUI chat.
+
+Keep `REALTIME_NUM_PIPELINES=1` initially. That permits one concurrent
+Realtime call and avoids deliberately increasing contention on the P4 Whisper
+service and llama-swap.
+
+`REALTIME_LIVE_TRANSCRIPTION=false` is intentional. With the external
+OpenAI-compatible STT backend, progressive transcription would repeatedly
+upload the growing utterance to Whisper while the user is talking. The default
+sends one final transcription request per spoken turn instead.
+
+The bridge listens on host port `8765` and does not authenticate incoming
+Realtime connections. Keep that port on a trusted LAN or protect it with your
+normal reverse proxy/firewall. The upstream llama-swap API key is still used
+for bridge-to-LLM requests.
+
+Mark `REALTIME_LLM_API_KEY` as a secret when you set it.
+
+In **Open WebUI 0.12 → Admin Panel → Settings → Audio → Voice calls** use:
+
+```text
+Call mode: Realtime
+OpenAI API Base URL: http://192.168.1.32:8765/v1
+API Key: local
+Voice Model: local
+Voice: en_GB-northern_english_male-medium
+Input Transcription Model: whisper-1
+Prompt Template: leave blank unless you want custom voice-agent instructions
+```
+
+The Voice value must be a Piper voice that your Wyoming gateway accepts.
+Open WebUI sends the Realtime session voice to the bridge, and that voice is
+then forwarded to `POST /v1/audio/speech`.
+
+The ordinary Open WebUI Speech-to-Text/Text-to-Speech settings can remain on
+`http://192.168.1.32:8555/v1` for Standard call mode. Only the Realtime
+Voice Calls section points to port `8765`.
+
 Mark `DATABASE_URL`, `DEFAULT_PASSWORD` and `HF_TOKEN` as secrets in
 Dockhand, and also `OPEN_NOTEBOOK_PASSWORD` and `LLM_API_KEY` if you use them.
 `P4_UUID` is not secret.
@@ -155,7 +227,7 @@ After deployment, on the Docker host:
 
 ```bash
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' \
-  | grep -E 'whisper|piper|wyoming-openai-gateway|openwakeword|local-transcriber|speaker-analyzer'
+  | grep -E 'whisper|piper|wyoming-openai-gateway|openwakeword|local-transcriber|speaker-analyzer|realtime-voice'
 ```
 
 Check the Talk to Type version:
@@ -196,6 +268,19 @@ r.raise_for_status()
 print(json.dumps(r.json(), indent=2))
 PY
 ```
+
+If the `realtime` profile is enabled, verify the bridge is healthy and
+listening:
+
+```bash
+docker inspect --format '{{json .State.Health}}' realtime-voice | jq
+docker exec realtime-voice python -c "import socket; s=socket.create_connection(('127.0.0.1',8765),5); print('realtime bridge listening'); s.close()"
+docker logs --tail=100 realtime-voice
+```
+
+The bridge warms up both external audio endpoints during startup, so a healthy
+container is also a useful check that the Wyoming STT and TTS endpoints are
+reachable.
 
 Then make one short recording and run one admin speaker analysis.
 
