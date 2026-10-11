@@ -42,7 +42,15 @@ RUN python -m pip install \
 RUN python -m pip install "speech-to-speech==1.0.0" --no-deps
 
 # Catch missing runtime imports before the image reaches production.
-RUN speech-to-speech --help >/dev/null
+RUN speech-to-speech --help >/dev/null \
+    && python - <<'PY'
+from speech_to_speech.LLM.chat_completions_language_model import ChatCompletionsApiModelHandler
+from speech_to_speech.STT.openai_compatible_handler import OpenAICompatibleSTTHandler
+from speech_to_speech.TTS.openai_compatible_handler import OpenAICompatibleTTSHandler
+from speech_to_speech.VAD.vad_handler import VADHandler
+
+print("realtime bridge handlers import successfully")
+PY
 
 # Cache the only local model plus NLTK assets at build time so production
 # startup does not depend on GitHub/NLTK availability.
