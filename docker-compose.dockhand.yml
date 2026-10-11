@@ -69,6 +69,36 @@ services:
       - piper
     restart: unless-stopped
 
+  realtime-voice:
+    profiles: ["realtime"]
+    build:
+      context: ./realtime_bridge
+    image: voice-realtime-bridge:latest
+    container_name: realtime-voice
+    environment:
+      # Dedicated values win; existing Meeting Notes LLM settings are the fallback.
+      REALTIME_LLM_BASE_URL: "${REALTIME_LLM_BASE_URL:-}"
+      REALTIME_LLM_MODEL: "${REALTIME_LLM_MODEL:-}"
+      REALTIME_LLM_API_KEY: "${REALTIME_LLM_API_KEY:-}"
+      LLM_BASE_URL: "${LLM_BASE_URL:-}"
+      LLM_MODEL: "${LLM_MODEL:-meeting-llm}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      DEFAULT_VOICE: "${DEFAULT_VOICE:-en_GB-northern_english_male-medium}"
+      REALTIME_TTS_VOICE: "${REALTIME_TTS_VOICE:-}"
+      REALTIME_STT_LANGUAGE: "${REALTIME_STT_LANGUAGE:-en}"
+      REALTIME_NUM_PIPELINES: "${REALTIME_NUM_PIPELINES:-1}"
+      REALTIME_LIVE_TRANSCRIPTION: "${REALTIME_LIVE_TRANSCRIPTION:-false}"
+      REALTIME_DISABLE_THINKING: "${REALTIME_DISABLE_THINKING:-true}"
+      REALTIME_LOG_LEVEL: "${REALTIME_LOG_LEVEL:-info}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8765:8765"
+    depends_on:
+      wyoming-openai-gateway:
+        condition: service_started
+    restart: unless-stopped
+
   openwakeword:
     image: rhasspy/wyoming-openwakeword
     container_name: openwakeword
