@@ -15,7 +15,8 @@ RUN apt-get update \
 # dependencies.
 RUN python -m pip install \
       --index-url https://download.pytorch.org/whl/cpu \
-      "torch==2.6.0+cpu"
+      "torch==2.6.0+cpu" \
+      "torchaudio==2.6.0+cpu"
 
 RUN python -m pip install \
       "speech-to-speech==1.0.0" --no-deps \
@@ -35,6 +36,9 @@ RUN python -m pip install \
       "transformers>=5.15.1,<6" \
       "uvicorn>=0.30" \
       "websockets>=12"
+
+# Catch missing runtime imports before the image reaches production.
+RUN speech-to-speech --help >/dev/null
 
 # Cache the only local model plus NLTK assets at build time so production
 # startup does not depend on GitHub/NLTK availability.
