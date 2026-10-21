@@ -47,7 +47,7 @@ services:
       PYANNOTE_MODEL: ${PYANNOTE_MODEL:-pyannote/speaker-diarization-community-1}
       SPEAKER_DEVICE: cuda
       SPEAKER_UNLOAD_AFTER_DIARIZATION: "true"
-      NVIDIA_VISIBLE_DEVICES: ${P4_UUID}
+      NVIDIA_VISIBLE_DEVICES: ${VOICE_GPU_UUID}
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     volumes:
       - ${VOICE_SPEAKER_MODELS_DIR:-/home/dan/voice/speaker-model-cache}:/models
@@ -57,7 +57,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${P4_UUID}"]
+              device_ids: ["${VOICE_GPU_UUID}"]
               capabilities: [gpu]
     depends_on:
       - wyoming-openai-gateway
