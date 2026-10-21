@@ -17,12 +17,12 @@ Dockhand:
 - `speaker-analyzer` builds from `./speaker_service`
 
 Whisper remains the existing host-local
-`local/faster-whisper-p4:v2.4.0-ls71` image. Piper, the OpenAI-compatible
+`local/faster-whisper-p4:v2.4.0-ls71` image. Despite the image name, it may run on a T4; verify that its CTranslate2/CUDA binaries support compute capability 7.5 before deployment. Piper, the OpenAI-compatible
 Wyoming gateway and OpenWakeWord remain image-based services.
 
 An optional `realtime-voice` profile adds an OpenAI Realtime-compatible
 WebSocket bridge for Open WebUI 0.12 voice calls. It runs the protocol/VAD
-layer on CPU and delegates STT to the existing P4 Whisper service, TTS to
+layer on CPU and delegates STT to the existing GPU Whisper service, TTS to
 Piper, and LLM/tool calls to an OpenAI-compatible model such as llama-swap.
 
 ## Dockhand Git stack settings
@@ -50,10 +50,10 @@ deployment can be enabled later if desired.
 Do not put secrets in the Compose file. Configure these as Dockhand stack
 variables instead.
 
-Required:
+Required (set `VOICE_GPU_UUID` to the **new** GPU UUID from `nvidia-smi -L`, not the old P4 UUID):
 
 ```text
-P4_UUID=GPU-...
+VOICE_GPU_UUID=GPU-...
 DATABASE_URL=postgresql+asyncpg://transcriber:...@192.168.1.32:5432/transcriber
 DEFAULT_PASSWORD=...
 HF_TOKEN=...
@@ -128,7 +128,7 @@ function/tool calling. Open WebUI's Realtime client supplies a
 handed to the model selected in the Open WebUI chat.
 
 Keep `REALTIME_NUM_PIPELINES=1` initially. That permits one concurrent
-Realtime call and avoids deliberately increasing contention on the P4 Whisper
+Realtime call and avoids deliberately increasing contention on the GPU Whisper
 service and llama-swap.
 
 `REALTIME_LIVE_TRANSCRIPTION=false` is intentional. With the external
@@ -165,7 +165,7 @@ Voice Calls section points to port `8765`.
 
 Mark `DATABASE_URL`, `DEFAULT_PASSWORD` and `HF_TOKEN` as secrets in
 Dockhand, and also `OPEN_NOTEBOOK_PASSWORD` and `LLM_API_KEY` if you use them.
-`P4_UUID` is not secret.
+`VOICE_GPU_UUID` is not secret.
 
 The Compose file deliberately does not use `env_file:`. Dockhand resolves
 the stack variables and sends the rendered environment to Hawser.
@@ -221,6 +221,16 @@ does not copy or migrate persistent data.
 Do not select any option that deletes host bind data or volumes during the
 handover.
 
+## P4 to T4 migration
+
+1. Replace the P4 hardware, then confirm the NVIDIA driver and NVIDIA Container Toolkit can access the T4 (`nvidia-smi` and a CUDA container test).
+2. In Dockhand set `VOICE_GPU_UUID=GPU-...` to the **T4** UUID, remove any obsolete `P4_UUID`/`T4_UUID` setting, and validate the rendered Compose configuration before deployment.
+3. The Whisper image retains its old `p4` name because it is built locally and not published by this repository. Check that this image works on the T4 before removing your rollback path; rebuild it separately if it contains P4-specific binaries.
+4. Whisper defaults to `WHISPER_COMPUTE_TYPE=int8_float16` for the T4. If the existing image fails to load this precision, first revert to `int8_float32` and investigate image compatibility. Benchmark `float16` later if desired.
+5. Deploy the Git stack, test STT and an admin speaker-analysis run, and check GPU memory with `nvidia-smi` during overlapping use. Keep `SPEAKER_UNLOAD_AFTER_DIARIZATION=true` until measured memory headroom justifies a change.
+
+The change is configuration-only: do not remove host bind mounts or persistent recordings/model caches. The speaker analyzer's existing PyTorch CUDA 12.6 image is retained.
+
 ## Verification
 
 After deployment, on the Docker host:
@@ -256,7 +266,7 @@ Expected:
 http://wyoming-openai-gateway:8555/v1
 ```
 
-Check analyzer health and P4 visibility:
+Check analyzer health and T4 visibility:
 
 ```bash
 docker exec -i local-transcriber python - <<'PY'
