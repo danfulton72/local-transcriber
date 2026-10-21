@@ -14,7 +14,7 @@
 
 services:
   whisper:
-    image: local/faster-whisper-p4:v2.4.0-ls71
+    image: local/faster-whisper-p4:v2.4.0-ls71 # Verify this host-local build supports Turing (sm_75)
     container_name: whisper
     environment:
       PUID: "1000"
@@ -23,7 +23,7 @@ services:
       WHISPER_MODEL: distil-whisper/distil-large-v3.5-ct2
       WHISPER_LANG: en
       WHISPER_BEAM: "5"
-      WHISPER_COMPUTE_TYPE: int8_float32
+      WHISPER_COMPUTE_TYPE: int8_float16
     volumes:
       - /opt/stacks/voice/whisper-data:/config
     ports:
@@ -34,7 +34,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${T4_UUID:?Set T4_UUID in Dockhand stack variables}"]
+              device_ids: ["${VOICE_GPU_UUID:?Set VOICE_GPU_UUID in Dockhand stack variables}"]
               capabilities: [gpu]
     restart: unless-stopped
 
@@ -173,7 +173,7 @@ services:
       PYANNOTE_MODEL: "${PYANNOTE_MODEL:-pyannote/speaker-diarization-community-1}"
       SPEAKER_DEVICE: "cuda"
       SPEAKER_UNLOAD_AFTER_DIARIZATION: "true"
-      NVIDIA_VISIBLE_DEVICES: "${T4_UUID:?Set T4_UUID in Dockhand stack variables}"
+      NVIDIA_VISIBLE_DEVICES: "${VOICE_GPU_UUID:?Set VOICE_GPU_UUID in Dockhand stack variables}"
       NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
     volumes:
       - /opt/stacks/voice/speaker-model-cache:/models
@@ -183,7 +183,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${T4_UUID:?Set T4_UUID in Dockhand stack variables}"]
+              device_ids: ["${VOICE_GPU_UUID:?Set VOICE_GPU_UUID in Dockhand stack variables}"]
               capabilities: [gpu]
     depends_on:
       - wyoming-openai-gateway
