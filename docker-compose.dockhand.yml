@@ -34,7 +34,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${P4_UUID:?Set P4_UUID in Dockhand stack variables}"]
+              device_ids: ["${T4_UUID:?Set T4_UUID in Dockhand stack variables}"]
               capabilities: [gpu]
     restart: unless-stopped
 
@@ -173,7 +173,7 @@ services:
       PYANNOTE_MODEL: "${PYANNOTE_MODEL:-pyannote/speaker-diarization-community-1}"
       SPEAKER_DEVICE: "cuda"
       SPEAKER_UNLOAD_AFTER_DIARIZATION: "true"
-      NVIDIA_VISIBLE_DEVICES: "${P4_UUID:?Set P4_UUID in Dockhand stack variables}"
+      NVIDIA_VISIBLE_DEVICES: "${T4_UUID:?Set T4_UUID in Dockhand stack variables}"
       NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
     volumes:
       - /opt/stacks/voice/speaker-model-cache:/models
@@ -183,7 +183,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["${P4_UUID:?Set P4_UUID in Dockhand stack variables}"]
+              device_ids: ["${T4_UUID:?Set T4_UUID in Dockhand stack variables}"]
               capabilities: [gpu]
     depends_on:
       - wyoming-openai-gateway
