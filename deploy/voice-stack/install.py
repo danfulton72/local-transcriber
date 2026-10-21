@@ -60,13 +60,13 @@ def read_env_value(path: Path, key: str) -> str:
     return ""
 
 
-def validate_p4_uuid(voice_home: Path) -> None:
-    value = os.getenv("P4_UUID") or read_env_value(voice_home / ".env", "P4_UUID")
+def validate_voice_gpu_uuid(voice_home: Path) -> None:
+    value = os.getenv("VOICE_GPU_UUID") or read_env_value(voice_home / ".env", "VOICE_GPU_UUID")
     if not value or value == "GPU-REPLACE-ME":
         fail(
-            f"Set P4_UUID in {voice_home / '.env'} to the Tesla P4 UUID before installing."
+            f"Set VOICE_GPU_UUID in {voice_home / '.env'} to the voice GPU UUID before installing."
         )
-    print(f"P4 UUID: {value}")
+    print(f"Voice GPU UUID: {value}")
 
 
 def install_override(voice_home: Path, repo: Path, base_compose: Path) -> Path:
@@ -165,7 +165,7 @@ def main() -> None:
             f"current path is {repo}."
         )
 
-    validate_p4_uuid(voice_home)
+    validate_voice_gpu_uuid(voice_home)
     (repo / "recordings").mkdir(parents=True, exist_ok=True)
     speaker_models.mkdir(parents=True, exist_ok=True)
     ensure_app_env(repo)

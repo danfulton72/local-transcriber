@@ -7,7 +7,7 @@ It targets the existing stack layout:
 ```text
 /home/dan/voice/
     docker-compose.yml
-    .env                  # contains P4_UUID
+    .env                  # contains VOICE_GPU_UUID
     whisper/
     whisper-data/
     piper-data/
@@ -34,19 +34,19 @@ local-transcriber :8090
     |                       v               v
     |                    whisper           piper
     |                       |
-    |                    Tesla P4
+    |                    Tesla T4
     |
     +---- speaker analysis ----> speaker-analyzer
                                   |
-                               Tesla P4
+                               Tesla T4
 ```
 
-Both Faster Whisper and pyannote are pinned to the same `${P4_UUID}`.
+Both Faster Whisper and pyannote are pinned to the same `${VOICE_GPU_UUID}`.
 The speaker analyzer is admin-triggered and loads pyannote only when needed.
 With `SPEAKER_UNLOAD_AFTER_DIARIZATION=true`, it releases pyannote's CUDA
 residency after diarization and before sending speaker-turn clips through the
 existing Whisper gateway. This prevents pyannote from remaining resident on
-the 8 GB P4 after an analysis.
+the 16 GB T4 after an analysis.
 
 The app talks to the gateway over the Compose network using
 `http://wyoming-openai-gateway:8555/v1`; no host-loopback bridge is required.
@@ -59,10 +59,10 @@ Place this repository at:
 /home/dan/voice/local-transcriber
 ```
 
-Ensure the voice stack root `.env` already contains the Tesla P4 UUID:
+Ensure the voice stack root `.env` already contains the Tesla T4 UUID:
 
 ```env
-P4_UUID=GPU-...
+VOICE_GPU_UUID=GPU-...
 ```
 
 Then:
@@ -163,7 +163,7 @@ cd /home/dan/voice/local-transcriber
 python deploy/voice-stack/install.py
 ```
 
-The installer checks that `P4_UUID` is configured and that the Compose
+The installer checks that `VOICE_GPU_UUID` is configured and that the Compose
 project contains `whisper`, `piper` and `wyoming-openai-gateway`.
 
 ### 6. Build, migrate and start
@@ -204,21 +204,21 @@ curl -fsS http://127.0.0.1:8090/healthz
 echo
 ```
 
-The speaker analyzer should report one visible GPU, the Tesla P4.
+The speaker analyzer should report one visible GPU, the Tesla T4.
 
 Then run one admin speaker analysis. After it completes, Tools → Speakers
 should report the analyzer as not loaded until the next analysis because the
 voice-stack deployment deliberately unloads pyannote after diarization.
 The analyzer keeps a CPU-memory copy of the pipeline (`cpu_cached` in its
-`/healthz`), so the next analysis moves it back to the P4 instead of reloading
+`/healthz`), so the next analysis moves it back to the T4 instead of reloading
 it from the model cache.
 
-## P4 sharing notes
+## GPU sharing notes
 
-The P4 is shared, not exclusively reserved:
+The T4 is shared, not exclusively reserved:
 
 - Faster Whisper remains the normal live STT service.
-- pyannote uses the P4 only during an admin-triggered diarization pass.
+- pyannote uses the T4 only during an admin-triggered diarization pass.
 - pyannote releases its CUDA model before per-turn Whisper transcription.
 - normal Talk to Type capture does not start speaker analysis automatically.
 
