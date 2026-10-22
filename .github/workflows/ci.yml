@@ -62,7 +62,7 @@ jobs:
             config -q
       - name: Validate Dockhand Git stack
         env:
-          P4_UUID: GPU-test
+          T4_UUID: GPU-test
           DATABASE_URL: postgresql+asyncpg://transcriber:test@127.0.0.1:5432/transcriber
           DEFAULT_PASSWORD: test-password
           HF_TOKEN: hf_test

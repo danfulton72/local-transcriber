@@ -109,8 +109,13 @@ services:
       DEFAULT_VOICE: "${DEFAULT_VOICE:-en_GB-northern_english_male-medium}"
       REALTIME_TTS_VOICE: "${REALTIME_TTS_VOICE:-bm_george}"
       REALTIME_STT_LANGUAGE: "${REALTIME_STT_LANGUAGE:-en}"
-      REALTIME_NUM_PIPELINES: "${REALTIME_NUM_PIPELINES:-1}"
+      # 2 so a redial is not rejected while the previous call is still draining.
+      REALTIME_NUM_PIPELINES: "${REALTIME_NUM_PIPELINES:-2}"
       REALTIME_LIVE_TRANSCRIPTION: "${REALTIME_LIVE_TRANSCRIPTION:-false}"
+      # Per-read LLM timeout; must cover a llama-swap model load/swap.
+      REALTIME_LLM_TIMEOUT_S: "${REALTIME_LLM_TIMEOUT_S:-120}"
+      # Fewer speculative Whisper re-transcriptions on micro-pauses (upstream: 64).
+      REALTIME_VAD_MIN_SILENCE_MS: "${REALTIME_VAD_MIN_SILENCE_MS:-250}"
       REALTIME_DISABLE_THINKING: "${REALTIME_DISABLE_THINKING:-true}"
       REALTIME_LOG_LEVEL: "${REALTIME_LOG_LEVEL:-info}"
     extra_hosts:
