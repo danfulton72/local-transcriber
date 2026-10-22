@@ -65,6 +65,12 @@ assert "conversation.item.delete" in _EVENT_TYPE_TO_MODEL
 print("realtime bridge handlers and Open WebUI protocol compatibility verified")
 PY
 
+# Force the Realtime TTS *output* to 24 kHz PCM so Open WebUI voice mode can
+# play it back correctly (its AudioContext is fixed at 24 kHz). speech-to-speech
+# otherwise defaults the output to the 16 kHz pipeline rate.
+COPY patch_24k.py /tmp/patch_24k.py
+RUN python /tmp/patch_24k.py && rm /tmp/patch_24k.py
+
 # Cache the only local model plus NLTK assets at build time so production
 # startup does not depend on GitHub/NLTK availability.
 RUN python - <<'PY'
