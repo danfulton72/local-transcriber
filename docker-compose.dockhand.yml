@@ -50,6 +50,25 @@ services:
       - "10200:10200"
     restart: unless-stopped
 
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-gpu:latest
+    container_name: kokoro
+    environment:
+      DEFAULT_VOICE: "${KOKORO_DEFAULT_VOICE:-bm_george}"
+      USE_GPU: "true"
+      API_LOG_LEVEL: "INFO"
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${T4_UUID:?Set T4_UUID in Dockhand stack variables}"]
+              capabilities: [gpu]
+    ports:
+      - "8880:8880"
+    restart: unless-stopped
+
   wyoming-openai-gateway:
     image: ghcr.io/archmonger/wyoming-openai-gateway:latest
     container_name: wyoming-openai-gateway
@@ -83,8 +102,12 @@ services:
       LLM_BASE_URL: "${LLM_BASE_URL:-}"
       LLM_MODEL: "${LLM_MODEL:-meeting-llm}"
       LLM_API_KEY: "${LLM_API_KEY:-}"
+      # TTS backend: Kokoro-82M (natural neural voice, native 24 kHz output).
+      # Point the bridge's OpenAI-compatible TTS handler at the kokoro service.
+      REALTIME_TTS_BASE_URL: "${REALTIME_TTS_BASE_URL:-http://kokoro:8880/v1}"
+      REALTIME_TTS_MODEL: "${REALTIME_TTS_MODEL:-kokoro}"
       DEFAULT_VOICE: "${DEFAULT_VOICE:-en_GB-northern_english_male-medium}"
-      REALTIME_TTS_VOICE: "${REALTIME_TTS_VOICE:-}"
+      REALTIME_TTS_VOICE: "${REALTIME_TTS_VOICE:-bm_george}"
       REALTIME_STT_LANGUAGE: "${REALTIME_STT_LANGUAGE:-en}"
       REALTIME_NUM_PIPELINES: "${REALTIME_NUM_PIPELINES:-1}"
       REALTIME_LIVE_TRANSCRIPTION: "${REALTIME_LIVE_TRANSCRIPTION:-false}"
@@ -96,6 +119,8 @@ services:
       - "8765:8765"
     depends_on:
       wyoming-openai-gateway:
+        condition: service_started
+      kokoro:
         condition: service_started
     restart: unless-stopped
 
