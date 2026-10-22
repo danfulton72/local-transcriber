@@ -53,7 +53,7 @@ variables instead.
 Required:
 
 ```text
-P4_UUID=GPU-...
+T4_UUID=GPU-...
 DATABASE_URL=postgresql+asyncpg://transcriber:...@192.168.1.32:5432/transcriber
 DEFAULT_PASSWORD=...
 HF_TOKEN=...
@@ -179,7 +179,7 @@ Voice Calls section points to port `8765`.
 
 Mark `DATABASE_URL`, `DEFAULT_PASSWORD` and `HF_TOKEN` as secrets in
 Dockhand, and also `OPEN_NOTEBOOK_PASSWORD` and `LLM_API_KEY` if you use them.
-`P4_UUID` is not secret.
+`T4_UUID` is not secret.
 
 The Compose file deliberately does not use `env_file:`. Dockhand resolves
 the stack variables and sends the rendered environment to Hawser.
