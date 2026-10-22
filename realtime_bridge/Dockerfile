@@ -29,6 +29,7 @@ RUN python -m pip install \
       "openai==2.28.0" \
       "pillow>=10" \
       "pydantic>=2" \
+      "PyYAML>=6,<7" \
       "requests>=2.31" \
       "rich>=13" \
       "scipy>=1.10" \
@@ -41,10 +42,14 @@ RUN python -m pip install \
 # service delegates STT, LLM and TTS, so packages such as nano-parakeet and
 # faster-qwen3-tts would add substantial image weight without being used.
 #
-# v1.0.0 rejects Open WebUI 0.12's chat_context_* conversation item IDs and
-# does not implement conversation.item.delete. Pin the upstream compatibility
-# fix until it is included in a released speech-to-speech version.
-ARG SPEECH_TO_SPEECH_REF=ee6b7a850f7833958b5101ebc22e5d084ea9be3f
+# v1.1.0 is the first release that honours turn_detection.create_response.
+# Open WebUI 0.12 sets create_response=false and sends its own response.create
+# once it has saved the transcript; older builds (including the previous pin,
+# ee6b7a8) answered every turn automatically as well, so Open WebUI's request
+# collided with the bridge's own reply and the call was torn down with
+# conversation_already_has_active_response. v1.1.0 also keeps the 0.12
+# chat_context_* item IDs and conversation.item.delete support.
+ARG SPEECH_TO_SPEECH_REF=8ebde045cb7d72f5acd55327b80cfa1670a33936
 RUN python -m pip install \
       "speech-to-speech @ git+https://github.com/huggingface/speech-to-speech.git@${SPEECH_TO_SPEECH_REF}" \
       --no-deps
@@ -55,6 +60,7 @@ RUN speech-to-speech --help >/dev/null \
     && python - <<'PY'
 from speech_to_speech.api.openai_realtime.service import _EVENT_TYPE_TO_MODEL
 from speech_to_speech.LLM.chat import _ensure_id
+from speech_to_speech.api.openai_realtime.runtime_config import RuntimeConfig
 from speech_to_speech.LLM.chat_completions_language_model import ChatCompletionsApiModelHandler
 from speech_to_speech.STT.openai_compatible_handler import OpenAICompatibleSTTHandler
 from speech_to_speech.TTS.openai_compatible_handler import OpenAICompatibleTTSHandler
@@ -62,6 +68,7 @@ from speech_to_speech.VAD.vad_handler import VADHandler
 
 assert _ensure_id("chat_context_1", "sys") == "chat_context_1"
 assert "conversation.item.delete" in _EVENT_TYPE_TO_MODEL
+assert hasattr(RuntimeConfig, "create_response_enabled"), "bridge must honour create_response=false"
 print("realtime bridge handlers and Open WebUI protocol compatibility verified")
 PY
 
@@ -70,6 +77,11 @@ PY
 # otherwise defaults the output to the 16 kHz pipeline rate.
 COPY patch_24k.py /tmp/patch_24k.py
 RUN python /tmp/patch_24k.py && rm /tmp/patch_24k.py
+
+# Keep Open WebUI calls alive through recoverable per-turn failures (slow LLM,
+# a Whisper/Kokoro error, the Mute button). See patch_openwebui.py.
+COPY patch_openwebui.py /tmp/patch_openwebui.py
+RUN python /tmp/patch_openwebui.py && rm /tmp/patch_openwebui.py
 
 # Cache the only local model plus NLTK assets at build time so production
 # startup does not depend on GitHub/NLTK availability.

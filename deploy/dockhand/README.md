@@ -22,8 +22,8 @@ Wyoming gateway and OpenWakeWord remain image-based services.
 
 An optional `realtime-voice` profile adds an OpenAI Realtime-compatible
 WebSocket bridge for Open WebUI 0.12 voice calls. It runs the protocol/VAD
-layer on CPU and delegates STT to the existing P4 Whisper service, TTS to
-Piper, and LLM/tool calls to an OpenAI-compatible model such as llama-swap.
+layer on CPU and delegates STT to the existing Whisper service, TTS to
+Kokoro, and LLM/tool calls to an OpenAI-compatible model such as llama-swap.
 
 ## Dockhand Git stack settings
 
@@ -114,9 +114,11 @@ To use a separate/faster voice-router model, set:
 REALTIME_LLM_BASE_URL=http://<llama-swap-host>:<port>/v1
 REALTIME_LLM_MODEL=<fast-tool-calling-model-id>
 REALTIME_LLM_API_KEY=<llama-swap-api-key>
-REALTIME_TTS_VOICE=en_GB-northern_english_male-medium
+REALTIME_TTS_VOICE=bm_george
 REALTIME_STT_LANGUAGE=en
-REALTIME_NUM_PIPELINES=1
+REALTIME_NUM_PIPELINES=2
+REALTIME_LLM_TIMEOUT_S=120
+REALTIME_VAD_MIN_SILENCE_MS=250
 REALTIME_LIVE_TRANSCRIPTION=false
 REALTIME_DISABLE_THINKING=true
 REALTIME_LOG_LEVEL=info
@@ -127,9 +129,20 @@ function/tool calling. Open WebUI's Realtime client supplies a
 `generate_chat_completion` function so substantive requests can still be
 handed to the model selected in the Open WebUI chat.
 
-Keep `REALTIME_NUM_PIPELINES=1` initially. That permits one concurrent
-Realtime call and avoids deliberately increasing contention on the P4 Whisper
-service and llama-swap.
+`REALTIME_NUM_PIPELINES=2` is deliberate. After a hang-up the call's pipeline
+stays busy ("draining") until its in-flight Whisper/LLM/TTS requests finish;
+with a single pipeline, redialling in that window, or Open WebUI reconnecting
+after a model or voice change, was rejected with `session_limit_reached`.
+
+`REALTIME_LLM_TIMEOUT_S` is the per-read timeout for the voice LLM. It must
+cover llama-swap loading or swapping the model before the first token. If the
+voice model and the Open WebUI chat model share a GPU, every
+`generate_chat_completion` hand-off can evict the voice model, so the next
+voice reply waits for a reload.
+
+`REALTIME_VAD_MIN_SILENCE_MS=250` cuts the number of speculative Whisper
+requests: upstream's 64 ms re-sends the growing utterance on every
+micro-pause. End-of-turn stays at roughly this value plus 0.8 s.
 
 `REALTIME_LIVE_TRANSCRIPTION=false` is intentional. With the external
 OpenAI-compatible STT backend, progressive transcription would repeatedly
@@ -150,14 +163,15 @@ Call mode: Realtime
 OpenAI API Base URL: http://192.168.1.32:8765/v1
 API Key: local
 Voice Model: local
-Voice: en_GB-northern_english_male-medium
+Voice: bm_george
 Input Transcription Model: whisper-1
+Input Parameters: leave blank
 Prompt Template: leave blank unless you want custom voice-agent instructions
 ```
 
-The Voice value must be a Piper voice that your Wyoming gateway accepts.
-Open WebUI sends the Realtime session voice to the bridge, and that voice is
-then forwarded to `POST /v1/audio/speech`.
+The Voice value must be a Kokoro voice (for example `bm_george`). Open WebUI
+sends the Realtime session voice to the bridge, and that voice is then
+forwarded to Kokoro's `POST /v1/audio/speech`.
 
 The ordinary Open WebUI Speech-to-Text/Text-to-Speech settings can remain on
 `http://192.168.1.32:8555/v1` for Standard call mode. Only the Realtime
@@ -276,7 +290,13 @@ listening:
 docker inspect --format '{{json .State.Health}}' realtime-voice | jq
 docker exec realtime-voice python -c "import socket; s=socket.create_connection(('127.0.0.1',8765),5); print('realtime bridge listening'); s.close()"
 docker logs --tail=100 realtime-voice
+curl -fsS http://127.0.0.1:8765/v1/pool | jq
 ```
+
+`/v1/pool` should show idle units between calls. A unit stuck in `draining`
+or `stuck` means a backend request never returned; `docker logs` names it.
+"Not forwarding recoverable error" log lines are turns that failed without
+ending the call.
 
 The bridge warms up both external audio endpoints during startup, so a healthy
 container is also a useful check that the Wyoming STT and TTS endpoints are

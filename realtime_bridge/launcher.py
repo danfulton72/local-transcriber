@@ -51,13 +51,17 @@ def build_config(source: dict[str, str] | None = None) -> dict:
         or "en_GB-northern_english_male-medium"
     )
 
-    return {
+    config = {
         "stt": "openai",
         "llm_backend": "chat-completions",
         "tts": "openai",
         "host": "0.0.0.0",
         "port": _int(env, "REALTIME_PORT", 8765),
-        "num_pipelines": _int(env, "REALTIME_NUM_PIPELINES", 1),
+        # A hung-up call keeps its pipeline "draining" until its in-flight
+        # STT/LLM/TTS requests finish. With a single pipeline, redialling (or
+        # Open WebUI reconnecting after a model/voice change) during that window
+        # is rejected with session_limit_reached. Two pipelines cover it.
+        "num_pipelines": _int(env, "REALTIME_NUM_PIPELINES", 2),
         # Smart Turn needs another model; basic Silero VAD is enough for this
         # bridge and keeps the service CPU-only and predictable.
         "smart_turn": False,
@@ -94,10 +98,31 @@ def build_config(source: dict[str, str] | None = None) -> dict:
         "openai_tts_timeout": 120.0,
     }
 
+    # Upstream soft-ends a turn after 64 ms of silence and re-sends the growing
+    # utterance to Whisper on every such micro-pause. A longer value means far
+    # fewer speculative Whisper requests on the shared GPU.
+    min_silence_ms = _env(env, "REALTIME_VAD_MIN_SILENCE_MS")
+    if min_silence_ms:
+        config["min_silence_ms"] = int(min_silence_ms)
+    return config
+
+
+def llm_timeout_s(source: dict[str, str] | None = None) -> str:
+    """Per-read LLM timeout passed to the patched bridge (upstream default 20 s).
+
+    It must cover a llama-swap model load/swap before the first token.
+    """
+    env = dict(os.environ if source is None else source)
+    raw = _env(env, "REALTIME_LLM_TIMEOUT_S", "120")
+    if float(raw) <= 0:
+        raise ValueError(f"REALTIME_LLM_TIMEOUT_S must be > 0, got {raw!r}")
+    return raw
+
 
 def main() -> None:
     try:
         config = build_config()
+        os.environ["REALTIME_LLM_TIMEOUT_S"] = llm_timeout_s()
     except (ValueError, TypeError) as exc:
         print(f"realtime bridge configuration error: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
@@ -110,6 +135,7 @@ def main() -> None:
         safe["responses_api_api_key"] = "***configured***"
     print("Starting OpenAI Realtime bridge with configuration:")
     print(json.dumps(safe, indent=2), flush=True)
+    print(f"LLM read timeout: {os.environ['REALTIME_LLM_TIMEOUT_S']}s", flush=True)
 
     os.execvp("speech-to-speech", ["speech-to-speech", "serve", str(path)])
 

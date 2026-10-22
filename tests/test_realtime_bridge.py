@@ -82,3 +82,28 @@ def test_realtime_bridge_rejects_invalid_boolean():
                 "REALTIME_LIVE_TRANSCRIPTION": "sometimes",
             }
         )
+
+
+def test_realtime_bridge_defaults_survive_redial_and_slow_llm():
+    env = {"LLM_BASE_URL": "http://llm/v1", "LLM_MODEL": "voice"}
+    config = launcher.build_config(env)
+
+    # A hung-up call drains its pipeline; a second one lets the user redial.
+    assert config["num_pipelines"] == 2
+    # Upstream VAD default is kept unless explicitly overridden.
+    assert "min_silence_ms" not in config
+    # Upstream hard-codes 20 s, which a llama-swap model load exceeds.
+    assert launcher.llm_timeout_s(env) == "120"
+
+
+def test_realtime_bridge_vad_and_timeout_overrides():
+    env = {
+        "LLM_BASE_URL": "http://llm/v1",
+        "LLM_MODEL": "voice",
+        "REALTIME_VAD_MIN_SILENCE_MS": "250",
+        "REALTIME_LLM_TIMEOUT_S": "45",
+    }
+    assert launcher.build_config(env)["min_silence_ms"] == 250
+    assert launcher.llm_timeout_s(env) == "45"
+    with pytest.raises(ValueError, match="REALTIME_LLM_TIMEOUT_S"):
+        launcher.llm_timeout_s({"REALTIME_LLM_TIMEOUT_S": "0"})
